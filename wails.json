@@ -1,0 +1,18 @@
+{
+  "$schema": "https://wails.io/schemas/config.v2.json",
+  "name": "specwright",
+  "outputfilename": "SpecWright",
+  "frontend:dir": "frontend",
+  "frontend:install": "npm install",
+  "frontend:build": "npm run build",
+  "frontend:dev:watcher": "npm run dev",
+  "frontend:dev:serverUrl": "auto",
+  "author": { "name": "SpecWright" },
+  "info": {
+    "productName": "SpecWright",
+    "companyName": "SpecWright",
+    "productVersion": "0.1.0",
+    "copyright": "SpecWright",
+    "comments": "Turns specs into working code with Claude or GitHub Copilot, with your approval after every step."
+  }
+}

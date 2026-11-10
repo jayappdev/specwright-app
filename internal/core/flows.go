@@ -1,0 +1,225 @@
+package core
+
+import (
+	"errors"
+	"sort"
+	"strings"
+
+	"codegen/internal/extension"
+	"codegen/internal/flow"
+)
+
+// Flow designer: flows are pipelines of tools, AI prompts, merges and
+// transforms with inputs, context, skills and outputs. They are stored in
+// the workspace (.codegen/flows/). Running them comes with the executor.
+
+// Flows lists the workspace's flows.
+func (h *Hub) Flows() ([]flow.Summary, error) {
+	root, err := h.need()
+	if err != nil {
+		return nil, err
+	}
+	return flow.List(root)
+}
+
+// LoadFlow reads one flow.
+func (h *Hub) LoadFlow(id string) (*flow.Flow, error) {
+	root, err := h.need()
+	if err != nil {
+		return nil, err
+	}
+	return flow.Load(root, id)
+}
+
+// NewFlow creates and saves an empty flow with a free id.
+func (h *Hub) NewFlow(name string) (*flow.Flow, error) {
+	root, err := h.need()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(name) == "" {
+		name = "New flow"
+	}
+	f := flow.New(flow.UniqueID(root, flow.Slug(name)), strings.TrimSpace(name))
+	return f, flow.Save(root, f)
+}
+
+// SaveFlow stores a flow and returns it with its check results.
+func (h *Hub) SaveFlow(f flow.Flow) (FlowState, error) {
+	root, err := h.need()
+	if err != nil {
+		return FlowState{}, err
+	}
+	if f.ID == "" {
+		f.ID = flow.UniqueID(root, flow.Slug(f.Name))
+	}
+	if err := flow.Save(root, &f); err != nil {
+		return FlowState{}, err
+	}
+	return FlowState{Flow: &f, Issues: flow.Validate(&f, h.flowTools())}, nil
+}
+
+// FlowState is a flow plus its check results.
+type FlowState struct {
+	Flow   *flow.Flow   `json:"flow"`
+	Issues []flow.Issue `json:"issues"`
+	Notes  []string     `json:"notes,omitempty"`
+}
+
+// DeleteFlow removes a flow.
+func (h *Hub) DeleteFlow(id string) error {
+	root, err := h.need()
+	if err != nil {
+		return err
+	}
+	return flow.Delete(root, id)
+}
+
+// ValidateFlow checks a flow (saved or not) against the project's tools.
+func (h *Hub) ValidateFlow(f flow.Flow) []flow.Issue {
+	issues := flow.Validate(&f, h.flowTools())
+	// tools that exist but are not approved cannot run yet
+	exts, _ := h.Extensions()
+	for _, n := range f.Nodes {
+		if n.Type != "tool" {
+			continue
+		}
+		for _, e := range exts {
+			if e.Name == n.Tool && !e.Approved {
+				issues = append(issues, flow.Issue{Node: n.ID, Level: "warning", Message: n.Tool + " is not approved yet; approve it on the Tools screen before running the flow."})
+			}
+		}
+	}
+	return issues
+}
+
+// flowTools are the tools a flow can call: approved project and global
+// tools, ext:* scripts and verified managed tools.
+func (h *Hub) flowTools() []flow.ToolInfo {
+	exts, err := h.Extensions()
+	if err != nil {
+		return nil
+	}
+	var out []flow.ToolInfo
+	for _, e := range exts {
+		if extension.IsManagedScope(e.Scope) && (e.Managed == nil || e.Managed.Status != extension.ManagedVerified) {
+			continue
+		}
+		t := flow.ToolInfo{Name: e.Name}
+		for _, p := range e.Params {
+			t.Params = append(t.Params, flow.ToolParam{Name: p.Name, Required: p.Required})
+		}
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
+	return out
+}
+
+// ExportFlow returns a flow as a portable JSON file with its skill,
+// context and default input files embedded.
+func (h *Hub) ExportFlow(id string) (string, error) {
+	root, err := h.need()
+	if err != nil {
+		return "", err
+	}
+	f, err := flow.Load(root, id)
+	if err != nil {
+		return "", err
+	}
+	b, err := flow.Export(root, f)
+	return string(b), err
+}
+
+// ImportFlow adds an exported flow (or a bare flow JSON) to the project.
+func (h *Hub) ImportFlow(data string) (FlowState, error) {
+	root, err := h.need()
+	if err != nil {
+		return FlowState{}, err
+	}
+	if strings.TrimSpace(data) == "" {
+		return FlowState{}, errors.New("the file is empty")
+	}
+	f, notes, err := flow.Import(root, []byte(data))
+	if err != nil {
+		return FlowState{}, err
+	}
+	issues := h.ValidateFlow(*f)
+	for _, is := range issues {
+		if strings.Contains(is.Message, "is not available") {
+			notes = append(notes, "this project is missing a tool the flow uses: "+is.Message)
+		}
+	}
+	return FlowState{Flow: f, Issues: issues, Notes: notes}, nil
+}
+
+// FlowPreview is the result of previewing one step with sample data.
+type FlowPreview struct {
+	Output string `json:"output"`
+	Error  string `json:"error,omitempty"`
+}
+
+// PreviewFlowStep runs a merge, transform or output step on sample data
+// (no tools or AI are called), so the designer can show what it produces.
+func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) FlowPreview {
+	n := f.Node(nodeID)
+	if n == nil {
+		return FlowPreview{Error: "no step " + nodeID}
+	}
+	if sample.Inputs == nil {
+		sample.Inputs = map[string]string{}
+	}
+	if sample.Steps == nil {
+		sample.Steps = map[string]string{}
+	}
+	parents := f.Parents(n.ID)
+	in := sample.Input
+	if in == "" && len(parents) > 0 {
+		var parts []string
+		for _, p := range parents {
+			parts = append(parts, sample.Steps[p])
+		}
+		in = strings.Join(parts, "\n\n")
+	}
+	sample.Input = in
+	var out string
+	var err error
+	switch n.Type {
+	case "merge":
+		titles := map[string]string{}
+		for _, p := range parents {
+			if pn := f.Node(p); pn != nil && pn.Title != "" {
+				titles[p] = pn.Title
+			}
+		}
+		out, err = flow.Merge(*n, parents, sample, titles)
+	case "transform":
+		if n.Source != "" {
+			in = flow.Render(n.Source, sample)
+		}
+		out, err = flow.Transform(*n, in, sample)
+	case "output":
+		content := in
+		if strings.TrimSpace(n.Template) != "" {
+			content = flow.Render(n.Template, sample)
+		}
+		out, err = flow.Convert(content, n.Format)
+	case "tool", "ai":
+		err = errors.New("tools and AI steps run when the flow runs; enter sample output for this step instead")
+	default:
+		err = errors.New("nothing to preview for this step")
+	}
+	if err != nil {
+		return FlowPreview{Output: out, Error: err.Error()}
+	}
+	return FlowPreview{Output: out}
+}
+
+// FlowOps describes the transformations, merge modes, formats and input
+// types the designer offers.
+func (h *Hub) FlowOps() map[string]any {
+	ops := map[string]flow.Op{}
+	for k, v := range flow.Ops {
+		ops[k] = v
+	}
+	return map[string]any{"ops": ops, "mergeModes": flow.MergeModes, "formats": flow.Formats, "inputTypes": flow.InputTypes, "actionTypes": flow.ActionTypes}
+}

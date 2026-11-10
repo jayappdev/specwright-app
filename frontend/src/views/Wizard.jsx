@@ -1,0 +1,161 @@
+import { backend } from "../backend.js";
+import { Linkify } from "../FileLinks.jsx";
+import { S, update, saveProfile, toast, call, saveText, openWorkspace } from "../store.js";
+import { Icon, Seg, Chip, Card } from "../ui.jsx";
+import { newTool, openTool } from "./Tools.jsx";
+import { RichText } from "../RichEditor.jsx";
+import { mdToRules, rulesToMd, rulesToHtmlDoc } from "../richtext.js";
+import { openRuleDrawer, openBulkEditor } from "./RulesEditors.jsx";
+import { PackagesCard } from "./Packages.jsx";
+import { openLibraryEditor, deleteLibrary } from "./LibraryEditor.jsx";
+import { ToolTile, ToolGrid } from "../ToolTile.jsx";
+
+const WIZ = [["w-lang", "Language"], ["w-global", "Corporate libraries"], ["w-project", "Project skills"], ["w-folders", "Folder structure"], ["w-rules", "Rules"], ["w-tools", "Tools & extensions"], ["w-packages", "Packages & proxy"]];
+
+export function NeedWorkspace({ what = "this view" }) {
+  return (
+    <section className="view">
+      <div className="card"><h3>Open a project folder first</h3>
+        <p className="wf-desc">Choose the folder the agent works in to use {what}. Only that folder is visible to the agent.</p>
+        <WorkspaceBar />
+      </div>
+    </section>
+  );
+}
+
+export function WorkspaceBar() {
+  const v = S._wsInput ?? S.ws?.root ?? S.lastWorkspace ?? "";
+  return (
+    <>
+      <div className="setup-input">
+        <input aria-label="Project folder" style={{ fontFamily: "var(--font-mono)" }} value={v} placeholder="~/src/my-service" onChange={(e) => { S._wsInput = e.target.value; update(); }} onKeyDown={(e) => e.key === "Enter" && openWorkspace(v)} />
+        <button className="btn secondary" onClick={() => openWorkspace(v)}>Open</button>
+        {backend.kind === "desktop" && <button className="btn secondary" onClick={() => openWorkspace("", true)}>Browse…</button>}
+      </div>
+      {S.wsError && <p className="err-text" style={{ marginTop: 8 }}>{S.wsError}</p>}
+    </>
+  );
+}
+
+function BuildRow({ modeKey }) {
+  const p = S.ws.profile;
+  return (
+    <div className="sub-row"><span><b>Build rules</b> <span className="muted">· incremental adds what changed; bulk reloads everything</span></span>
+      <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+        <Seg value={p[modeKey]} options={[["incremental", "Incremental"], ["bulk", "Bulk load"]]} onChange={(v) => { p[modeKey] = v; update(); saveProfile(); }} />
+        <button type="button" className="btn secondary" onClick={async () => { await backend.SaveProfile(p); toast(await call(backend.BuildRules, "wizard." + modeKey, p[modeKey])); }}>Build</button>
+      </span>
+    </div>
+  );
+}
+
+function LibCard({ id, n, title, desc, scope, key2, modeKey }) {
+  const p = S.ws.profile, sel = p[key2] || (p[key2] = []);
+  const libs = (S.ws.libraries || []).filter((l) => l.scope === scope);
+  const g = scope === "global", admin = !!S.admin?.unlocked, canEdit = !g || admin;
+  return (
+    <Card id={id} index={n} title={title} badge={<>{g && <span className={"badge " + (admin ? "badge-warn" : "")}><Icon.lock /> {admin ? "admin mode" : "managed by admin"}</span>}<span className="badge">{sel.length} selected</span></>}>
+      <p className="wf-desc">{desc}</p>
+      {g && !admin && <p className="muted lib-note"><Icon.lock /> Corporate libraries are published by your admin for every project. You can read and select them; to add or change one, unlock admin mode on the Admin screen.</p>}
+      <ul className="lib-list">
+        {libs.map((l) => (
+          <li key={l.id}><input type="checkbox" id={l.id} checked={sel.includes(l.id)} onChange={(e) => { e.target.checked ? sel.push(l.id) : sel.splice(sel.indexOf(l.id), 1); update(); saveProfile(); }} />
+            <label className="grow" htmlFor={l.id}><b>{l.name}</b> <span className={"badge " + (l.kind === "skill" ? "badge-info" : "badge-warn")}>{l.kind}</span>
+              {g && (l.managed ? <span className="badge badge-ok" title={`Signed by ${l.managed.signer} on ${new Date(l.managed.signedAt).toLocaleString()}${l.managed.source === "machine" ? " · machine catalog" : ""}`}>v{l.managed.version} · {l.managed.signer}</span> : <span className="badge" title="A file in this project only, not published by an admin">local copy</span>)}
+              <small><Linkify text={l.note || l.path} /></small></label>
+            <span className="lib-actions">
+              {canEdit && !(g && l.managed?.source === "machine") && (g && !l.managed
+                ? <button className="link" title="Sign this local copy and publish it to every project" onClick={() => openLibraryEditor("global", "skill", l, { publish: true })}>Publish</button>
+                : <button className="link" onClick={() => openLibraryEditor(scope, l.kind, l)}>Edit</button>)}
+              {canEdit && !(g && !l.managed) && !(g && l.managed?.source === "machine") && <button className="link" onClick={() => deleteLibrary(scope, l)}>{g ? "Retire" : "Delete"}</button>}
+              {!canEdit && <span className="link" role="link" tabIndex={0} data-file={l.path} title={"View " + l.path}>View</span>}
+            </span></li>
+        ))}
+        {!libs.length && <li className="muted">{g ? (admin ? "No corporate skills yet. Publish one for every project." : "Your admin has not published any corporate skills yet.") : "No project skills or scripts yet."}</li>}
+      </ul>
+      {canEdit && <div className="row-actions">
+        {g ? <button className="btn secondary" onClick={() => openLibraryEditor("global", "skill", null)}><Icon.plus /> New corporate skill</button>
+          : <><button className="btn secondary" onClick={() => openLibraryEditor("project", "skill", null)}><Icon.plus /> New skill</button>
+            <button className="btn secondary" onClick={() => openLibraryEditor("project", "script", null)}><Icon.plus /> New script</button></>}
+      </div>}
+      <BuildRow modeKey={modeKey} />
+    </Card>
+  );
+}
+
+export function Wizard() {
+  if (!S.ws) return <NeedWorkspace what="the wizard" />;
+  const p = S.ws.profile, langs = S.info?.langOrder || ["Java", "Kotlin", "TypeScript", "Python", "C#", "Go"], builds = S.info?.languages || {};
+  const exts = S.ws.extensions || [];
+  const setRules = (r) => { p.rules = r; update(); saveProfile(); };
+  const importRules = (f) => f.text().then((t) => {
+    let r;
+    try { r = JSON.parse(t); if (!Array.isArray(r)) throw 0; r = r.map((x, k) => ({ id: x.id || "R-" + (k + 1), text: String(x.text || "") })); }
+    catch { r = mdToRules(t); }
+    setRules(r); toast(`Imported ${r.length} rules.`);
+  });
+  const go = (id) => { S.wizSection = id; update(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  return (
+    <section className="view">
+      <header className="view-head"><h1>Development wizard</h1>
+        <div className="head-controls"><span className="muted">Profile saved to <code className="inline-code">.codegen/profile.json</code></span><button className="btn primary" onClick={() => { S.view = "inputs"; update(); }}>Next: choose input</button></div></header>
+      <div className="wiz">
+        <nav className="wiz-nav" aria-label="Wizard sections">
+          {WIZ.map(([id, l], i) => <a key={id} href={"#" + id} className={S.wizSection === id ? "active" : ""} onClick={(e) => { e.preventDefault(); go(id); }}><span className="card-index">{i + 1}</span>{l}</a>)}
+        </nav>
+        <div className="wiz-body">
+          <Card id="w-lang" index={1} title="Choose language">
+            <div className="chips" role="group" aria-label="Language">{langs.map((l) => <Chip key={l} on={p.lang === l} onClick={() => { p.lang = l; p.build = (builds[l] || [""])[0]; update(); saveProfile(); }}>{l}</Chip>)}</div>
+            <div className="row-actions"><label className="field inline"><span>Build tool</span>
+              <select value={p.build} onChange={(e) => { p.build = e.target.value; update(); saveProfile(); }}>{(builds[p.lang] || [p.build]).map((b) => <option key={b}>{b}</option>)}</select></label></div>
+          </Card>
+          <LibCard id="w-global" n={2} title="Global corporate libraries" desc="Corporate skills an admin publishes for every project in the app. They are copied into .codegen/skills/global/ here, read-only." scope="global" key2="global" modeKey="globalMode" />
+          <LibCard id="w-project" n={3} title="Project-specific skills and scripts" desc="Skills and scripts that only apply to this project." scope="project" key2="project" modeKey="projectMode" />
+          <Card id="w-folders" index={4} title="Compartmentalized folder structure">
+            <p className="wf-desc">Where rules, skills, scripts and tools are stored. Each compartment is loaded separately so one team's rules never leak into another's.</p>
+            <ul className="lib-list">{p.folders.map((f, i) => (
+              <li key={i}><span style={{ color: "var(--muted)" }}><Icon.folder /></span><input aria-label="Folder path" className="grow" value={f.path} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => { f.path = e.target.value; update(); saveProfile(); }} /><span className="muted" style={{ flex: 1 }}>{f.note}</span></li>
+            ))}</ul>
+            <BuildRow modeKey="foldersMode" />
+          </Card>
+          <Card id="w-rules" index={5} title="Functionality rules" badge={<span className="badge">{p.rules.length}</span>}>
+            <p className="wf-desc">Readable rules the agent must follow, with formatting (bold, lists, code, links) kept as Markdown. Add them one at a time, or edit them all as one document.</p>
+            <div className="sub-row" style={{ marginTop: 0, paddingTop: 0, borderTop: 0 }}>
+              <span><b>Editing</b> <span className="muted">· {(p.rulesMode || "incremental") === "bulk" ? "all rules in one editor; save as Markdown or rich text" : "add or change one rule at a time in a side panel"}</span></span>
+              <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                <Seg value={p.rulesMode || "incremental"} options={[["incremental", "Incremental"], ["bulk", "Bulk edit"]]} onChange={(v) => { p.rulesMode = v; update(); saveProfile(); }} />
+                {(p.rulesMode || "incremental") === "bulk"
+                  ? <button className="btn primary" onClick={openBulkEditor}>Open bulk editor</button>
+                  : <button className="btn primary" onClick={() => openRuleDrawer()}>+ Add rules</button>}
+              </span>
+            </div>
+            <ul className="lib-list rule-list">{p.rules.map((r, i) => (
+              <li key={r.id + i}><code className="inline-code">{r.id}</code>
+                {r.text.trim() ? <RichText md={r.text} className="grow rule-text" /> : <span className="grow muted">(empty)</span>}
+                <button className="link" onClick={() => openRuleDrawer(i)}>Edit</button>
+                <button className="link" onClick={() => setRules(p.rules.filter((_, k) => k !== i))}>Remove</button></li>
+            ))}
+            {!p.rules.length && <li className="muted">No rules yet.</li>}</ul>
+            <div className="row-actions"><span className="status-spacer" />
+              <button className="btn secondary" onClick={() => saveText("codegen-rules.json", JSON.stringify(p.rules, null, 2), "application/json")}>Export</button>
+              <label className="btn secondary" style={{ display: "inline-block" }}>Import<input type="file" accept=".json,.md" className="hidden-input" onChange={(e) => e.target.files[0] && importRules(e.target.files[0])} /></label>
+              <button className="btn secondary" onClick={() => saveText("codegen-rules.md", rulesToMd(p.rules), "text/markdown")}>Download .md</button>
+              <button className="btn secondary" onClick={() => saveText("codegen-rules.html", rulesToHtmlDoc(p.rules), "text/html")}>Download rich text</button></div>
+          </Card>
+          <Card id="w-tools" index={6} title="Tools and extensions" badge={<span className="badge">{exts.length}</span>}>
+            <p className="wf-desc">Tools the agent may call while it runs a workflow step. Describe one in plain language and the AI writes it, tests it, and you save it. Approved <code className="inline-code">ext:*</code> npm scripts from package.json appear here too.</p>
+            {[["managed", "Managed by admin · all projects"], ["project", "Project-specific"], ["global", "Global"]].map(([g, l]) => (
+              <ToolGrid key={g} title={l} tools={exts.filter((t) => t.scope === g)} render={(t) => <ToolTile key={t.name} t={t} onOpen={() => openTool(t)}
+                action={<span className="link">{t.managed ? (S.admin?.unlocked ? "Edit" : "View") : t.status === "needs approval" ? "Review" : "Edit"}</span>} />} />))}
+            <div className="row-actions"><button className="btn primary" onClick={() => newTool(false)}>Create a tool with AI</button><button className="btn secondary" onClick={() => newTool(true)}>Write a script myself</button></div>
+          </Card>
+          <PackagesCard index={7} />
+        </div>
+      </div>
+    </section>
+  );
+}
+
+export function StatusBadge({ s }) {
+  return <span className={"badge " + (s === "tested" ? "badge-ok" : s === "in review" || s === "needs approval" ? "badge-warn" : "")}>{s}</span>;
+}

@@ -1,0 +1,58 @@
+import { backend } from "../backend.js";
+import { S, update } from "../store.js";
+import { resolveTheme, applyAppearance, ALL_THEMES, ALL_SKINS } from "../theme.js";
+import { FAMILIES, ANDROID_SEEDS, UI_FONTS, CODE_FONTS } from "../palettes.js";
+import { agentLabel } from "./Setup.jsx";
+
+export function Appearance() {
+  const a = S.appearance, cur = resolveTheme(a.theme);
+  const set = (k, v) => { a[k] = v; applyAppearance(a); update(); };
+  const Swatch = ({ t }) => { const u = t.ui; return (
+    <button className={"theme-card" + (a.theme === t.id ? " active" : "")} aria-pressed={a.theme === t.id} onClick={() => set("theme", t.id)}>
+      <span className="theme-preview" style={{ background: u["--bg"], borderColor: u["--border"] }} aria-hidden="true"><span style={{ background: u["--activity-bg"] }} /><span className="tp-body"><i style={{ background: u["--syn-keyword"] }} /><i style={{ background: u["--syn-string"] }} /><i style={{ background: u["--syn-function"] }} /><i style={{ background: u["--btn-bg"] }} /></span></span>
+      <span className="theme-name">{t.name.replace(/^(GitHub|Copilot) /, "")}</span></button>); };
+  const fam = S.themeFamily || cur.family || "github";
+  const list = ALL_THEMES.filter((t) => t.family === fam);
+  const custom = /^m3:/.test(a.theme) ? a.theme.split(":") : null;
+  const seed = custom ? custom[1] : S.m3seed || "#6750a4", seedDark = custom ? custom[2] === "dark" : S.m3dark ?? true;
+  const famSkin = ALL_SKINS.find((s) => s.family === cur.family);
+  const setSeed = (hex, dark) => { S.m3seed = hex; S.m3dark = dark; set("theme", `m3:${hex.toLowerCase()}:${dark ? "dark" : "light"}`); };
+  const cli = S.info?.agents?.find((x) => x.name === S.setup.provider);
+  return (
+    <section className="view"><header className="view-head"><h1>Appearance</h1></header>
+      <p className="wf-desc">Themes change color; skins change layout and type. Pick a family: GitHub, Copilot or Android (Material 3).</p>
+      <div className="card"><h3>Theme</h3><label className="check"><input type="radio" name="theme" checked={a.theme === "system"} onChange={() => set("theme", "system")} /> Match system (now {cur.name})</label>
+        <div className="tabs" role="tablist" aria-label="Theme family" style={{ marginTop: 10 }}>{FAMILIES.map((f) => <button key={f.id} role="tab" className="tab" aria-selected={fam === f.id} onClick={() => { S.themeFamily = f.id; update(); }}>{f.name}</button>)}</div>
+        <p className="muted" style={{ margin: "10px 0 0" }}>{FAMILIES.find((f) => f.id === fam)?.note}</p>
+        <h4>Dark</h4><div className="theme-grid">{list.filter((t) => t.type === "dark").map((t) => <Swatch key={t.id} t={t} />)}</div>
+        <h4>Light</h4><div className="theme-grid">{list.filter((t) => t.type === "light").map((t) => <Swatch key={t.id} t={t} />)}</div>
+        {fam === "android" && <>
+          <h4>Your own seed color</h4>
+          <div className="m3-seed">
+            <input type="color" value={seed} aria-label="Seed color" onChange={(e) => setSeed(e.target.value, seedDark)} />
+            <div className="chips">{ANDROID_SEEDS.map((s) => <button key={s.key} className="chip m3-chip" title={s.name} aria-label={s.name} style={{ background: s.seed }} onClick={() => setSeed(s.seed, seedDark)} />)}</div>
+            <div className="seg" role="group" aria-label="Brightness"><button className={"btn " + (seedDark ? "primary" : "secondary")} onClick={() => setSeed(seed, true)}>Dark</button><button className={"btn " + (!seedDark ? "primary" : "secondary")} onClick={() => setSeed(seed, false)}>Light</button></div>
+            {custom && <span className="badge badge-ok">in use</span>}
+          </div>
+          <p className="muted" style={{ marginTop: 6 }}>Material You builds the whole scheme (buttons, containers, surfaces, outlines and code colors) from the one color you pick.</p>
+        </>}</div>
+      {famSkin && a.skin !== famSkin.id && <div className="banner style-hint"><span>You're using a {FAMILIES.find((f) => f.id === cur.family)?.name} theme. Want the matching style too ({famSkin.name}: fonts, shapes, buttons)?</span>
+        <button className="btn primary" onClick={() => { a.font = ""; a.codeFont = ""; set("skin", famSkin.id); }}>Use {famSkin.name} style</button></div>}
+      <div className="card"><h3>Style</h3><p className="muted" style={{ margin: "0 0 8px" }}>Fonts, shapes and spacing. Colors come from the theme, so any style works with any theme.</p>
+        <div className="skin-grid">{ALL_SKINS.map((s) => <label key={s.id} className={"skin-card skin-sample" + (a.skin === s.id ? " active" : "")} data-sample={s.id}><input type="radio" name="skin" checked={a.skin === s.id} onChange={() => set("skin", s.id)} /><b>{s.name}</b><span className="muted">{s.note}</span><span className="sample-row" aria-hidden="true"><span className="sample-btn">Run</span><span className="sample-chip">chip</span></span></label>)}</div></div>
+      <div className="card"><h3>Fonts</h3>
+        <div className="two-col">
+          <label className="field"><span className="muted">Interface font</span><select value={a.font || ""} onChange={(e) => set("font", e.target.value)}>{UI_FONTS.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>
+          <label className="field"><span className="muted">Code font</span><select value={a.codeFont || ""} onChange={(e) => set("codeFont", e.target.value)}>{CODE_FONTS.map((f) => <option key={f.id} value={f.id}>{f.name}</option>)}</select></label>
+        </div>
+        <div className="font-preview"><span>SpecWright turns specs into working code — 0123456789</span><code>func (o Order) Total() float64 {"{"} return o.Price {"}"}</code></div>
+        <label className="field inline" style={{ marginTop: 10 }}><span>Text size {a.fontSize}px</span><input type="range" min="11" max="18" value={a.fontSize} aria-label="Text size" onChange={(e) => set("fontSize", +e.target.value)} /></label>
+        <p className="muted" style={{ marginTop: 6 }}>Roboto, Roboto Mono, Mona Sans, Inter and JetBrains Mono ship with the app (SIL Open Font License), so they work offline.</p></div>
+      <div className="card"><h3>Account</h3>
+        <p>Agent: <b>{agentLabel()}</b>{S.setup.source ? ` · ${S.setup.source}` : ""}{cli?.version ? ` · ${cli.version}` : ""}</p>
+        <label className="field inline" style={{ maxWidth: 320 }}><span>Model override (optional)</span><input value={S.setup.model || ""} placeholder="CLI default" onChange={(e) => { S.setup.model = e.target.value; update(); }} onBlur={() => backend.SetAgent(S.setup.provider === "skipped" ? "mock" : S.setup.provider, "", S.setup.model || "").catch(() => {})} /></label>
+        <p className="muted" style={{ marginTop: 8 }}>The app never stores agent credentials. The CLIs use their own sign-in; a pasted token lives in memory until the app quits. Run history is kept in <code className="inline-code">{S.info?.storeDir}</code>.</p>
+        <div className="row-actions"><button className="btn secondary" onClick={() => { backend.ClearToken(); S.setup = { ...S.setup, done: false }; update(); }}>Change agent or credentials</button></div></div>
+    </section>
+  );
+}

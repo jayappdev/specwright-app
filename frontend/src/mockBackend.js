@@ -1,0 +1,1083 @@
+// A stand-in for core.Hub so the UI runs in a plain browser (npm run dev).
+// It mirrors the Go API method-for-method and emits events with the same
+// flattened shape as bus.Event, driven by a scripted agent.
+
+import { BUILTINS } from "./builtins.generated.js";
+
+const KEY = "codegen.mock.v1";
+const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+const clone = (x) => JSON.parse(JSON.stringify(x));
+const now = () => new Date().toISOString();
+
+const FILES = {
+  "pom.xml": `<project>\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.acme</groupId>\n  <artifactId>orders-service</artifactId>\n  <version>0.1.0</version>\n  <properties>\n    <java.version>21</java.version>\n  </properties>\n</project>`,
+  "package.json": `{\n  "name": "orders-service-tools",\n  "private": true,\n  "scripts": {\n    "ext:openapi-lint": "spectral lint api/openapi.yaml"\n  }\n}`,
+  "api/openapi.yaml": `openapi: 3.0.3\ninfo:\n  title: Orders\n  version: 0.1.0\npaths:\n  /orders:\n    post:\n      summary: Place an order`,
+  "inputs/context-diagram.drawio": `<mxfile><diagram name="context">Customer → Orders → Stock, Kafka</diagram></mxfile>`,
+  ".codegen/skills/global/acme-java-style/SKILL.md": "---\nname: acme-java-style\ndescription: Corporate coding standard and review checklist\n---\n",
+  ".codegen/skills/global/security-baseline/SKILL.md": "---\nname: security-baseline\ndescription: OWASP rules, secret scanning, dependency policy\n---\n",
+  ".codegen/skills/global/logging-tracing/SKILL.md": "---\nname: logging-tracing\ndescription: Structured logs and OpenTelemetry conventions\n---\n",
+  ".codegen/skills/project/orders-domain.md": "# Domain glossary and aggregate rules for Orders\n",
+  ".codegen/skills/project/api-contracts.md": "# OpenAPI conventions for this team\n",
+  ".codegen/scripts/gen-dto.sh": "#!/usr/bin/env bash\n# Generates DTOs from the OpenAPI file\n",
+  "src/main/java/com/acme/orders/domain/OrderStatus.java": `package com.acme.orders.domain;\n\npublic enum OrderStatus { NEW, PLACED, REJECTED }`,
+  "src/main/java/com/acme/orders/ports/OrderRepository.java": `package com.acme.orders.ports;\n\nimport com.acme.orders.domain.Order;\n\npublic interface OrderRepository {\n    Order save(Order order);\n}`,
+  "src/main/java/com/acme/orders/ports/StockPort.java": `package com.acme.orders.ports;\n\nimport com.acme.orders.domain.Order;\n\npublic interface StockPort {\n    boolean reserve(Order order);\n}`,
+};
+
+const WRITES = {
+  ".specify/memory/constitution.md": (inp) => `# Orders Service Constitution\n\n## Core principles\n1. Every public service method has a unit test.\n2. No secrets in source; read them from the vault at run time.\n3. Follow acme-java-style.\n${inp ? `\n## From the team\n- ${inp}\n` : ""}\n## Governance\nChanges to this file need two approvals.`,
+  "specs/001-orders/spec.md": (inp) => `# Feature: Place an order\n\n## User story\n${inp || "As a customer I can place an order so that stock is reserved."}\n\n## Acceptance\n- Given stock, when I order, then an OrderPlaced event is emitted.\n- Given no stock, the order is rejected with a reason.\n- [NEEDS CLARIFICATION] partial shipments\n- [NEEDS CLARIFICATION] currency`,
+  "specs/001-orders/plan.md": (inp) => `# Plan\n\n- ${inp || "Java 21, Spring Boot 3"}\n- PostgreSQL via Spring Data JPA\n- Kafka for OrderPlaced\n- Hexagonal: domain / application / adapters\n\nConstitution check: passed`,
+  "specs/001-orders/data-model.md": () => `# Data model\n\n- Order(id, lines, status)\n- OrderLine(sku, quantity, unitPrice)`,
+  "specs/001-orders/tasks.md": () => `# Tasks\n\n- [ ] T001 Create Order aggregate\n- [ ] T002 [P] OrderRepository port\n- [ ] T003 PlaceOrderService with stock check\n- [ ] T004 Kafka publisher adapter\n- [ ] T005 REST controller`,
+  "src/main/java/com/acme/orders/domain/Order.java": () => `package com.acme.orders.domain;\n\nimport java.math.BigDecimal;\nimport java.util.List;\nimport java.util.UUID;\n\n/** Order aggregate. Generated from specs/001-orders. */\npublic final class Order {\n    private final UUID id;\n    private final List<OrderLine> lines;\n    private OrderStatus status = OrderStatus.NEW;\n\n    public Order(UUID id, List<OrderLine> lines) {\n        if (lines.isEmpty()) throw new IllegalArgumentException("an order needs at least one line");\n        this.id = id;\n        this.lines = List.copyOf(lines);\n    }\n\n    public BigDecimal total() {\n        return lines.stream().map(OrderLine::subtotal).reduce(BigDecimal.ZERO, BigDecimal::add);\n    }\n\n    public void place() { this.status = OrderStatus.PLACED; }\n    public UUID id() { return id; }\n    public OrderStatus status() { return status; }\n}`,
+  "src/main/java/com/acme/orders/domain/OrderLine.java": () => `package com.acme.orders.domain;\n\nimport java.math.BigDecimal;\n\npublic record OrderLine(String sku, int quantity, BigDecimal unitPrice) {\n    public BigDecimal subtotal() {\n        return unitPrice.multiply(BigDecimal.valueOf(quantity));\n    }\n}`,
+  "src/main/java/com/acme/orders/application/PlaceOrderService.java": () => `package com.acme.orders.application;\n\nimport com.acme.orders.domain.Order;\nimport com.acme.orders.ports.OrderRepository;\nimport com.acme.orders.ports.StockPort;\n\npublic class PlaceOrderService {\n    private final OrderRepository orders;\n    private final StockPort stock;\n\n    public PlaceOrderService(OrderRepository orders, StockPort stock) {\n        this.orders = orders;\n        this.stock = stock;\n    }\n\n    // Rule R-014: reject when any line is out of stock\n    public Order place(Order order) {\n        if (!stock.reserve(order)) {\n            throw new IllegalStateException("out of stock");\n        }\n        order.place();\n        return orders.save(order);\n    }\n}`,
+};
+
+const SCRIPT = {
+  constitution: [["Read", ".codegen/skills/global/acme-java-style/SKILL.md"], ["Write", ".specify/memory/constitution.md"], ["say", "Drafted a constitution with 3 core principles (testing, secrets, style) and a governance section."]],
+  specify: [["Read", "inputs/context-diagram.drawio"], ["Write", "specs/001-orders/spec.md"], ["say", "Wrote the spec: 1 user story, 2 acceptance scenarios. Marked 2 items [NEEDS CLARIFICATION]: partial shipments, currency."]],
+  clarify: [["say", "Q1: Are partial shipments allowed?  Q2: Single currency or multi-currency?"], ["Edit", "specs/001-orders/spec.md"], ["say", "Recorded your answers in the Clarifications section."]],
+  plan: [["Read", "specs/001-orders/spec.md"], ["Write", "specs/001-orders/plan.md"], ["Write", "specs/001-orders/data-model.md"], ["say", "Plan: Java 21, Spring Boot 3, PostgreSQL, Kafka, hexagonal layout. Constitution check passed."]],
+  tasks: [["Write", "specs/001-orders/tasks.md"], ["say", "Broke the plan into 5 tasks, 1 parallel. Tests come first for each service."]],
+  implement: [["Write", "src/main/java/com/acme/orders/domain/Order.java"], ["Write", "src/main/java/com/acme/orders/domain/OrderLine.java"], ["Write", "src/main/java/com/acme/orders/application/PlaceOrderService.java"], ["ext", "gen-dto"], ["say", "Implemented T001–T003. T004–T005 are left for the next pass."]],
+};
+
+const step = (id, title, ask, ph, tpl) => ({ id, title, cmd: "/speckit." + id, ask, placeholder: ph, template: tpl, input: "", instructions: "", feedback: "", options: { rules: true, global: true, project: true, diagrams: true, tools: false }, gate: true, retries: 1, status: "pending", lastRun: "" });
+const specKit = () => ({ version: 1, id: "speckit", name: "Spec workflow", budget: { maxTokens: 2000000, maxUsd: 10, maxPremiumRequests: 30 }, steps: [
+  step("constitution", "Constitution", "Project principles (code quality, testing, security, performance)", "e.g. Every public service has unit tests; no secrets in code; follow ACME Java style.", "Keep principles short and testable. Reuse corporate rules instead of restating them."),
+  step("specify", "Specify", "What to build and why (no tech stack yet)", "e.g. An order service that accepts orders, validates stock and emits OrderPlaced events.", "Describe what and why only. Mark anything unknown as [NEEDS CLARIFICATION]."),
+  step("clarify", "Clarify", "Answers to open questions, or areas to probe", "e.g. Partial shipments are allowed; currency is always EUR.", "Ask at most 5 questions, highest impact first. Record answers in the spec."),
+  step("plan", "Plan", "Tech stack and architecture choices", "e.g. Java 21, Spring Boot 3, PostgreSQL, Kafka, hexagonal layout.", "Check the plan against the constitution. Prefer the corporate golden path."),
+  step("tasks", "Tasks", "Constraints for the task breakdown", "e.g. Tests first; keep tasks under half a day; mark parallel tasks.", "Order tasks by dependency, tests first. Mark tasks that can run in parallel with [P]."),
+  step("implement", "Implement", "Scope for this implementation pass", "e.g. Implement phase 1 and 2 tasks only.", "Work task by task, run the build after each one, stop on the first failure."),
+] });
+
+const ext = (o) => ({ kind: "script", scope: "project", status: "tested", lang: "Bash", params: [], secrets: [], perms: ["read files"], revision: 1, approved: true, ...o });
+function seed() {
+  return {
+    root: "~/src/orders-service",
+    profile: { lang: "Java", build: "Maven", global: ["global:skill:acme-java-style", "global:skill:security-baseline"], globalMode: "incremental", project: ["project:skill:orders-domain", "project:script:gen-dto.sh"], projectMode: "incremental",
+      folders: [{ path: ".codegen/rules", note: "Functionality rules (exportable)" }, { path: ".codegen/skills/global", note: "Corporate skills, read-only copy" }, { path: ".codegen/skills/project", note: "Project skills" }, { path: ".codegen/scripts", note: "Deterministic scripts" }, { path: ".codegen/tools", note: "Tools and extensions" }],
+      foldersMode: "incremental", diagrams: { context: "inputs/context-diagram.drawio" },
+      rules: [{ id: "R-001", text: "Every aggregate exposes an id() accessor" }, { id: "R-007", text: "Monetary values use BigDecimal, never double" }, { id: "R-014", text: "Reject an order when any line is out of stock" }] },
+    wf: specKit(),
+    files: clone(FILES),
+    exts: [
+      ext({ name: "gen-dto", desc: "Regenerate DTOs from the OpenAPI file.", params: [{ name: "spec", type: "string", required: true, desc: "Path to openapi.yaml" }], perms: ["read files", "write src/"], command: "bash .codegen/tools/project/gen-dto.sh {{spec}}", scriptPath: ".codegen/tools/project/gen-dto.sh", script: "#!/usr/bin/env bash\nset -euo pipefail\nopenapi-generator generate -i \"$1\" -g java -o build/generated --global-property models", sampleTest: "Regenerate the DTOs", testPrompt: "Regenerate the DTOs", call: { spec: "api/openapi.yaml" }, output: "Generated 6 model classes in build/generated" }),
+      ext({ name: "sonar-scan", desc: "Run the corporate Sonar quality gate and return blocking issues.", scope: "global", secrets: [{ name: "SONAR_TOKEN", desc: "Sonar token" }], perms: ["read files", "network: sonar.acme.internal"], command: "bash .codegen/tools/global/sonar-scan.sh", script: "#!/usr/bin/env bash\nset -euo pipefail\n./mvnw -q sonar:sonar -Dsonar.token=\"$SONAR_TOKEN\" -Dsonar.qualitygate.wait=true", sampleTest: "Does this pass the quality gate?", testPrompt: "Does this pass the quality gate?", call: {}, output: "Quality gate: PASSED (0 blocking issues)" }),
+    ],
+    runs: [], events: {},
+    pkg: { proxy: { http: "", https: "", noProxy: "" }, caFile: "", npm: { registry: "" }, pip: { indexUrl: "", extraIndexUrl: "", trustedHost: "" }, go: { proxy: "", private: "", noSumDb: "", sumDb: "", insecure: "", toolchain: "" }, maven: { mirrorUrl: "", mirrorOf: "" }, applyToAgents: false },
+    ledger: [
+      { at: "2026-11-04T15:00:00Z", workspace: "~/src/billing-api", step: "implement", state: "done", steps: 6, files_created: 23, input_tokens: 412000, output_tokens: 38000, cost_usd: 2.41, premium_requests: 0, model_calls: 61 },
+      { at: "2026-11-02T10:00:00Z", workspace: "~/src/inventory-sync", step: "tasks", state: "failed", steps: 4, files_created: 9, input_tokens: 150000, output_tokens: 12000, cost_usd: 0.88, premium_requests: 0, model_calls: 22 },
+    ],
+  };
+}
+
+const HOURS = { constitution: 0.5, specify: 3, clarify: 1.5, plan: 4, tasks: 2, implement: 14 };
+
+export function createMockBackend(methods) {
+  let db; try { db = JSON.parse(localStorage.getItem(KEY) || "null"); } catch { db = null; }
+  if (!db || !db.wf) db = seed();
+  if (db.wf.name === "Spec Kit") db.wf.name = "Spec workflow";
+  const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch { /* ignore */ } };
+  const listeners = new Set();
+  const secrets = {};
+  // environment variables the preview pretends are exported in ~/.zshrc
+  const ENV = { SONAR_TOKEN: "sonar-preview-token", PGHOST: "localhost", PGUSER: "orders_ro" };
+  const pendingAsks = new Map();
+  const infoOf = (s) => {
+    const src = s.source || "auto", env = s.env || s.name, envSet = env in ENV, inSession = s.name in secrets;
+    const via = src === "env" ? (envSet ? "env" : "missing") : src === "session" ? (inSession ? "session" : "missing") : src === "ask" ? (inSession ? "session" : "ask") : inSession ? "session" : envSet ? "env" : "ask";
+    return { name: s.name, source: src, env, envSet, via };
+  };
+  // like Hub.ResolveSecrets: session → env → ask the user through the UI
+  const resolveSecrets = async (tool, list) => {
+    const vals = {}, ask = [];
+    for (const s of list || []) {
+      const st = infoOf(s);
+      if (st.via === "session") vals[s.name] = secrets[s.name];
+      else if (st.via === "env") vals[s.name] = ENV[st.env];
+      else if (st.via === "ask") ask.push(s);
+      else throw new Error(st.source === "env" ? `environment variable ${st.env} is not set (needed for ${s.name})` : `${s.name} has no value for this session`);
+    }
+    if (ask.length) {
+      const id = Math.random().toString(16).slice(2);
+      const answer = await new Promise((res) => { pendingAsks.set(id, res); emit({ type: "secret.request", id, tool: tool.name, secrets: ask, reason: tool.desc, summary: `${tool.name} needs ${ask.map((x) => x.name).join(", ")}` }); });
+      pendingAsks.delete(id);
+      emit({ type: "secret.resolved", id, ok: !answer.cancel });
+      if (answer.cancel) throw new Error("you declined to provide " + ask.map((x) => x.name).join(", "));
+      if (answer.remember) Object.assign(secrets, answer.values);
+      Object.assign(vals, answer.values);
+    }
+    return vals;
+  };
+  let agent = "claude", live = null;
+  const emit = (e) => { e.ts ||= now(); listeners.forEach((f) => f(e)); };
+
+  const libraries = () => {
+    const out = [];
+    for (const p of Object.keys(db.files)) {
+      let m;
+      if ((m = p.match(/^\.codegen\/skills\/(global|project)\/([^/]+)\/SKILL\.md$/))) out.push({ id: `${m[1]}:skill:${m[2]}`, name: m[2], kind: "skill", scope: m[1], path: p, note: (db.files[p].match(/description: (.*)/) || [])[1] || "" });
+      else if ((m = p.match(/^\.codegen\/skills\/(global|project)\/([^/]+)\.md$/))) out.push({ id: `${m[1]}:skill:${m[2]}`, name: m[2], kind: "skill", scope: m[1], path: p, note: db.files[p].replace(/^#\s*/, "").split("\n")[0] });
+      else if ((m = p.match(/^\.codegen\/scripts\/([^/]+)$/))) out.push({ id: `project:script:${m[1]}`, name: m[1], kind: "script", scope: "project", path: p, note: (db.files[p].split("\n")[1] || "").replace(/^#\s*/, "") });
+    }
+    return out;
+  };
+  // --- admin (browser preview: no real crypto; the desktop app signs with Ed25519) ---
+  const AKEY = "codegen.mock.admin.v1";
+  let adm; try { adm = JSON.parse(localStorage.getItem(AKEY) || "null"); } catch { adm = null; }
+  adm ||= { key: null, managed: [
+    { name: "corp-sonar-gate", desc: "Run the corporate Sonar quality gate on this project.", kind: "script", lang: "Bash", params: [], secrets: [{ name: "SONAR_TOKEN", desc: "Sonar token", source: "" }], perms: ["read files", "network: sonar.acme.internal"],
+      command: "bash .codegen/tools/corp-sonar-gate.sh", script: "#!/usr/bin/env bash\nset -euo pipefail\n./mvnw -q sonar:sonar -Dsonar.token=\"$SONAR_TOKEN\" -Dsonar.qualitygate.wait=true && echo 'Quality gate: PASSED'\n", sampleTest: "Does this pass the quality gate?", call: {}, output: "Quality gate: PASSED (0 blocking issues)",
+      managed: { version: 3, signedBy: "sw1-4f2a9c1e7b3d5a60", signer: "Platform team", signedAt: "2026-11-02T09:00:00Z", status: "verified" } },
+  ] };
+  let unlocked = false;
+  adm.libs ||= [];
+  // corporate libraries: copy the catalog into the project, drop retired ones
+  const syncLibs = () => {
+    db.mlibs ||= [];
+    for (const l of adm.libs) db.files[`.codegen/skills/global/${l.name}/SKILL.md`] = l.content;
+    for (const n of db.mlibs) if (!adm.libs.some((l) => l.name === n)) delete db.files[`.codegen/skills/global/${n}/SKILL.md`];
+    db.mlibs = adm.libs.map((l) => l.name); persist();
+  };
+  const annotated = () => { syncLibs(); return libraries().map((l) => { const m = l.scope === "global" && adm.libs.find((x) => x.name === l.name); return m ? { ...l, note: m.desc || l.note, managed: { version: m.version, signer: m.signer, signedAt: m.signedAt, status: "verified", source: "app" } } : l; }); };
+  const savAdm = () => { try { localStorage.setItem(AKEY, JSON.stringify(adm)); } catch { /* ignore */ } };
+  const managedView = () => adm.managed.map((t) => ({ ...clone(t), scope: "managed", status: "managed", approved: true }));
+  const isManaged = (n) => adm.managed.some((t) => t.name === n);
+  const refuse = (n) => { throw new Error(`${n} is a managed tool published by an admin; it cannot be changed here`); };
+  const status = () => ({ hasKey: !!adm.key, keyId: adm.key?.id, name: adm.key?.name, publicKey: adm.key?.pub, unlocked, keyTrusted: !!adm.key,
+    trusted: [{ id: "sw1-4f2a9c1e7b3d5a60", name: "Platform team", source: "policy", publicKey: "" }, ...(adm.key ? [{ id: adm.key.id, name: adm.key.name, source: "local", publicKey: adm.key.pub }] : [])],
+    policyPath: "/Library/Application Support/SpecWright/policy.json", policyFound: true, allowLocal: true,
+    managedFile: "~/Library/Application Support/codegen/managed-tools.json", machineCatalog: "/Library/Application Support/SpecWright/managed-tools.json" });
+  const hash = (x) => [...x].reduce((a, c) => (a * 31 + c.charCodeAt(0)) >>> 0, 7).toString(16);
+
+  const extensions = () => {
+    const list = clone(db.exts);
+    const pkg = (() => { try { return JSON.parse(db.files["package.json"] || "{}"); } catch { return {}; } })();
+    for (const [k, v] of Object.entries(pkg.scripts || {})) {
+      if (!k.startsWith("ext:")) continue;
+      const name = k.slice(4), saved = list.find((e) => e.name === name);
+      if (saved) { if (saved.script !== v) { saved.status = "needs approval"; saved.approved = false; } continue; }
+      list.push({ name, desc: `npm script ${k}: ${v}`, kind: "npm", scope: "project", status: "needs approval", lang: "Node.js", command: "npm run --silent " + k, script: v, params: [], secrets: [], perms: ["runs Node.js"], revision: 1, approved: false });
+    }
+    return [...managedView(), ...list.filter((e) => !isManaged(e.name))];
+  };
+  const wsState = () => ({ root: db.root, name: db.root.split("/").pop(), profile: db.profile, libraries: annotated(), workflow: clone(db.wf), extensions: extensions(), fileCount: Object.keys(db.files).length, specKit: true });
+
+  function writeFile(path, content, run) {
+    const old = db.files[path];
+    db.files[path] = content;
+    const n = content.split("\n").length, o = old ? old.split("\n") : [];
+    const added = old ? content.split("\n").filter((l) => !o.includes(l)).length : n;
+    const removed = old ? o.filter((l) => !content.split("\n").includes(l)).length : 0;
+    run.pub(old == null ? "fs.write" : "fs.edit", `${old == null ? "Created" : "Modified"} ${path}`, { path, added, removed, op: old == null ? "created" : "modified" });
+    emit({ type: "workspace.files", summary: "1 file(s) changed", changes: [{ path, op: old == null ? "created" : "modified" }] });
+  }
+
+  function setStatus(st, status, runId) {
+    st.status = status; st.lastRun = runId; persist();
+    const r = db.runs.find((x) => x.id === runId); if (r) r.state = status;
+    emit({ type: "workflow.changed", run_id: runId, step: st.id, summary: status });
+  }
+
+  async function execute(run, st, prompt) {
+    const R = ((s) => () => ((s = (s * 9301 + 49297) % 233280) / 233280))(prompt.length + st.id.length);
+    const model = agent === "copilot" ? "copilot/default" : "claude-sonnet-5-5";
+    let ctx = 2400 + Math.round(prompt.length / 3.6);
+    run.pub("prompt.compose", `Prompt composed (${prompt.length} chars)`, { prompt });
+    for (const [kind, arg] of st.script || SCRIPT[st.id] || [["say", "Done."]]) {
+      await wait(280 + R() * 420); if (run.cancelled) return "cancelled";
+      run.pub("model.request", "Request → " + model, { input_tokens: ctx, cached_tokens: Math.round(ctx * 0.8), model });
+      await wait(300 + R() * 500); if (run.cancelled) return "cancelled";
+      if (kind === "say") {
+        const out = 120 + Math.round(R() * 260); ctx += out;
+        run.pub("model.response", "Response · end_turn", { output_tokens: out, stop_reason: "end_turn" });
+        run.pub("model.text", arg, { text: arg });
+        continue;
+      }
+      const out = 80 + Math.round(R() * (kind === "Write" ? 900 : 120));
+      run.pub("model.response", "Response · tool_use", { output_tokens: out, stop_reason: "tool_use" });
+      const id = "t" + run.seq;
+      if (kind === "ext") {
+        const e = db.exts.find((x) => x.name === arg);
+        run.pub("tool.call", "extension_managed " + arg, { tool: "mcp__agentbridge__extension_managed", args: { name: arg, arguments: e?.call || {} }, id });
+        await wait(500);
+        run.pub("ext.result", `${arg} → exit 0`, { name: arg, ok: true, exit_code: 0, duration_ms: 640, output: e?.output || "ok" });
+        run.pub("tool.result", "extension_managed ok · 640ms", { tool: "mcp__agentbridge__extension_managed", id, ok: true, duration_ms: 640 });
+      } else {
+        run.pub("tool.call", `${kind} ${arg}`, { tool: kind, args: { file_path: arg }, id });
+        await wait(200 + R() * 300);
+        if (kind === "Write") writeFile(arg, (WRITES[arg] || (() => "// generated\n"))(st.input.trim()), run);
+        if (kind === "Edit") writeFile(arg, (db.files[arg] || "") + `\n\n## Clarifications\n- ${st.input.trim() || "Partial shipments are allowed; currency is always EUR."}`, run);
+        const d = 40 + Math.round(R() * 400);
+        run.pub("tool.result", `${kind} ok · ${d}ms`, { tool: kind, id, ok: true, duration_ms: d, bytes: 300 + Math.round(R() * 4200) });
+      }
+      ctx += 400 + out;
+    }
+    const u = run.usage();
+    const cost = agent === "copilot" ? 0 : ((u.in - u.cached) * 3 + u.cached * 0.3 + u.out * 15) / 1e6;
+    run.pub("model.usage", agent === "copilot" ? "Copilot: 1 premium request(s)" : `Claude: $${cost.toFixed(4)}`, agent === "copilot" ? { premium_requests: 1 } : { cost_usd: cost });
+    return "ok";
+  }
+
+
+  // --- run ids, results folders and conversation context (like core/results.go) ---
+  const pad2 = (n) => String(n).padStart(2, "0");
+  const newRunId = () => { const d = new Date(); return `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(d.getMinutes())}${pad2(d.getSeconds())}-` + (crypto.randomUUID ? crypto.randomUUID() : "00000000-0000-4000-8000-" + Math.random().toString(16).slice(2, 14).padEnd(12, "0")); };
+  const resultsDir = (id) => `.codegen/runs/${id.slice(0, 4)}-${id.slice(4, 6)}-${id.slice(6, 8)}/${id}`;
+  const kindOf = (r) => r.kind || (r.step === "flow" ? "flow" : r.workflow === "playground" ? "playground" : "workflow");
+  const digest = (id) => {
+    const r = db.runs.find((x) => x.id === id); if (!r) return null;
+    const evs = db.events[id] || [], kind = kindOf(r);
+    const st = [...evs].reverse().find((e) => e.type === "flow.state")?.state;
+    const answer = kind === "flow" && st?.outputs?.length ? st.outputs.map((o) => `### ${o.title} (${o.format})\n${o.content}`).join("\n\n") : evs.filter((e) => e.type === "model.text").map((e) => e.text).join("\n\n");
+    const files = [...new Set(evs.filter((e) => e.type.startsWith("fs.")).map((e) => e.path))];
+    return { id, kind, title: r.title || (r.ask || r.step).split("\n")[0].slice(0, 100), ask: r.ask || "", answer, state: r.state, started: r.started, ended: r.ended, agent: r.agent, model: r.model, usage: r.usage || {}, parents: r.parents || [], results: r.results || "", files, outputs: st?.outputs || [], workflow: r.workflow };
+  };
+  const thread = (id, seen = new Set(), out = []) => { if (seen.has(id) || out.length >= 12) return out; seen.add(id); const d = digest(id); if (!d) return out; for (const p of d.parents) thread(p, seen, out); out.push(d); return out; };
+  const contextFor = (parents) => {
+    const all = [], seen = new Set();
+    for (const p of parents) { if (!db.runs.some((x) => x.id === p)) throw new Error(`the earlier run ${p} is no longer recorded`); for (const d of thread(p)) if (!seen.has(d.id)) { seen.add(d.id); all.push(d); } }
+    all.sort((a, b) => String(a.started).localeCompare(String(b.started)));
+    const label = { playground: "Prompt", workflow: "Workflow step", flow: "Flow run" };
+    return "This continues earlier work in this project. The earlier runs are below, oldest first. Their complete results are in the folders named; read those files when you need more detail.\n" +
+      all.slice(-10).map((d, i) => `\n### ${i + 1}. ${label[d.kind] || "Run"}: ${d.title} (${String(d.started).slice(0, 16).replace("T", " ")}, ${d.state})\n${d.results ? "Results folder: " + d.results + "/\n" : ""}Request: ${d.ask}\nAnswer:\n${(d.answer || "(no text answer)").slice(0, 6000)}\n`).join("") + "\n---\n\nNow, continuing from the above:\n";
+  };
+  const writeResults = (id) => {
+    const r = db.runs.find((x) => x.id === id), d = digest(id); if (!r || !d) return;
+    const dir = resultsDir(id), evs = db.events[id] || [], put = (n, c) => { db.files[`${dir}/${n}`] = c; };
+    const prompt = [...evs].reverse().find((e) => e.type === "prompt.compose")?.prompt || d.ask;
+    const calls = evs.filter((e) => e.type === "tool.call");
+    put("prompt.md", prompt + "\n");
+    if (d.answer) put("answer.md", d.answer + "\n");
+    if (calls.length) put("tools.md", `# Tool calls (${calls.length})\n\n` + calls.map((c, i) => `## ${i + 1}. ${String(c.tool).replace("mcp__agentbridge__", "")}\n\n${c.summary}\n`).join("\n"));
+    const extOf = (t) => { t = String(t || "").trim(); if (/^\s*(<!doctype|<html|<(div|p|h[1-6]|table|body)\b)/i.test(t)) return "html"; if (/^[[{]/.test(t)) { try { JSON.parse(t); return "json"; } catch { /* no */ } } const l = t.split("\n"), n = (l[0].match(/,/g) || []).length; if (l.length > 1 && n && l.slice(1).every((x) => !x.trim() || (x.match(/,/g) || []).length === n)) return "csv"; return /^(#{1,6}\s|\s*[-*]\s)/m.test(t) ? "md" : "txt"; };
+    calls.forEach((c, i) => {
+      const dirc = `tools/${pad2(i + 1)}-${String(c.tool).replace(/^mcp__agentbridge__/, "").replace(/[^A-Za-z0-9._-]+/g, "_")}`;
+      const res = evs.find((x) => x.type === "tool.result" && x.seq > c.seq && (c.id ? x.id === c.id : x.tool === c.tool));
+      if (c.args) put(dirc + "/input.json", JSON.stringify(c.args, null, 2) + "\n");
+      if (res) put(dirc + "/output." + extOf(res.output), res.output || "");
+    });
+    if (d.files.length) put("files.md", "# Files changed\n\n" + d.files.map((f) => "- " + f).join("\n") + "\n");
+    if (d.kind === "flow") { const st = [...evs].reverse().find((e) => e.type === "flow.state")?.state; if (st) { put("state.json", JSON.stringify(st, null, 2)); st.steps.forEach((x) => x.output && put(`steps/${x.id}.txt`, x.output)); st.outputs.forEach((o, i) => put(`outputs/${pad2(i + 1)}-${o.title.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "")}.${o.format}`, o.content)); } }
+    put("events.jsonl", evs.map((e) => JSON.stringify(e)).join("\n") + "\n");
+    r.results = dir;
+    put("run.json", JSON.stringify(r, null, 2));
+    const kindLabel = { playground: "Playground prompt", workflow: "Workflow step", flow: "Flow run" }[d.kind];
+    put("summary.md", `# ${kindLabel}: ${d.title}\n\n- **Run id:** \`${id}\`\n- **Started:** ${d.started}${r.ended ? " · **ended** " + r.ended : ""}\n- **State:** ${r.state}\n- **Agent:** ${r.agent}${r.model ? " · " + r.model : ""}\n${d.parents.length ? "- **Continues:** " + d.parents.join(", ") + "\n" : ""}\n## Files here\n\n- \`prompt.md\`, \`answer.md\`, \`tools.md\`, \`events.jsonl\`, \`run.json\`${d.kind === "flow" ? ", `outputs/`, `steps/`, `state.json`" : ""}\n${d.answer ? "\n## Answer\n\n" + d.answer.slice(0, 1500) + "\n" : ""}`);
+    persist();
+    emit({ type: "results.saved", run_id: id, dir, summary: dir });
+  };
+  function makeRun(st) {
+    const id = newRunId();
+    const t0 = Date.now();
+    const evs = (db.events[id] = []);
+    const run = { id, seq: 0, cancelled: false, decision: null, waiter: null,
+      pub(type, summary, data = {}) { const e = { seq: ++run.seq, ts: now(), run_id: id, step: st.id, type, summary, dt: Date.now() - t0, ...data }; evs.push(e); emit(e); return e; },
+      usage() { const u = { in: 0, out: 0, cached: 0, tools: 0, files: new Set() }; for (const e of evs) { if (e.type === "model.request") { u.in += e.input_tokens; u.cached += e.cached_tokens; } if (e.type === "model.response") u.out += e.output_tokens; if (e.type === "tool.call") u.tools++; if (e.type.startsWith("fs.")) u.files.add(e.path); } return u; },
+      decide() { return new Promise((r) => { run.waiter = r; }); },
+    };
+    db.runs.unshift({ id, workspace: db.root, workflow: st.id === "playground" ? "playground" : "speckit", step: st.id, agent, model: agent === "copilot" ? "copilot/default" : "claude-sonnet-5-5", state: "running", started: now(), usage: {},
+      kind: st.id === "playground" ? "playground" : "workflow", title: st.runTitle || (st.id === "playground" ? (st.ask || st.input || "").split("\n")[0].slice(0, 100) : st.title), ask: st.ask || st.input || "", parents: st.parents || [] });
+    return run;
+  }
+
+  async function startRun(st) {
+    const run = makeRun(st); live = run;
+    setStatus(st, "running", run.id);
+    run.pub("run.start", `Started ${st.id} with ${agent}`, { agent, model: agent === "copilot" ? "copilot/default" : "claude-sonnet-5-5", cwd: db.root });
+    (async () => {
+      let feedback = "", final = "done", reason = "approved";
+      for (;;) {
+        const res = await execute(run, st, st.rawPrompt ?? compose(st, feedback));
+        if (res === "cancelled") { final = "cancelled"; reason = "cancelled by you"; break; }
+        const u = run.usage();
+        run.pub("run.usage", `Usage: ${u.in} in · ${u.out} out · ${u.tools} tools · ${u.files.size} files`, { input_tokens: u.in, output_tokens: u.out, cached_tokens: u.cached, tool_calls: u.tools, files_changed: u.files.size });
+        if (!st.gate) { reason = "completed"; break; }
+        setStatus(st, "paused", run.id);
+        run.pub("gate.wait", "Paused for human approval", { gate: "approval" });
+        const d = await run.decide();
+        if (d.kind === "cancel") { final = "cancelled"; reason = "cancelled at the gate"; break; }
+        if (d.kind === "approve") { run.pub("gate.approved", "Approved by you"); break; }
+        if (d.kind === "reject") { run.pub("gate.rejected", "Rejected by you"); final = "failed"; reason = "rejected"; break; }
+        run.pub("gate.changes", "Changes requested", { feedback: d.feedback }); feedback = d.feedback;
+        setStatus(st, "running", run.id);
+      }
+      run.pub("run.end", "Run " + final, { state: final, reason });
+      const u = run.usage(), r = db.runs.find((x) => x.id === run.id);
+      const evs = db.events[run.id], cost = evs.filter((e) => e.type === "model.usage").reduce((a, e) => a + (e.cost_usd || 0), 0), prem = evs.filter((e) => e.type === "model.usage").reduce((a, e) => a + (e.premium_requests || 0), 0);
+      const created = evs.filter((e) => e.type === "fs.write").length;
+      Object.assign(r, { state: final, reason, ended: now(), events: run.seq, usage: { input_tokens: u.in, output_tokens: u.out, cached_tokens: u.cached, tool_calls: u.tools, files_created: created, files_modified: u.files.size - created, cost_usd: cost, premium_requests: prem, model_calls: evs.filter((e) => e.type === "model.request").length } });
+      setTimeout(() => writeResults(run.id), 150);
+      db.ledger.push({ at: now(), workspace: db.root, workflow: st.id === "playground" ? "playground" : "speckit", step: st.id, state: final, files_created: created, input_tokens: u.in, output_tokens: u.out, cost_usd: cost, premium_requests: prem, model_calls: r.usage.model_calls });
+      live = null; setStatus(st, final, run.id);
+    })();
+    return run.id;
+  }
+
+  function compose(st, feedback) {
+    const p = db.profile, o = st.options, libs = libraries();
+    const pick = (ids) => libs.filter((l) => ids.includes(l.id)).map((l) => `- ${l.name} (${l.kind}): ${l.path}`).join("\n");
+    return [`${st.cmd} ${st.input.trim()}`,
+      st.instructions.trim() && `\n## Instructions\n${st.instructions.trim()}`,
+      o.rules && p.rules.length && `\n## Rules\n${p.rules.map((r) => `- ${r.id}: ${r.text}`).join("\n")}`,
+      o.global && p.global.length && `\n## Corporate skills (read before you start)\n${pick(p.global)}`,
+      o.project && p.project.length && `\n## Project skills and scripts\n${pick(p.project)}`,
+      o.diagrams && Object.keys(p.diagrams || {}).length && `\n## Input diagrams\n${Object.entries(p.diagrams).map(([k, v]) => `- ${k} diagram: ${v}`).join("\n")}`,
+      o.tools && `\n## Tools available\nCall them with the extension_managed tool (MCP server agentbridge).\n${db.exts.filter((t) => t.approved && t.status !== "in review").map((t) => `- ${t.name}: ${t.desc}${t.secrets.length ? ` (env: ${t.secrets.map((s) => s.name + "=[REDACTED]").join(", ")})` : ""}`).join("\n")}`,
+      `\n## Project\nLanguage: ${p.lang} · build: ${p.build}`,
+      feedback && `\n## Change request from the reviewer\n${feedback}\nRevise your previous output for this step accordingly.`,
+    ].filter(Boolean).join("\n");
+  }
+
+
+  // --- flows (browser preview: a JS subset of the Go designer helpers) ---
+  const FLOW_OPS = {
+    template: { name: "Fill a template", group: "Text", help: "Write the result with {{input}} and any other variable.", template: true },
+    trim: { name: "Trim whitespace", group: "Text" }, uppercase: { name: "UPPERCASE", group: "Text" }, lowercase: { name: "lowercase", group: "Text" },
+    truncate: { name: "Keep the first N characters", group: "Text", expr: "N" },
+    "filter-lines": { name: "Keep matching lines", group: "Text", expr: "Regular expression" },
+    "regex-extract": { name: "Extract with a pattern", group: "Text", help: "Every match on its own line (the first group if the pattern has one).", expr: "Regular expression" },
+    "regex-replace": { name: "Find and replace", group: "Text", help: "$1, $2 … refer to groups.", expr: "Regular expression", replace: true },
+    "split-lines": { name: "Lines → JSON array", group: "Convert" },
+    "json-path": { name: "Pick a JSON value", group: "JSON", help: "A path like items[0].name, items[*].id or $.data.total.", expr: "Path" },
+    "json-pick": { name: "Keep JSON fields", group: "JSON", help: "Comma-separated field names; works on an object or an array of objects.", expr: "Fields" },
+    "json-pretty": { name: "Format JSON", group: "JSON" }, "json-minify": { name: "Minify JSON", group: "JSON" },
+    "csv-to-json": { name: "CSV → JSON", group: "Convert" }, "json-to-csv": { name: "JSON → CSV", group: "Convert" },
+    "md-to-html": { name: "Markdown → HTML", group: "Convert" }, "html-to-text": { name: "HTML → text", group: "Convert" },
+    ai: { name: "Ask AI to transform", group: "AI", help: "Describe the change; {{input}} is the data. Runs with the agent when the flow runs.", template: true, ai: true },
+  };
+  db.flows ||= { "todo-report": { version: 1, id: "todo-report", name: "TODO report", description: "Collect open TODOs, keep the important ones and publish a report.",
+    inputs: [{ name: "path", label: "Package or folder", type: "text", required: true, default: "src/main/java" }, { name: "focus", label: "What to focus on", type: "multiline" }],
+    context: { text: "Orders service, Java 21 / Spring Boot. Reports go to the team channel.", files: [] }, skills: [{ path: ".codegen/skills/project/orders-domain/SKILL.md", name: "orders-domain" }],
+    nodes: [
+      { id: "start", type: "start", title: "Inputs", x: 40, y: 160 },
+      { id: "todos", type: "tool", title: "Find TODOs", x: 320, y: 90, tool: "find-todos", args: { path: "{{inputs.path}}" } },
+      { id: "lint", type: "tool", title: "Lint the API", x: 320, y: 250, tool: "openapi-lint", args: {} },
+      { id: "fixme", type: "transform", title: "Keep FIXMEs", x: 600, y: 90, op: "filter-lines", expr: "FIXME|TODO\\(urgent\\)" },
+      { id: "merge", type: "merge", title: "Combine", x: 870, y: 170, mode: "json-object" },
+      { id: "summary", type: "ai", title: "Summarize", x: 1140, y: 170, prompt: "Summarize {{steps.merge}} for the team. Focus on {{inputs.focus}}." },
+      { id: "md", type: "output", title: "Report (md)", x: 1420, y: 80, format: "md", actions: [{ type: "save", path: "reports/todos.md" }, { type: "show" }] },
+      { id: "json", type: "output", title: "Data (json)", x: 1420, y: 260, format: "json", template: "{{steps.merge}}", actions: [{ type: "save", path: "reports/todos.json" }] },
+    ],
+    edges: [{ from: "start", to: "todos" }, { from: "start", to: "lint" }, { from: "todos", to: "fixme" }, { from: "fixme", to: "merge" }, { from: "lint", to: "merge" }, { from: "merge", to: "summary" }, { from: "summary", to: "md" }, { from: "merge", to: "json" }],
+    updated: new Date().toISOString() } };
+  const flowSummary = (f) => ({ id: f.id, name: f.name, description: f.description, steps: f.nodes.filter((n) => !["start", "output"].includes(n.type)).length, outputs: f.nodes.filter((n) => n.type === "output").length, updated: f.updated });
+  const slug = (n) => (n || "flow").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "flow";
+  const uniqueFlowId = (id) => { let c = id, k = 2; while (db.flows[c]) c = `${id}-${k++}`; return c; };
+  const flowVars = (s) => [...String(s || "").matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)].map((m) => m[1]);
+  const flowAnc = (f, id) => { const seen = new Set(), walk = (n) => f.edges.filter((e) => e.to === n).forEach((e) => { if (!seen.has(e.from)) { seen.add(e.from); walk(e.from); } }); walk(id); return seen; };
+  const validateFlow = (f) => {
+    const out = [], add = (node, level, message) => out.push({ node, level, message });
+    const tools = extensions(), inputs = new Set(f.inputs.map((i) => i.name)), ids = new Set(f.nodes.map((n) => n.id));
+    if (!f.name?.trim()) add("", "error", "Give the flow a name.");
+    if (!f.nodes.some((n) => n.type === "output")) add("", "warning", "Add an output so the flow produces something.");
+    const check = (n, what, tpl) => { const anc = flowAnc(f, n.id); for (const v of flowVars(tpl)) { const [h, r = ""] = [v.split(".")[0], v.split(".").slice(1).join(".")]; const name = r.split(".")[0];
+      if (h === "inputs" && !inputs.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but there is no input called "${name}".`);
+      if (h === "steps" && !ids.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but there is no step "${name}".`);
+      else if (h === "steps" && !anc.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but "${name}" does not run before this step. Connect it first.`); } };
+    for (const n of f.nodes) {
+      const label = n.title || n.id;
+      if (n.type !== "start" && !f.edges.some((e) => e.to === n.id)) add(n.id, "warning", `${label} is not connected to anything before it.`);
+      if (n.type === "tool") { const t = tools.find((x) => x.name === n.tool); if (!n.tool) add(n.id, "error", `Choose a tool for ${label}.`); else if (!t) add(n.id, "error", `The tool "${n.tool}" is not available in this project.`);
+        else if (!(n.instruction || "").trim()) (t.params || []).forEach((p) => { if (p.required && !(n.args?.[p.name] || "").trim()) add(n.id, "error", `${label}: the required parameter "${p.name}" is empty (fill it in, or describe the step and let AI build it).`); });
+        for (const k in n.args || {}) check(n, `${label} › ${k}`, n.args[k]);
+        const feeders = f.edges.filter((e) => e.to === n.id).map((e) => f.nodes.find((x) => x.id === e.from)).filter((x) => x && x.type !== "start");
+        const uses = Object.values(n.args || {}).some((v) => /\{\{\s*input(_file)?\b/.test(v) || feeders.some((x) => new RegExp("\\{\\{\\s*steps\\." + x.id + "(?=[.}\\s])").test(v)));
+        if (feeders.length && !(n.instruction || "").trim() && !uses) add(n.id, "warning", `None of ${label}'s fields use the result of ${feeders.map((x) => x.title || x.id).join(" and ")}. It is still piped in, which only helps tools that read piped data. To use it in a field, click “← ${feeders[0].title || feeders[0].id}” next to that field, or describe the step and let AI fill the fields.`); }
+      if (n.type === "ai") { if (!(n.prompt || "").trim()) add(n.id, "error", `${label} needs a prompt.`); check(n, label, n.prompt); }
+      if (n.type === "merge" && f.edges.filter((e) => e.to === n.id).length < 2) add(n.id, "warning", `${label} merges fewer than two steps.`);
+      if (n.type === "transform") { if (!FLOW_OPS[n.op]) add(n.id, "error", `${label}: choose a transformation.`); else if (FLOW_OPS[n.op].expr && !(n.expr || "").trim()) add(n.id, "error", `${label}: fill in the expression.`); check(n, label, (n.source || "") + (n.template || "")); }
+      if (n.type === "output") { check(n, label, n.template); for (const a of n.actions || []) { if (a.type === "save" && (!a.path || a.path.startsWith("/") || a.path.includes(".."))) add(n.id, "error", `${label}: save inside the project (a relative path without ..).`); check(n, label, a.path); } }
+    }
+    return out;
+  };
+  const render = (tpl, d) => String(tpl || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, v) => { const [h, ...r] = v.split("."); if (h === "inputs") return d.inputs?.[r[0]] ?? ""; if (h === "steps") { const s = d.steps?.[r[0]] ?? ""; if (r[1] === "json") { try { return jpath(JSON.parse(s), r.slice(2).join(".")); } catch { return ""; } } return s; } if (h === "input") return d.input ?? ""; if (h === "input_file") return d.input ? "/tmp/specwright/flow-input/step.txt" : ""; return d[h] ?? ""; });
+  const jtext = (v) => (typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? JSON.stringify(v, null, 2) : String(v));
+  const jpath = (v, path) => { let cur = [v], wild = false; for (const m of String(path).replace(/^\$\.?/, "").matchAll(/\[(\d+|\*)\]|([^.[\]]+)/g)) { const nx = []; for (const c of cur) { if (m[1] === "*") { wild = true; nx.push(...(Array.isArray(c) ? c : Object.values(c || {}))); } else if (m[1] != null) { if (Array.isArray(c) && +m[1] < c.length) nx.push(c[+m[1]]); } else if (Array.isArray(c)) { wild = true; c.forEach((e) => e && m[2] in e && nx.push(e[m[2]])); } else if (c && typeof c === "object" && m[2] in c) nx.push(c[m[2]]); } cur = nx; if (!cur.length) throw new Error(`nothing at "${m[0]}"`); } return jtext(wild ? cur : cur[0]); };
+  const toCsv = (v) => { const rows = (Array.isArray(v) ? v : [v]).map((r) => (r && typeof r === "object" ? r : { value: r })); const head = [...new Set(rows.flatMap((r) => Object.keys(r)))]; const q = (x) => { const s = jtext(x).replace(/\n/g, " "); return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }; return [head.join(","), ...rows.map((r) => head.map((k) => (k in r ? q(r[k]) : "")).join(","))].join("\n") + "\n"; };
+  const fromCsv = (t) => { const [h, ...rows] = t.trim().split("\n").map((l) => l.split(",")); return JSON.stringify(rows.map((r) => Object.fromEntries(h.map((k, i) => [k, r[i] ?? ""]))), null, 2); };
+  const mdHtml = (md) => md.split(/\n{2,}/).map((b) => /^#{1,6}\s/.test(b) ? `<h${b.match(/^#+/)[0].length}>${b.replace(/^#+\s*/, "")}</h${b.match(/^#+/)[0].length}>` : /^[-*]\s/.test(b) ? `<ul>${b.split("\n").map((l) => `<li>${l.replace(/^[-*]\s+/, "")}</li>`).join("")}</ul>` : `<p>${b.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code>$1</code>")}</p>`).join("\n");
+  const convert = (c, fmt) => { const t = String(c).trim(); let js = null; try { if (/^[[{]/.test(t)) js = JSON.parse(t); } catch { /* not json */ }
+    if (fmt === "json") return js ? JSON.stringify(js, null, 2) : JSON.stringify({ content: c }, null, 2);
+    if (fmt === "csv") return js ? toCsv(js) : "line\n" + t.split("\n").join("\n") + "\n";
+    if (fmt === "html") return `<!doctype html><html><body style="font:15px/1.5 sans-serif;margin:1.5rem">${js ? `<pre>${t.replace(/</g, "&lt;")}</pre>` : /^\s*</.test(t) ? t : mdHtml(t)}</body></html>`;
+    if (fmt === "md" && js) return "```json\n" + t + "\n```\n";
+    return c; };
+  const transform = (n, input, d) => {
+    const re = () => new RegExp(n.expr, "g");
+    switch (n.op) {
+      case "template": return render(n.template, { ...d, input });
+      case "trim": return input.trim(); case "uppercase": return input.toUpperCase(); case "lowercase": return input.toLowerCase();
+      case "truncate": return input.slice(0, +n.expr || 0);
+      case "filter-lines": return input.split("\n").filter((l) => new RegExp(n.expr).test(l)).join("\n");
+      case "regex-extract": return [...input.matchAll(re())].map((m) => m[1] ?? m[0]).join("\n");
+      case "regex-replace": return input.replace(re(), n.replace || "");
+      case "split-lines": return JSON.stringify(input.split("\n").filter((l) => l.trim()), null, 2);
+      case "json-path": return jpath(JSON.parse(input), n.expr);
+      case "json-pick": { const keys = n.expr.split(",").map((k) => k.trim()); const pick = (o) => Object.fromEntries(keys.filter((k) => k in o).map((k) => [k, o[k]])); const v = JSON.parse(input); return JSON.stringify(Array.isArray(v) ? v.map(pick) : pick(v), null, 2); }
+      case "json-pretty": return JSON.stringify(JSON.parse(input), null, 2); case "json-minify": return JSON.stringify(JSON.parse(input));
+      case "csv-to-json": return fromCsv(input); case "json-to-csv": return toCsv(JSON.parse(input));
+      case "md-to-html": return mdHtml(input); case "html-to-text": return input.replace(/<[^>]+>/g, "");
+      case "ai": throw new Error("AI transformations run with the agent when the flow runs");
+    }
+    throw new Error(`unknown transformation "${n.op}"`);
+  };
+
+  // --- flow runs (browser preview: simulated executor with the same events and decisions) ---
+  const kcStore = {};
+  const flowLive = new Map();
+  const flowOrder = (f) => { const indeg = Object.fromEntries(f.nodes.map((n) => [n.id, 0])); f.edges.forEach((e) => indeg[e.to]++); const ready = f.nodes.filter((n) => !indeg[n.id]).sort((a, b) => a.x - b.x || a.y - b.y).map((n) => n.id), out = [];
+    while (ready.length) { const n = ready.shift(); out.push(n); f.edges.filter((e) => e.from === n).forEach((e) => { if (!--indeg[e.to]) ready.push(e.to); }); ready.sort((a, b) => { const A = f.nodes.find((x) => x.id === a), B = f.nodes.find((x) => x.id === b); return A.x - B.x || A.y - B.y; }); } return out; };
+  const flowMinutes = (f) => f.minutesSaved || f.nodes.reduce((m, n) => m + ({ tool: 10, ai: 20, merge: 5, transform: 5, output: 5 }[n.type] || 0), 0);
+  const startFlowRun = (f, o) => {
+    const id = newRunId(), t0 = Date.now();
+    const st = { id, flowId: f.id, flowName: f.name, status: "running", started: now(), options: o, outputs: [], usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0, premium_requests: 0, model_calls: 0, tool_calls: 0, tool_errors: 0 },
+      agent, model: agent === "copilot" ? "copilot/default" : "claude-sonnet-5-5", pass: 1, passes: Math.max(1, +o.repeat || 1), item: 1, items: 1, changes: [], minutesSaved: flowMinutes(f), steps: [] };
+    const lr = { st, f, seq: 0, decide: null, stop: false, noReview: false };
+    flowLive.set(id, lr);
+    const evs = (db.events[id] = []);
+    const pub = (type, summary, data = {}) => { const e = { seq: ++lr.seq, ts: now(), run_id: id, type, summary, dt: Date.now() - t0, ...data }; evs.push(e); emit(e); return e; };
+    const state = () => pub("flow.state", st.status, { state: clone(st), flow: f.id });
+    const stepsFresh = () => flowOrder(f).map((nid) => { const n = f.nodes.find((x) => x.id === nid); return { id: n.id, title: n.title || n.id, type: n.type, tool: n.tool, status: "pending", attempts: 0, durationMs: 0, notes: [], usage: {} }; });
+    db.runs.unshift({ id, workspace: db.root, workflow: f.id, step: "flow", agent, model: st.model, state: "running", started: st.started, usage: {}, kind: "flow", title: f.name, ask: Object.entries(o.inputs || {}).filter(([, v]) => v).map(([k, v]) => `${k}: ${String(v).slice(0, 300)}`).join("\n") });
+    const R = (tpl, d) => render(tpl, d);
+    const aiAnswer = (prompt) => { const m = prompt.match(/Revise it: (.*)/); if (m) return `Revised answer (${m[1].split("\n")[0]})`; const dm = prompt.match(/Data:\n```\n([\s\S]*?)\n```/); if (dm) return dm[1].toUpperCase(); return "Summary: " + prompt.split("\n")[0].slice(0, 160); };
+    const ai = async (step, prompt) => {
+      const ctx = 2000 + Math.round(Math.random() * 3000);
+      pub("model.request", "Request → " + st.model, { step, input_tokens: ctx, cached_tokens: Math.round(ctx * 0.7), model: st.model }); await wait(500);
+      const out = 120 + Math.round(Math.random() * 240), text = aiAnswer(prompt);
+      pub("model.response", "Response · end_turn", { step, output_tokens: out }); pub("model.text", text, { step, text });
+      const cost = agent === "copilot" ? 0 : ((ctx * 0.3) * 3 + ctx * 0.7 * 0.3 + out * 15) / 1e6;
+      pub("model.usage", agent === "copilot" ? "Copilot: 1 premium request" : "Claude: 1 turn · $" + cost.toFixed(4), { step, cost_usd: cost, premium_requests: agent === "copilot" ? 1 : 0 });
+      Object.assign(st.usage, { input_tokens: st.usage.input_tokens + ctx, output_tokens: st.usage.output_tokens + out, model_calls: st.usage.model_calls + 1, cost_usd: st.usage.cost_usd + cost, premium_requests: st.usage.premium_requests + (agent === "copilot" ? 1 : 0) });
+      return text;
+    };
+    const tool = async (step, name, args) => {
+      const e = db.exts.find((x) => x.name === name) || adm.managed.find((x) => x.name === name);
+      const cid = step + "-" + lr.seq;
+      pub("tool.call", `${name} ${Object.entries(args).map(([k, v]) => k + "=" + v).join(" ")}`, { step, tool: name, args, id: cid });
+      if (e?.secrets?.length) {
+        for (const x of e.secrets) if (x.name in kcStore && !(x.name in secrets)) secrets[x.name] = kcStore[x.name]; // found in the keychain
+        await resolveSecrets(e, e.secrets);
+      }
+      await wait(450);
+      const out = e?.output || (name === "find-todos" ? "src/main/java/com/acme/orders/domain/OrderStatus.java:4: TODO add CANCELLED\nsrc/main/java/com/acme/orders/ports/StockPort.java:9: FIXME timeout handling\nsrc/main/java/com/acme/orders/ports/OrderRepository.java:12: TODO(urgent) paging" : name + ": ok");
+      const sdir = resultsDir(id) + "/steps/" + step, isOut = f.nodes.find((x) => x.id === step)?.type === "output", pre = isOut ? name + "-" : "";
+      const ext = /^\s*</.test(out) ? "html" : /^[[{]/.test(out.trim()) ? "json" : out.includes(",") && out.split("\n").length > 1 ? "csv" : "txt";
+      const inputText = (lr.curInput || "");
+      if (inputText) db.files[`${sdir}/${isOut ? "action-input" : "input"}.txt`] = inputText;
+      db.files[`${sdir}/${pre}args.json`] = JSON.stringify(args, null, 2);
+      db.files[`${sdir}/${pre}output.${ext}`] = out;
+      const sst = st.steps.find((x) => x.id === step);
+      if (sst && !isOut) { sst.outputFile = `${sdir}/output.${ext}`; if (inputText) sst.inputFile = `${sdir}/input.txt`; }
+      pub("tool.result", `${name} ok · 450ms`, { step, tool: name, id: cid, ok: true, output: out, duration_ms: 450, output_file: `${sdir}/${pre}output.${ext}`, args_file: `${sdir}/${pre}args.json`, ...(inputText ? { input_file: `${sdir}/${isOut ? "action-input" : "input"}.txt` } : {}) });
+      st.usage.tool_calls++;
+      return out;
+    };
+    const exec = async (n, d) => {
+      const parents = f.edges.filter((e) => e.to === n.id).map((e) => e.from), input = parents.map((p) => d.steps[p] ?? "").join("\n\n");
+      d.input = input; lr.curInput = input;
+      switch (n.type) {
+        case "start": return JSON.stringify(d.inputs, null, 2);
+        case "tool": {
+          let args = Object.fromEntries(Object.entries(n.args || {}).map(([k, v]) => [k, R(v, d)]).filter(([, v]) => v.trim() || !(n.instruction || "").trim()));
+          let why = "";
+          const req = R(n.instruction || "", d).trim();
+          if (req) {
+            const t = db.exts.find((x) => x.name === n.tool) || adm.managed.find((x) => x.name === n.tool);
+            pub("flow.args", "Working out the arguments for " + n.tool, { step: n.id, tool: n.tool, request: req });
+            pub("tool.call", "Read db/migrations/V1__orders.sql", { step: n.id, tool: "read_file", args: { path: "db/migrations/V1__orders.sql" } }); await wait(300);
+            pub("tool.result", "read_file ok · 40ms", { step: n.id, tool: "read_file", ok: true, duration_ms: 40 });
+            await ai(n.id, "Build the arguments for " + n.tool + ": " + req);
+            for (const p of t?.params || []) if (!(p.name in args)) args[p.name] = /sql|query/i.test(p.name + p.desc) ? `-- ${req}\nSELECT c.email, count(o.id) AS orders\nFROM customers c JOIN orders o ON o.customer_id = c.id\nWHERE o.placed_at >= date_trunc('month', now()) - interval '1 month'\nGROUP BY c.email ORDER BY orders DESC LIMIT 10;` : "AI: " + req;
+            why = "Read the orders and customers tables in db/migrations, then built the query from the request.";
+            pub("flow.args", "Arguments for " + n.tool + ": " + Object.keys(args).join(", "), { step: n.id, tool: n.tool, args, why });
+          }
+          Object.assign(stepOf(n.id), { args, why });
+          return tool(n.id, n.tool, args);
+        }
+        case "ai": return ai(n.id, R(n.prompt, d) + (f.context?.text ? "\n\n## Context\n" + f.context.text : ""));
+        case "merge": { const r = await api.PreviewFlowStep(f, n.id, { inputs: d.inputs, steps: d.steps }); if (r.error) throw new Error(r.error); return r.output; }
+        case "transform": {
+          const src = n.source ? R(n.source, d) : input;
+          if (n.op === "ai") return ai(n.id, R(n.template, { ...d, input: src }) + "\n\nData:\n```\n" + src + "\n```");
+          if (n.op === "command") { pub("tool.call", "$ " + n.expr, { step: n.id, tool: "command", args: { command: n.expr } }); await wait(200); const out = /tr a-z A-Z|upper/.test(n.expr) ? src.toUpperCase() : /sort/.test(n.expr) ? src.split("\n").sort().join("\n") : src; pub("tool.result", "command ok · 200ms", { step: n.id, tool: "command", ok: true, output: out, duration_ms: 200 }); return out; }
+          return transform(n, src, d);
+        }
+        case "output": {
+          const content = n.template ? R(n.template, d) : input, conv = convert(content, n.format);
+          const o = { node: n.id, title: n.title || n.id, format: n.format, content: conv, item: st.itemLabel || "", saved: [], tools: [], errors: [] };
+          for (const a of n.actions || []) {
+            if (a.type === "save") { const p = R(a.path, { ...d, output: conv }).replace(/^\/+/, ""); if (p.includes("..")) o.errors.push(p + " is not inside the project"); else { db.files[p] = conv; o.saved.push(p); pub("fs.write", "Saved " + p, { step: n.id, path: p, added: conv.split("\n").length, removed: 0 }); } }
+            if (a.type === "tool") { await tool(n.id, a.tool, Object.fromEntries(Object.entries(a.args || {}).map(([k, v]) => [k, R(v, { ...d, output: conv })]))); o.tools.push(a.tool); }
+            if (a.type === "clipboard") { navigator.clipboard?.writeText(conv).then(() => {}, () => {}); o.copied = true; }
+            if (a.type === "show") o.show = true;
+          }
+          st.outputs.push(o); pub("flow.output", `${o.title} (${n.format.toUpperCase()})`, { step: n.id, node: n.id, format: n.format, saved: o.saved });
+          return conv;
+        }
+      }
+      return "";
+    };
+    const stepOf = (nid) => st.steps.find((s) => s.id === nid);
+    const runStep = async (n, d) => {
+      const s = stepOf(n.id), t = Date.now();
+      Object.assign(s, { status: "running", error: "", attempts: s.attempts + 1, started: now() }); state();
+      pub("flow.step", "Running " + s.title, { step: n.id, node: n.id, kind: n.type, status: "running" });
+      try { await wait(250); const out = await exec(n, d); Object.assign(s, { status: "done", output: String(out).slice(0, 24000), durationMs: Date.now() - t, ended: now() }); pub("flow.step", s.title + " done", { step: n.id, node: n.id, status: "done", duration_ms: Date.now() - t }); state(); return out; }
+      catch (e) { Object.assign(s, { status: "failed", error: e.message, durationMs: Date.now() - t }); pub("flow.step", s.title + " failed: " + e.message, { step: n.id, node: n.id, status: "failed", duration_ms: Date.now() - t }); state(); throw e; }
+    };
+    const wants = (n) => !lr.noReview && n.type !== "start" && (o.review === "each" || (o.review === "marked" ? n.review : o.review !== "none" && (n.review || n.type === "ai" || (n.type === "transform" && n.op === "ai"))));
+    const review = async (n, d, out) => {
+      for (;;) {
+        const s = stepOf(n.id);
+        st.status = "review"; st.review = { step: n.id, title: s.title, type: n.type, output: String(out).slice(0, 24000) }; s.status = "review"; s.output = st.review.output; state();
+        pub("flow.review", "Waiting for your review of " + s.title, { step: n.id, node: n.id });
+        const dec = await new Promise((res) => { lr.decide = res; });
+        lr.decide = null; st.status = "running"; st.review = null;
+        if (dec.action === "continue" || dec.action === "no-more-reviews") { if (dec.action === "no-more-reviews") lr.noReview = true; s.status = "done"; pub("gate.approved", dec.action === "continue" ? "Accepted " + s.title : "Accepted; no more reviews in this run", { step: n.id }); state(); return out; }
+        if (dec.action === "stop") { s.status = "done"; pub("gate.rejected", "Stopped at " + s.title, { step: n.id }); throw Object.assign(new Error("stopped by you"), { stopped: true }); }
+        let note = "";
+        if (dec.action === "edit") { out = dec.output; note = "Edited by hand"; }
+        if (dec.action === "refine") { pub("gate.changes", "Refining with AI: " + dec.prompt, { step: n.id }); out = await ai(n.id, n.type === "ai" ? R(n.prompt, d) + "\n\nYour previous answer:\n" + out + "\n\nRevise it: " + dec.prompt : dec.prompt + "\n\nData:\n```\n" + out + "\n```"); note = "Refined with AI: " + dec.prompt;
+          if (dec.save) { const fl = db.flows[f.id], cur = fl.nodes.find((x) => x.id === n.id); if (cur.type === "ai") { cur.prompt += "\n\nAlso: " + dec.prompt; st.changes.push(`${s.title}: added to the prompt: "${dec.prompt}"`); } else { st.changes.push(`added an AI step after ${s.title}`); } persist(); pub("flow.saved", "Saved to the flow: " + st.changes[st.changes.length - 1], { step: n.id }); } }
+        if (dec.action === "command") { pub("tool.call", "$ " + dec.command, { step: n.id, tool: "command", args: { command: dec.command } }); await wait(200); out = /tr a-z A-Z|upper/.test(dec.command) ? String(out).toUpperCase() : /sort/.test(dec.command) ? String(out).split("\n").sort().join("\n") : out; pub("tool.result", "command ok · 200ms", { step: n.id, tool: "command", ok: true, output: out, duration_ms: 200 }); note = "Ran: " + dec.command;
+          if (dec.save) { st.changes.push(`added the command step after ${s.title}`); pub("flow.saved", "Saved to the flow: " + st.changes[st.changes.length - 1], { step: n.id }); } }
+        if (dec.action === "retry") { const nn = { ...n, ...(dec.node || {}), id: n.id, type: n.type }; try { out = await runStep(nn, d); note = "Ran again with changed settings"; if (dec.save) { const fl = db.flows[f.id], i = fl.nodes.findIndex((x) => x.id === n.id); fl.nodes[i] = { ...fl.nodes[i], ...dec.node, id: n.id, type: n.type, x: fl.nodes[i].x, y: fl.nodes[i].y }; persist(); st.changes.push(`saved the new settings of ${s.title}`); } } catch { /* the step shows the error */ } }
+        if (note) { s.notes = [...(s.notes || []), note]; s.output = String(out).slice(0, 24000); }
+      }
+    };
+    (async () => {
+      let final = "done", reason = "";
+      try {
+        if (o.startAt && Date.parse(o.startAt) > Date.now()) { st.status = "scheduled"; state(); pub("flow.scheduled", "Starts at " + new Date(o.startAt).toLocaleString()); while (Date.parse(o.startAt) > Date.now() && !lr.stop) await wait(500); if (lr.stop) throw Object.assign(new Error("stopped before it started"), { stopped: true }); st.status = "running"; }
+        let items = [null];
+        if (o.forEach?.input) { const src = o.inputs[o.forEach.input] || ""; let raw = o.forEach.split === "json" ? JSON.parse(src || "[]").map((v) => (typeof v === "string" ? v : JSON.stringify(v))) : src.split("\n").filter((l) => l.trim()); if (o.forEach.filter) raw = raw.filter((x) => new RegExp(o.forEach.filter).test(x)); items = raw.slice(0, +o.forEach.max || 100); if (!items.length) throw new Error(`no items in ${o.forEach.input}${o.forEach.filter ? " match the filter" : ""}`); }
+        st.items = items.length;
+        let failed = false;
+        for (let pass = 1; pass <= st.passes; pass++) for (let i = 0; i < items.length; i++) {
+          const inputs = { ...o.inputs }; if (items[i] != null) inputs[o.forEach.input] = items[i];
+          Object.assign(st, { pass, item: i + 1, itemLabel: items[i] != null ? String(items[i]).slice(0, 60) : "", status: "running", steps: stepsFresh() });
+          if (st.passes > 1 || items.length > 1) pub("flow.pass", [st.passes > 1 ? `Run ${pass} of ${st.passes}` : "", items.length > 1 ? `item ${i + 1} of ${items.length}` : ""].filter(Boolean).join(" · ") + (st.itemLabel ? ": " + st.itemLabel : ""));
+          state();
+          const d = { inputs, steps: {}, context: f.context?.text || "" }, bad = new Set();
+          for (const nid of flowOrder(f)) {
+            if (lr.stop) throw Object.assign(new Error("stopped by you"), { stopped: true });
+            const n = f.nodes.find((x) => x.id === nid), s = stepOf(nid);
+            const blocked = f.edges.some((e) => e.to === nid && bad.has(e.from));
+            if ((o.skip || []).includes(nid) || blocked) { s.status = "skipped"; s.error = blocked ? "a step before it failed" : "skipped by you"; if (blocked) bad.add(nid); d.steps[nid] = ""; state(); continue; }
+            let out;
+            try { out = await runStep(n, d); } catch (e) { if (e.stopped) throw e; bad.add(nid); failed = true; reason = `${s.title} failed: ${e.message}`; continue; }
+            if (wants(n)) out = await review(n, d, out);
+            d.steps[nid] = out;
+            if (o.stopAfter === nid) { st.steps.filter((x) => x.status === "pending").forEach((x) => { x.status = "skipped"; x.error = "the run stops after " + s.title; }); state(); break; }
+          }
+        }
+        if (failed) final = "failed";
+      } catch (e) { final = e.stopped ? "stopped" : "failed"; reason = e.message; }
+      Object.assign(st, { status: final, error: final === "done" ? "" : reason, ended: now(), review: null });
+      st.usage.duration_ms = Date.now() - t0;
+      pub("run.usage", `Usage: ${st.usage.input_tokens} in · ${st.usage.output_tokens} out · ${st.usage.tool_calls} tools · ${st.usage.model_calls} AI calls`, { ...st.usage });
+      state(); pub("run.end", "Flow " + final, { state: final, reason });
+      const run = db.runs.find((x) => x.id === id); Object.assign(run, { state: final, ended: st.ended, usage: st.usage });
+      db.ledger.push({ at: now(), workspace: db.root, workflow: "flow:" + f.id, step: "flow", state: final, minutes_saved: final === "done" ? st.minutesSaved * st.passes * st.items : 0, ...st.usage });
+      flowLive.delete(id); persist();
+      setTimeout(() => writeResults(id), 150);
+    })();
+    return clone(st);
+  };
+  const blobs = new Map(); // attachments, kept in memory for previews
+  const api = {
+    kind: "mock",
+    on(cb) { listeners.add(cb); return () => listeners.delete(cb); },
+    async Info() {
+      return { version: "0.1.0-mock", workspace: db.root, agent, model: "", hasToken: false, storeDir: "~/Library/Application Support/codegen", node: "/usr/local/bin/node",
+        agents: [{ name: "claude", label: "Claude Code", available: true, path: "/usr/local/bin/claude", version: "2.1.0 (Claude Code)", billing: "usd" }, { name: "copilot", label: "GitHub Copilot CLI", available: true, path: "/usr/local/bin/copilot", version: "0.0.354", billing: "premium" }, { name: "mock", label: "Mock agent (no CLI)", available: true, version: "scripted", billing: "usd" }],
+        languages: { Java: ["Maven", "Gradle"], Kotlin: ["Gradle"], TypeScript: ["npm", "pnpm"], Python: ["uv", "pip"], "C#": ["dotnet"], Go: ["go"] }, langOrder: ["Java", "Kotlin", "TypeScript", "Python", "C#", "Go"], runtimes: RUNTIMES };
+    },
+    async DetectCredentials() {
+      await wait(700);
+      return [
+        { id: "env-copilot", provider: "copilot", label: "COPILOT_GITHUB_TOKEN", where: "environment variable", found: false },
+        { id: "env-gh", provider: "copilot", label: "GH_TOKEN / GITHUB_TOKEN", where: "environment variable", found: false },
+        { id: "copilot-cli", provider: "copilot", label: "Copilot CLI login", where: "~/.copilot/config.json · keychain", found: true, who: "signed in with `copilot`" },
+        { id: "gh-cli", provider: "copilot", label: "GitHub CLI", where: "gh auth token · github.com", found: true, who: "signed in as octo-dev", warn: "OAuth token: works for Copilot only if your org allows the GitHub CLI app" },
+        { id: "env-anthropic", provider: "claude", label: "ANTHROPIC_API_KEY / CLAUDE_CODE_OAUTH_TOKEN", where: "environment variable", found: false },
+        { id: "claude-cli", provider: "claude", label: "Claude Code login", where: "~/.claude · keychain", found: true, who: "signed in with `claude` (keychain)" },
+      ];
+    },
+    async SetAgent(name, token) {
+      if (!["claude", "copilot", "mock"].includes(name)) throw new Error(`unknown agent "${name}"`);
+      if (name === "copilot" && token?.startsWith("ghp_")) throw new Error("the Copilot CLI rejects classic tokens (ghp_…); create a fine-grained token (github_pat_…) with the “Copilot Requests” permission");
+      agent = name;
+    },
+    async ClearToken() {},
+    async OpenWorkspace(path) { if (!path?.trim()) throw new Error("enter a folder"); if (path !== db.root) db.root = path.trim(); persist(); return wsState(); },
+    async PickFolder() { return wsState(); },
+    async Workspace() { return wsState(); },
+    async SaveProfile(p) { db.profile = clone(p); persist(); },
+    async BuildRules(section, mode) { await wait(300); return mode === "bulk" ? "Bulk load: rewrote 2 file(s) in .codegen/rules." : "Incremental: 1 file(s) updated, 1 unchanged."; },
+    async SaveRulesDoc(format, content) {
+      const name = { md: "rules.md", html: "rules.html" }[format];
+      if (!name) throw new Error(`unknown rules format "${format}" (want md or html)`);
+      const rel = ".codegen/rules/" + name; db.files[rel] = content; persist();
+      emit({ type: "workspace.files", summary: "1 file(s) changed", changes: [{ path: rel, op: "modified" }] });
+      return rel;
+    },
+    async ListFiles() { return Object.keys(db.files).sort(); },
+    async ReadFile(rel) { if (!(rel in db.files)) throw new Error(`open ${rel}: no such file or directory`); return db.files[rel]; },
+    async SetDiagram(kind, rel) { db.profile.diagrams ||= {}; if (rel) db.profile.diagrams[kind] = rel; else delete db.profile.diagrams[kind]; persist(); },
+    async PickDiagram() { return ""; },
+    async SaveTextFile() { return ""; },
+    async Compile() {
+      const javaFiles = Object.keys(db.files).filter((p) => p.endsWith(".java") && p.includes("/main/")).length;
+      const lines = ["[INFO] Scanning for projects...", "[INFO] Building orders-service 0.1.0", "[INFO] --- compiler:3.13.0:compile (default-compile) ---", `[INFO] Compiling ${javaFiles} source files with javac [release 21]`, "[INFO] BUILD SUCCESS"];
+      emit({ type: "build.start", summary: "./mvnw -q -B compile" });
+      for (const l of lines) { await wait(300); emit({ type: "build.line", summary: l }); }
+      emit({ type: "build.end", summary: "ok", ok: true });
+      return { ok: true, command: "./mvnw -q -B compile", output: lines.join("\n") };
+    },
+    async Metrics() {
+      const flowMetrics = () => {
+        const fl = db.ledger.filter((e) => String(e.workflow).startsWith("flow:")), top = {};
+        const m = { executed: fl.length, completed: 0, failed: 0, stopped: 0, toolExecutions: 0, aiCalls: 0, hoursSaved: 0, projectRuns: 0, projectHours: 0, usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0, premium_requests: 0 }, top: [] };
+        for (const e of fl) {
+          m[e.state === "done" ? "completed" : e.state === "stopped" ? "stopped" : "failed"]++;
+          m.toolExecutions += e.tool_calls || 0; m.aiCalls += e.model_calls || 0; const h = (e.minutes_saved || 0) / 60; m.hoursSaved += h;
+          if (e.workspace === db.root) { m.projectRuns++; m.projectHours += h; }
+          for (const k of ["input_tokens", "output_tokens", "cost_usd", "premium_requests"]) m.usage[k] += e[k] || 0;
+          const id = e.workflow.slice(5), t = (top[id] ||= { flow: id, runs: 0, completed: 0, tools: 0, hoursSaved: 0, costUsd: 0, premium: 0, last: e.at });
+          t.runs++; if (e.state === "done") t.completed++; t.tools += e.tool_calls || 0; t.hoursSaved += h; t.costUsd += e.cost_usd || 0; t.premium += e.premium_requests || 0; if (e.at > t.last) t.last = e.at;
+        }
+        m.top = Object.values(top).sort((a, b) => b.runs - a.runs).slice(0, 8);
+        return m;
+      };
+      const groups = {};
+      for (const e of db.ledger) {
+        if (e.workflow === "playground" || String(e.workflow).startsWith("flow:")) continue; // usage only, not workflow progress
+        const g = (groups[e.workspace] ||= { name: e.workspace.split("/").pop(), at: e.at, approved: 0, steps: 6, files: 0, hours: 0, status: e.state, seen: {} });
+        if (e.at >= g.at) { g.at = e.at; g.status = e.state; }
+        g.files += e.files_created || 0;
+        if (e.steps) { g.approved = e.state === "done" ? e.steps : e.steps; g.hours = e.state === "done" ? 32.5 : 7.5; }
+        else if (e.state === "done" && !g.seen[e.step]) { g.seen[e.step] = 1; g.approved++; g.hours += HOURS[e.step]; }
+      }
+      const recent = Object.values(groups).map(({ seen, ...g }) => ({ ...g, status: g.approved >= g.steps ? "done" : g.status === "done" ? "paused" : g.status })).sort((a, b) => b.at.localeCompare(a.at));
+      const sum = (k) => db.ledger.reduce((a, e) => a + (e[k] || 0), 0);
+      const mine = groups[db.root];
+      return {
+        project: { filesCreated: mine?.files || 0, files: Object.keys(db.files).length, rules: db.profile.rules.length, hoursSaved: mine?.hours || 0, usage: {} },
+        allTime: { timesUsed: 14 + recent.filter((r) => r.status === "done").length, hoursSaved: 63.5 + recent.reduce((a, r) => a + r.hours, 0), usage: { input_tokens: sum("input_tokens"), output_tokens: sum("output_tokens"), cost_usd: sum("cost_usd"), premium_requests: sum("premium_requests"), model_calls: sum("model_calls") } },
+        perStep: Object.entries(HOURS).map(([step, hours]) => ({ step, hours })), recent, flows: flowMetrics(),
+      };
+    },
+    async Workflow() { return clone(db.wf); },
+    async SaveWorkflow(w) {
+      for (const s of w.steps) { const d = db.wf.steps.find((x) => x.id === s.id); if (d) Object.assign(d, { input: s.input, instructions: s.instructions, options: s.options, feedback: s.feedback, gate: s.gate, retries: s.retries }); }
+      db.wf.budget = w.budget; persist();
+    },
+    async ResetWorkflow() { if (live) throw new Error("a step is still running"); db.wf.steps.forEach((s) => (s.status = "pending")); persist(); emit({ type: "workflow.changed" }); },
+    async Compose(id, fb) { return compose(db.wf.steps.find((s) => s.id === id), fb); },
+    async RunPrompt(prompt, o = {}) {
+      if (!prompt?.trim()) throw new Error("type a prompt first");
+      if (live) throw new Error("another step is still running or waiting for approval");
+      const asked = o.ask || prompt.trim(), ctxText = o.parents?.length ? contextFor(o.parents) : "";
+      const meta = { ask: asked, runTitle: o.title || asked.split("\n")[0].slice(0, 100), parents: o.parents || [] };
+      const startRun0 = startRun; const startRunP = (st) => startRun0({ ...st, ...meta, rawPrompt: ctxText + (st.rawPrompt || "") });
+      const q = prompt.trim(), req = (q.match(/\nRequest: (.*)/) || [])[1] || q, short = req.length > 80 ? req.slice(0, 80) + "…" : req;
+      if (/^You are helping in SpecWright's file browser/.test(q) && /packages|dependenc|build errors|Compile the project/i.test(req)) {
+        const pk = /packages|dependenc/i.test(req);
+        return startRunP({ id: "playground", title: "Playground", input: q, rawPrompt: q, gate: false, status: "pending", lastRun: "", script: [
+          ["Read", "pom.xml"],
+          ...(pk ? [["Bash", "./mvnw -q -B dependency:resolve"]] : [["Read", "src/main/java/com/acme/orders/domain/OrderStatus.java"]]),
+          ["Bash", "./mvnw -q -B compile"],
+          ["say", pk ? "All dependencies in pom.xml resolve through the configured registry; nothing was missing.\n\n• Checked imports against pom.xml: spring-boot-starter-web, spring-kafka and postgresql are declared with pinned versions.\n• `./mvnw -q -B dependency:resolve` downloaded 0 new artifacts.\n• `./mvnw -q -B compile` succeeds.\n\n(Browser preview: the desktop app lets the real agent edit pom.xml and run the build.)"
+            : "The project compiles.\n\n• src/main/java/com/acme/orders/domain/OrderStatus.java:1 needed no changes.\n• `./mvnw -q -B compile` → BUILD SUCCESS.\n\n(Browser preview: the desktop app lets the real agent fix the code and rebuild.)"]] });
+      }
+      const script = [["Read", "specs/001-orders/spec.md"], ["Read", "src/main/java/com/acme/orders/domain/OrderStatus.java"]];
+      if (o.tools && /dto|openapi|generat/i.test(q)) script.push(["ext", "gen-dto"]);
+      script.push(["say", `Here is what I found for “${short}”:\n\n• The project is an orders service (Java 21, Maven) laid out hexagonally: domain, application, ports.\n• The spec in specs/001-orders/spec.md covers placing an order and rejecting it when stock is missing.\n• OrderStatus has three states: NEW, PLACED and REJECTED.\n\nThis is the browser preview's scripted agent; the desktop app sends your prompt to ${agent === "copilot" ? "the Copilot CLI" : "Claude Code"}.`]);
+      if (o.parents?.length) script.unshift(["Read", resultsDir(o.parents[o.parents.length - 1]) + "/answer.md"]);
+      return startRunP({ id: "playground", title: "Playground", input: q, rawPrompt: q, gate: false, script, status: "pending", lastRun: "" });
+    },
+    async RunStep(id) {
+      const i = db.wf.steps.findIndex((s) => s.id === id), st = db.wf.steps[i];
+      if (!st) throw new Error(`no step "${id}"`);
+      if (live) throw new Error("another step is still running or waiting for approval");
+      if (i > 0 && db.wf.steps[i - 1].status !== "done") throw new Error(`cannot run ${st.title}: ${db.wf.steps[i - 1].title} is not approved yet`);
+      if (!st.input.trim()) throw new Error(`cannot run ${st.title}: inputs are missing`);
+      return startRun(st);
+    },
+    async Decide(runId, kind, feedback) { if (!live || live.id !== runId || !live.waiter) throw new Error(`run ${runId} is not waiting for approval`); const w = live.waiter; live.waiter = null; w({ kind, feedback }); },
+    async CancelRun(runId) { if (!live || live.id !== runId) throw new Error(`run ${runId} is not live`); live.cancelled = true; if (live.waiter) { const w = live.waiter; live.waiter = null; w({ kind: "cancel" }); } },
+    async Live() { return live ? { id: live.id } : null; },
+    async Runs(limit) { return clone(db.runs.filter((r) => r.workspace === db.root).slice(0, limit || 50)); },
+    async RunEvents(id) { return clone(db.events[id] || []); },
+    async Extensions() { return extensions(); },
+    async BuiltinTools() { return unlocked ? clone(BUILTINS) : []; },
+    async CallBuiltin(name, a = {}) {
+      if (!unlocked) throw new Error("built-in tools can only be viewed and tried in admin mode; agents can still use them");
+      // a few tools emulated over the preview's in-memory files; the desktop app runs the real Go tools
+      await wait(120);
+      const files = Object.keys(db.files).sort();
+      const num = (s) => s.split("\n");
+      switch (name) {
+        case "read_file": {
+          const p = a.path; if (!(p in db.files)) throw new Error(`${p} does not exist`);
+          const ls = num(db.files[p]), s0 = Math.max(1, a.start_line || 1), e0 = Math.min(ls.length, a.end_line || ls.length), w = String(e0).length;
+          return `== ${p} (lines ${s0}-${e0} of ${ls.length})\n` + ls.slice(s0 - 1, e0).map((l, i) => `${String(s0 + i).padStart(w)} | ${l}`).join("\n");
+        }
+        case "list_directory": return "./ (workspace root)\n" + files.map((f) => "  " + f).join("\n");
+        case "file_search": {
+          const re = new RegExp("^" + (a.pattern || "*").replace(/[.+^$()|]/g, "\\$&").replace(/\{([^}]*)\}/g, (_, x) => "(" + x.split(",").join("|") + ")").replace(/\*\*\//g, "(.*/)?").replace(/\*\*/g, ".*").replace(/\*/g, "[^/]*").replace(/\?/g, "[^/]") + "$");
+          const hits = files.filter((f) => re.test(a.pattern?.includes("/") ? f : f.split("/").pop()));
+          return hits.length ? `${hits.length} files match "${a.pattern}":\n${hits.join("\n")}` : `No files match "${a.pattern}".`;
+        }
+        case "text_search": case "find_usages": {
+          const q = a.query || a.symbol || "", re = new RegExp(a.is_regex ? q : q.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), /[A-Z]/.test(q) ? "" : "i");
+          let n = 0; const out = [];
+          for (const f of files) { const hits = num(db.files[f]).map((l, i) => [i + 1, l]).filter(([, l]) => re.test(l)); if (hits.length) { n += hits.length; out.push(f + "\n" + hits.map(([i, l]) => `  ${i}: ${l.trim()}`).join("\n")); } }
+          return n ? `${n} matches in ${out.length} files for "${q}":\n\n${out.join("\n\n")}` : `No matches for "${q}".`;
+        }
+        case "todo_list": return "Todo list:\n" + (a.items || []).map((t, i) => `${i + 1}. ${t.status === "done" ? "[x]" : "[ ]"} ${t.title || t}`).join("\n");
+      }
+      return `${name} runs in the desktop app; the browser preview only emulates read_file, list_directory, file_search, text_search, find_usages and todo_list.`;
+    },
+    async AdminStatus() { return status(); },
+    async CreateAdminKey(name, pass) {
+      if (!name?.trim()) throw new Error("enter the admin's name (shown on every tool they publish)");
+      if ((pass || "").length < 10) throw new Error("use a passphrase of at least 10 characters");
+      if (adm.key) throw new Error("an admin key already exists on this computer; unlock it instead");
+      const id = "sw1-" + hash(name + Date.now()).padStart(16, "0").slice(0, 16);
+      adm.key = { id, name: name.trim(), pub: btoa(id).padEnd(44, "="), check: hash(pass) }; unlocked = true; savAdm(); return status();
+    },
+    async UnlockAdmin(pass) { if (!adm.key) throw new Error("there is no admin key on this computer; create one first"); await wait(400); if (hash(pass) !== adm.key.check) throw new Error("wrong passphrase"); unlocked = true; return status(); },
+    async LockAdmin() { unlocked = false; },
+    async AdminPolicySnippet() { if (!adm.key) throw new Error("create an admin key first"); return JSON.stringify({ admins: [{ name: adm.key.name, publicKey: adm.key.pub }], allowLocalTrust: false }, null, 2) + "\n"; },
+    async TrustAdminKey() { },
+    async UntrustAdminKey() { },
+    async ManagedTools() { return managedView(); },
+    async SaveManagedTool(e) {
+      if (!unlocked) throw new Error("unlock admin mode first (Admin screen)");
+      if (!/^[a-z][a-z0-9_-]{0,39}$/.test(e.name)) throw new Error("name must start with a letter and use lowercase letters, digits, - and _ (max 40)");
+      const old = adm.managed.find((t) => t.name === e.name);
+      const rec = { ...clone(e), kind: "script", scope: "managed", managed: { version: (old?.managed?.version || 0) + 1, signedBy: adm.key.id, signer: adm.key.name, signedAt: now(), status: "verified" } };
+      adm.managed = [...adm.managed.filter((t) => t.name !== e.name), rec].sort((a, b) => a.name.localeCompare(b.name)); savAdm();
+      emit({ type: "workspace.files", summary: "managed tools changed", changes: [] });
+      return { ...rec, status: "managed", approved: true };
+    },
+    async DeleteManagedTool(name) { if (!unlocked) throw new Error("unlock admin mode first (Admin screen)"); adm.managed = adm.managed.filter((t) => t.name !== name); savAdm(); },
+    async SaveExtension(e) {
+      if (e.scope === "managed" || e.managed || isManaged(e.name)) refuse(e.name);
+      if (!/^[a-z][a-z0-9_-]{0,39}$/.test(e.name)) throw new Error("name must start with a letter and use lowercase letters, digits, - and _ (max 40)");
+      if (e.scope === "global" && !e.lastTest?.pass) throw new Error("global tools must pass a test before they can be submitted");
+      const rec = { ...clone(e), kind: e.kind || "script", approved: true, approvedAt: now(), scriptPath: `.codegen/tools/${e.scope === "global" ? "global" : "project"}/${e.name}.${e.lang === "Python" ? "py" : e.lang === "Node.js" ? "js" : "sh"}` };
+      rec.command = (rec.command || "").replace(/\S*\.codegen\/tools\/\S+/, rec.scriptPath);
+      rec.status = e.scope === "global" ? "in review" : e.lastTest?.pass ? "tested" : "untested";
+      db.files[rec.scriptPath] = rec.script || "";
+      const k = db.exts.findIndex((x) => x.name === rec.name); if (k >= 0) db.exts[k] = rec; else db.exts.push(rec);
+      persist(); return rec;
+    },
+    async ApproveExtension(name) {
+      if (isManaged(name)) refuse(name);
+      const e = extensions().find((x) => x.name === name); if (!e) throw new Error(`no extension named "${name}"`);
+      const rec = { ...e, approved: true, status: "untested", approvedAt: now() };
+      const k = db.exts.findIndex((x) => x.name === name); if (k >= 0) db.exts[k] = rec; else db.exts.push(rec);
+      persist(); return rec;
+    },
+    async DeleteExtension(name) { if (isManaged(name)) refuse(name); db.exts = db.exts.filter((e) => e.name !== name); persist(); },
+    async GenerateExtension(r) {
+      const lang = r.draft ? r.draft.lang : pickRuntime(r.runsIn);
+      const lines = r.failure ? ["Reading the failed test", "Finding the cause", "Rewriting the script", "Re-checking secrets stay out of the code"]
+        : r.draft ? ["Updating script and parameters", "Re-checking secrets stay out of the prompt"]
+        : [`Choosing a runtime: ${lang}${r.runsIn === "Auto" ? " (Node.js → Go → Java → Bash)" : ""}`, "Writing the script", "Defining parameters and secrets", "Checking against security-baseline"];
+      for (const l of lines) { await wait(380); emit({ type: "gen.model.text", summary: l }); }
+      await wait(300);
+      if (r.failure && (r.draft.deps || []).length && r.failure.checks.some((c) => c.label === "Dependencies installed" && !c.ok)) {
+        const pin = { "Node.js": (x) => x + "@8.13.1", Python: (x) => x + "==3.2.3", Go: (x) => x + "@v5.7.1", Java: (x) => x + ":42.7.4" }[r.draft.lang] || ((x) => x);
+        return { ...r.draft, deps: r.draft.deps.map((x) => /(@[\w.^~-]+$|==|:[\w.-]+:[\w.-]+$)/.test(x) ? x : pin(x)), revision: (r.draft.revision || 1) + 1 };
+      }
+      if (r.failure) {
+        // rewrite from the tool's purpose, keeping its name
+        const fresh = makeDraft(r.draft.desc || r.draft.name, lang, []);
+        fresh.command = fresh.command.replace("/" + fresh.name + ".", "/" + r.draft.name + ".");
+        return { ...r.draft, ...fresh, name: r.draft.name, secrets: r.draft.secrets, deps: fresh.deps || r.draft.deps, script: fresh.script + `\n${lang === "Bash" ? "#" : "//"} fixed after a failed test`, revision: (r.draft.revision || 1) + 1 };
+      }
+      if (r.draft) {
+        const d = clone(r.draft), c = d.lang === "Bash" ? "#" : "//";
+        d.script += /timeout/i.test(r.change) ? `\n${c} timeout: 30s enforced by the runner` : `\n${c} change: ${r.change.trim()}`;
+        d.revision = (d.revision || 1) + 1; return d;
+      }
+      return { ...makeDraft(r.prompt, lang, r.connects || []), kind: "script", status: "untested", revision: 1, prompt: r.prompt };
+    },
+    async FlowOps() { return { ops: FLOW_OPS, mergeModes: ["concat", "json-object", "json-array", "template"], formats: ["md", "txt", "html", "csv", "json"] }; },
+    async Flows() { return Object.values(db.flows).map(flowSummary).sort((a, b) => String(b.updated).localeCompare(String(a.updated))); },
+    async LoadFlow(id) { if (!db.flows[id]) throw new Error(`no flow "${id}"`); return clone(db.flows[id]); },
+    async NewFlow(name) { const id = uniqueFlowId(slug(name)); db.flows[id] = { version: 1, id, name: name || "New flow", inputs: [], context: { text: "", files: [] }, skills: [], nodes: [{ id: "start", type: "start", title: "Inputs", x: 40, y: 120 }], edges: [], updated: new Date().toISOString() }; persist(); return clone(db.flows[id]); },
+    async SaveFlow(f) { await wait(60); f = clone(f); if (!f.id) f.id = uniqueFlowId(slug(f.name)); f.updated = new Date().toISOString(); db.flows[f.id] = f; persist(); return { flow: clone(f), issues: validateFlow(f) }; },
+    async DeleteFlow(id) { delete db.flows[id]; persist(); },
+    async ValidateFlow(f) { return validateFlow(f); },
+    async ExportFlow(id) { const f = db.flows[id]; const files = {}; for (const p of [...f.skills.map((x) => x.path), ...(f.context.files || [])]) if (p in db.files) files[p] = btoa(unescape(encodeURIComponent(db.files[p]))); return JSON.stringify({ format: "specwright-flow", version: 1, exported: new Date().toISOString(), flow: f, files }, null, 2); },
+    async ImportFlow(text) { let b; try { b = JSON.parse(text); } catch (e) { throw new Error("not a flow file: " + e.message); } const f = b.format === "specwright-flow" ? b.flow : b; if (!f?.nodes || !f.name) throw new Error("not a SpecWright flow (export one from the Flow designer)"); f.id = uniqueFlowId(f.id || slug(f.name)); f.updated = new Date().toISOString(); db.flows[f.id] = f; persist(); return { flow: clone(f), issues: validateFlow(f), notes: [] }; },
+    async PreviewFlowStep(f, id, d) {
+      await wait(80);
+      const n = f.nodes.find((x) => x.id === id), parents = f.edges.filter((e) => e.to === id).map((e) => e.from);
+      const input = parents.map((p) => d.steps?.[p] ?? "").join("\n\n");
+      try {
+        if (n.type === "merge") {
+          if (n.mode === "json-object") return { output: JSON.stringify(Object.fromEntries(parents.map((p) => { const t = f.nodes.find((x) => x.id === p)?.title || p; let v = d.steps[p] ?? ""; try { v = JSON.parse(v); } catch { /* text */ } return [t, v]; })), null, 2) };
+          if (n.mode === "json-array") return { output: JSON.stringify(parents.map((p) => { let v = d.steps[p] ?? ""; try { v = JSON.parse(v); } catch { /* text */ } return v; }), null, 2) };
+          if (n.mode === "template") return { output: render(n.template, d) };
+          return { output: parents.map((p) => d.steps[p] ?? "").join((n.separator || "\\n\\n").replace(/\\n/g, "\n")) };
+        }
+        if (n.type === "transform") return { output: transform(n, n.source ? render(n.source, d) : input, d) };
+        if (n.type === "output") return { output: convert(n.template ? render(n.template, d) : input, n.format) };
+        return { error: "tools and AI steps run when the flow runs; enter sample output for this step instead" };
+      } catch (e) { return { error: e.message }; }
+    },
+    async RunFlow(id, o = {}) {
+      const f = db.flows[id]; if (!f) throw new Error(`no flow "${id}"`);
+      const errs = validateFlow(f).filter((i) => i.level === "error"); if (errs.length) throw new Error("fix the flow first: " + errs.map((i) => i.message).join(" "));
+      o = { ...o, inputs: { ...(o.inputs || {}) } };
+      for (const i of f.inputs) { if (!o.inputs[i.name]) o.inputs[i.name] = i.default || ""; if (i.required && !o.inputs[i.name].trim() && o.forEach?.input !== i.name) throw new Error(`${i.label || i.name} is required`); }
+      return startFlowRun(clone(f), o);
+    },
+    async FlowRun(id) { const l = flowLive.get(id); if (l) return clone(l.st); const st = [...(db.events[id] || [])].reverse().find((e) => e.type === "flow.state")?.state; if (!st) throw new Error(`no flow run "${id}"`); return clone({ ...st, status: ["running", "review", "scheduled"].includes(st.status) ? "interrupted" : st.status }); },
+    async FlowRuns(limit) { return clone(db.runs.filter((r) => r.step === "flow" && r.workspace === db.root).slice(0, limit || 100)); },
+    async DecideFlow(id, d) { const l = flowLive.get(id); if (!l?.decide) throw new Error("the run is not waiting for a review"); l.decide(d); },
+    async StopFlowRun(id) { const l = flowLive.get(id); if (!l) throw new Error(`run ${id} is not live`); l.stop = true; if (l.decide) l.decide({ action: "stop" }); },
+    async FlowCredentials(id) {
+      const f = db.flows[id], used = new Set(f.nodes.flatMap((n) => [n.type === "tool" ? n.tool : null, ...(n.actions || []).filter((a) => a.type === "tool").map((a) => a.tool)]).filter(Boolean));
+      const out = new Map();
+      for (const e of [...db.exts, ...adm.managed]) if (used.has(e.name)) for (const s of e.secrets || []) { const c = out.get(s.name) || { ...infoOf(s), desc: s.desc, tools: [] }; if (c.via === "ask" && s.name in kcStore) c.via = "keychain"; c.tools.push(e.name); out.set(s.name, c); }
+      return [...out.values()];
+    },
+    async KeychainAvailable() { return true; },
+    async SaveSecretToKeychain(name, value) { if (!name || !value) throw new Error("a name and a value are needed"); kcStore[name] = value; },
+    async RemoveSecretFromKeychain(name) { delete kcStore[name]; },
+    async RunResults(id) { const r = db.runs.find((x) => x.id === id); if (!r) throw new Error(`no run ${id}`); const dir = r.results || resultsDir(id); const files = Object.keys(db.files).filter((p) => p.startsWith(dir + "/")).map((p) => p.slice(dir.length + 1)).sort(); return { id, dir, abs: db.root + "/" + dir, files, ready: files.length > 0 }; },
+    async RunThread(id) { const t = thread(id); if (!t.length) throw new Error(`no run ${id}`); return clone(t); },
+    async RecentRuns(limit) { return clone(db.runs.filter((r) => r.workspace === db.root).slice(0, limit || 50).map((r) => digest(r.id))); },
+    async RevealPath(p) { throw new Error("The browser preview cannot open Finder; the desktop app shows " + p + " there."); },
+    async Libraries() { return annotated(); },
+    async ManagedLibraries() { return clone(adm.libs.map((l) => ({ ...l, status: "verified", source: "app" }))); },
+    async SaveManagedLibrary(name, desc, content) {
+      await wait(250);
+      if (!unlocked) throw new Error("unlock admin mode first (Admin screen)");
+      if (!/^[a-z0-9][a-z0-9._-]{0,59}$/.test(name || "")) throw new Error("name must start with a lowercase letter or digit and use lowercase letters, digits, '.', '-' and '_' (max 60)");
+      if (!content?.trim()) throw new Error("the skill is empty");
+      const old = adm.libs.find((l) => l.name === name);
+      const rec = { name, desc: desc || "", content, version: (old?.version || 0) + 1, signedBy: adm.key?.id || "sw1-mock", signer: adm.key?.name || "Admin", signedAt: new Date().toISOString() };
+      adm.libs = [...adm.libs.filter((l) => l.name !== name), rec].sort((a, b) => a.name.localeCompare(b.name)); savAdm();
+      return annotated();
+    },
+    async DeleteManagedLibrary(name) { if (!unlocked) throw new Error("unlock admin mode first (Admin screen)"); adm.libs = adm.libs.filter((l) => l.name !== name); savAdm(); return annotated(); },
+    async SaveProjectLibrary(r) {
+      await wait(150);
+      const name = (r.name || "").trim().replace(r.kind === "skill" ? /\.md$/ : /$^/, "");
+      if (r.kind === "skill" && !/^[a-z0-9][a-z0-9._-]{0,59}$/.test(name)) throw new Error("skill names use lowercase letters, digits, '.', '-' and '_' (they become a folder name)");
+      if (r.kind === "script" && !/^[A-Za-z0-9][A-Za-z0-9._-]{0,79}$/.test(name)) throw new Error("script file names use letters, digits, '.', '-' and '_', e.g. gen-dto.sh");
+      if (!r.content?.trim()) throw new Error(`the ${r.kind} is empty`);
+      let rel = r.kind === "skill" ? `.codegen/skills/project/${name}/SKILL.md` : `.codegen/scripts/${name}`;
+      if (r.kind === "skill" && r.oldPath === `.codegen/skills/project/${name}.md`) rel = r.oldPath;
+      if (r.oldPath !== rel && rel in db.files) throw new Error(`a ${r.kind} called ${name} already exists`);
+      db.files[rel] = r.content;
+      if (r.oldPath && r.oldPath !== rel) {
+        delete db.files[r.oldPath];
+        const oldName = r.oldPath.replace(/\/SKILL\.md$|\.md$/, "").split("/").pop(), oldId = `project:${r.kind}:${oldName}`, newId = `project:${r.kind}:${name}`;
+        db.profile.project = (db.profile.project || []).map((x) => (x === oldId ? newId : x));
+      }
+      persist(); return annotated();
+    },
+    async DeleteProjectLibrary(path) {
+      if (!/^\.codegen\/(skills\/project|scripts)\//.test(path || "") || path.includes("..")) throw new Error(/skills\/global/.test(path) ? "corporate libraries are managed by an admin; unlock admin mode to change them" : `${path} is not a project skill or script`);
+      delete db.files[path]; persist(); return annotated();
+    },
+    async PreviewFile(path) {
+      await wait(80);
+      const p = String(path || "").trim().replace(/^[`'"]|[`'"]$/g, "").replace(/^\.\//, "");
+      const blob = blobs.get(p) || [...blobs.entries()].find(([k]) => ("/" + k).endsWith("/" + p))?.[1];
+      if (blob) {
+        const kind = blob.mime.startsWith("image/") ? "image" : blob.mime === "application/pdf" ? "pdf" : blob.mime.startsWith("text/") ? "text" : "binary";
+        return { path: db.root + "/" + blob.rel, rel: blob.rel, name: blob.rel.split("/").pop(), size: blob.size, mod: new Date().toISOString(), kind, mime: blob.mime,
+          ...(kind === "text" ? { text: new TextDecoder().decode(Uint8Array.from(atob(blob.b64), (c) => c.charCodeAt(0))) } : kind === "binary" ? {} : { data: blob.b64 }) };
+      }
+      const files = Object.keys(db.files);
+      let rel = files.includes(p) ? p : files.filter((f) => ("/" + f).endsWith("/" + p)).sort((a, b) => a.length - b.length)[0];
+      if (!rel) {
+        const dir = files.filter((f) => f.startsWith(p.replace(/\/$/, "") + "/"));
+        if (dir.length) return { path: db.root + "/" + p, rel: p, name: p.split("/").pop(), size: 0, kind: "dir", entries: [...new Set(dir.map((f) => f.slice(p.length + 1).split("/")[0] + (f.slice(p.length + 1).includes("/") ? "/" : "")))] };
+        throw new Error(p.startsWith("/") || p.startsWith("~") ? `${p}: the browser preview can only show project files; the desktop app opens any file` : `${p} was not found in the project`);
+      }
+      const text = db.files[rel], matches = files.filter((f) => f !== rel && ("/" + f).endsWith("/" + p));
+      return { path: db.root + "/" + rel, rel, name: rel.split("/").pop(), size: text.length, mod: new Date().toISOString(), kind: "text", mime: "text/plain", text, matches };
+    },
+    async SaveAttachment(name, data) {
+      await wait(150);
+      const b64 = String(data).replace(/^data:[^,]*,/, ""), size = Math.floor(b64.length * 3 / 4);
+      if (!size) throw new Error("the file is empty");
+      const safe = (name || "attachment").replace(/[^A-Za-z0-9._-]+/g, "-").replace(/^[-.]+|[-.]+$/g, "") || "attachment";
+      const mime = (String(data).match(/^data:([^;,]+)/) || [])[1] || "";
+      const kind = mime.startsWith("image/") ? "image" : mime === "application/pdf" || /\.pdf$/i.test(safe) ? "pdf" : mime.startsWith("text/") ? "text" : "file";
+      const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+      const rel = `.codegen/attachments/${stamp.slice(0, 8)}-${stamp.slice(8)}-${safe}`;
+      blobs.set(rel, { rel, b64, mime: mime || "application/octet-stream", size });
+      return { path: rel, name, size, mime, kind };
+    },
+    async TestExtensionWith(d, q, files = []) {
+      const r = await api.TestExtension(d, q);
+      if (files.length) r.steps.unshift({ k: "attach", v: files.join("\n") });
+      return r;
+    },
+    async TestExtension(d, q) {
+      if (!q.trim()) throw new Error("write what you would ask the agent");
+      await wait(1600);
+      const deps = d.deps || [];
+      let installStep = null;
+      if (deps.length) {
+        const reg = { "Node.js": db.pkg?.npm?.registry || "https://registry.npmjs.org/", Python: db.pkg?.pip?.indexUrl || "https://pypi.org/simple", Go: db.pkg?.go?.proxy || "https://proxy.golang.org,direct", Java: db.pkg?.maven?.mirrorUrl || "https://repo.maven.apache.org/maven2" }[d.lang];
+        const unpinned = deps.filter((x) => !/(@[\w.^~-]+$|==|:[\w.-]+:[\w.-]+$)/.test(x));
+        const cmd = { "Node.js": "$ npm install --no-audit --no-fund --no-package-lock --omit=dev", Python: "$ python3 -m venv .venv\n$ .venv/bin/python -m pip install -r requirements.txt", Go: "$ go get " + deps.join(" ") + "\n$ go mod tidy\n$ go build -o bin/" + d.name + " .", Java: "$ mvn -q -B -s .codegen/cache/maven-settings.xml dependency:copy-dependencies" }[d.lang] || "";
+        if (!cmd) return { pass: false, steps: [{ k: "out", v: "error: Bash tools cannot declare dependencies" }], checks: [{ label: "Dependencies installed", ok: false }], output: "", at: now(), summary: "Failed: Bash tools cannot have dependencies." };
+        const proxy = db.pkg?.proxy?.https || db.pkg?.proxy?.http;
+        const log = [cmd, `registry: ${reg}${proxy ? " via " + proxy.replace(/:[^:@/]+@/, ":xxxxx@") : ""}`];
+        if (unpinned.length) {
+          log.push(`error: ${unpinned[0]}: no exact version given; the installer refuses floating versions`);
+          return { pass: false, steps: [{ k: "install", v: log.join("\n") }, { k: "out", v: `error: installing ${unpinned.join(", ")} failed` }], checks: [{ label: "Dependencies installed", ok: false }], output: "", at: now(), summary: `Failed: installing ${deps.join(", ")} did not work. Check the package names and versions, or the proxy and registry under Packages & proxy.` };
+        }
+        log.push(...deps.map((x) => "added " + x), "Dependencies installed.");
+        installStep = { k: "install", v: log.join("\n") };
+      }
+      let missing = [], secretErr = "";
+      try { await resolveSecrets(d, d.secrets); } catch (e) { secretErr = e.message; missing = d.secrets || []; }
+      const call = d.call || {};
+      const placeholders = [...(d.command || "").matchAll(/\{\{(\w+)\}\}/g)].map((m) => m[1]);
+      const argsOK = (d.params || []).every((p) => !p.required || (call[p.name] != null && placeholders.includes(p.name))) && placeholders.every((n) => (d.params || []).some((p) => p.name === n));
+      const prints = /console\.log|echo |printf|print\(|fmt\.Print|System\.out/.test(d.script || "");
+      const ran = !missing.length && argsOK;
+      const out = missing.length ? `secrets: ${secretErr}` : !argsOK ? "error: arguments do not match the command placeholders" : prints ? d.output || "ok" : "(no output)";
+      const steps = [
+        ...(installStep ? [installStep] : []),
+        { k: "say", v: `Read the tool schema for ${d.name} (${d.params.length} parameter${d.params.length === 1 ? "" : "s"}).` },
+        { k: "call", v: JSON.stringify({ tool: d.name, arguments: call }, null, 2) },
+        { k: "run", v: "$ " + (d.command || "").replace(/\{\{(\w+)\}\}/g, (_, n) => call[n] ?? "").trim() },
+        { k: "out", v: out },
+      ];
+      const checks = [...(installStep ? [["Dependencies installed", true]] : []), ["Agent picked this tool for the request", true], ["Arguments match the parameter schema", argsOK], ["Exit code 0", ran], ["Output answers the request", ran && prints], ["No secret values in prompt or output", true], ["Finished within 30 s", true]].map(([label, ok]) => ({ label, ok }));
+      const pass = checks.every((c) => c.ok);
+      const failed = checks.filter((c) => !c.ok).map((c) => c.label.toLowerCase()).join("; ");
+      return { pass, steps, checks, output: out, at: now(), summary: pass ? `The tool answered “${q.trim()}” correctly.` : `Failed: ${failed}.${missing.length ? ` ${secretErr}.` : ""}` };
+    },
+    async PackageSettings() {
+      db.pkg ||= seed().pkg;
+      const pub = clone(db.pkg);
+      for (const k of ["http", "https"]) pub.proxy[k] = (pub.proxy[k] || "").replace(/\/\/([^:@/]+):[^@/]*@/, "//$1:xxxxx@");
+      return { saved: pub, caches: ".codegen/cache/{npm,pip,go-mod,m2}", tools: { npm: true, python3: true, go: true, mvn: false, java: false },
+        detected: { proxy: { http: "", https: "", noProxy: "" }, caFile: "", npm: { registry: "https://registry.npmjs.org/" }, pip: { indexUrl: "https://pypi.org/simple", extraIndexUrl: "", trustedHost: "" }, go: { proxy: "https://proxy.golang.org,direct", private: "", noSumDb: "", sumDb: "sum.golang.org", insecure: "", toolchain: "auto" }, maven: { mirrorUrl: "https://repo.maven.apache.org/maven2", mirrorOf: "central" } } };
+    },
+    async SavePackageSettings(s) {
+      for (const u of [s.proxy.http, s.proxy.https, s.npm.registry, s.pip.indexUrl, s.pip.extraIndexUrl, s.maven.mirrorUrl]) if (u && !/^[a-z]+:\/\/[^/]+/i.test(u)) throw new Error(`"${u}" is not a URL (want e.g. https://host:port/path)`);
+      const old = db.pkg || {}; const next = clone(s);
+      for (const k of ["http", "https"]) if (/:xxxxx@/.test(next.proxy[k])) next.proxy[k] = old.proxy?.[k] || next.proxy[k];
+      db.pkg = next; persist();
+    },
+    async CheckRegistries() {
+      await wait(900);
+      const s = db.pkg, via = s.proxy.https || s.proxy.http || "direct";
+      const bad = /127\.0\.0\.1|localhost/.test(via);
+      const row = (eco, base, path) => ({ ecosystem: eco, url: base.replace(/\/$/, "") + path, ok: !bad, status: bad ? "proxyconnect tcp: connection refused" : "200 OK", via: via.replace(/:[^:@/]+@/, ":xxxxx@"), ms: 80 + Math.round(Math.random() * 300) });
+      return [row("npm", s.npm.registry || "https://registry.npmjs.org", "/-/ping"), row("pip", s.pip.indexUrl || "https://pypi.org/simple", "/pip/"), row("go", (s.go.proxy || "https://proxy.golang.org").split(",")[0], "/golang.org/x/text/@v/list"), row("maven", s.maven.mirrorUrl || "https://repo.maven.apache.org/maven2", "/org/apache/maven/plugins/maven-dependency-plugin/maven-metadata.xml")];
+    },
+    async PickCAFile() { return ""; },
+    async SetSecret(name, value) { if (value) secrets[name] = value; else delete secrets[name]; },
+    async SecretStatus(names) { return Object.fromEntries(names.map((n) => [n, ["session", "env"].includes(infoOf({ name: n }).via)])); },
+    async SecretInfo(list) { return (list || []).map(infoOf); },
+    async AnswerSecrets(id, values, remember) { const r = pendingAsks.get(id); if (!r) throw new Error("that request is no longer waiting"); r({ values, remember }); },
+    async CancelSecrets(id) { const r = pendingAsks.get(id); if (r) r({ cancel: true }); },
+  };
+  for (const m of methods) if (!api[m]) api[m] = async () => { throw new Error(m + " is not available in the browser preview"); };
+  return api;
+}
+
+const slug = (s) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").replace(/^[^a-z]+/, "").split("-").slice(0, 3).join("-") || "tool";
+
+// Tool languages "installed" in the preview, in priority order. Auto uses the first.
+const RUNTIMES = ["Node.js", "Go", "Bash"];
+const pickRuntime = (runsIn) => (runsIn && runsIn !== "Auto" ? runsIn : RUNTIMES[0]);
+const EXT = { "Node.js": "js", Go: "go", Java: "java", Python: "py", Bash: "sh" };
+const RUN = { "Node.js": "node", Go: "go run", Java: "java", Python: "python3", Bash: "bash" };
+
+// Skeleton in lang that reads the parameters in order and runs body.
+function skeleton(lang, name, desc, params, body = {}) {
+  const ps = params.map((p) => p.name);
+  switch (lang) {
+    case "Go": return body.Go || `package main\n\n// ${name}: ${desc}\nimport (\n\t"fmt"\n\t"os"\n)\n\nfunc main() {\n${ps.map((p, i) => `\t${p} := arg(${i + 1})\n`).join("")}\tfmt.Println("processed", ${ps[0] || '""'})\n}\n\nfunc arg(i int) string {\n\tif len(os.Args) > i {\n\t\treturn os.Args[i]\n\t}\n\treturn ""\n}\n`;
+    case "Java": return body.Java || `// ${name}: ${desc}\npublic class Tool {\n    public static void main(String[] args) {\n        String ${ps[0] || "input"} = args.length > 0 ? args[0] : "";\n        System.out.println("processed " + ${ps[0] || "input"});\n    }\n}\n`;
+    case "Python": return body.Python || `#!/usr/bin/env python3\n"""${name}: ${desc}"""\nimport sys\n\nprint(f"processed {sys.argv[1]}")\n`;
+    case "Bash": return body.Bash || `#!/usr/bin/env bash\n# ${name}: ${desc}\nset -euo pipefail\n${ps.map((p, i) => `${p}="\${${i + 1}:-}"\n`).join("")}echo "processed $${ps[0] || "1"}"\n`;
+    default: return body["Node.js"] || `// ${name}: ${desc}\nconst [${ps.join(", ")}] = process.argv.slice(2);\n${ps[0] ? `if (!${ps[0]}) { console.error("${ps[0]} is required"); process.exit(2); }\n` : ""}console.log(\`processed \${${ps[0] || '""'}}\`);\n`;
+  }
+}
+
+const EXAMPLES = [
+  { re: /postgres|sql|database/, name: "postgres-query", desc: "Run a read-only SQL query against the project's PostgreSQL database and return the rows as JSON.",
+    params: [{ name: "sql", type: "string", required: true, desc: "A single SELECT statement" }, { name: "limit", type: "number", required: false, desc: "Maximum rows, default 200" }],
+    secrets: [{ name: "DATABASE_URL", desc: "postgres://user:password@host:5432/db" }], perms: ["network: database host", "read-only queries"],
+    deps: { "Node.js": ["pg@8.13.1"], Python: ["psycopg[binary]==3.2.3"], Go: ["github.com/jackc/pgx/v5@v5.7.1"], Java: ["org.postgresql:postgresql:42.7.4"] },
+    sampleTest: "Which tables have a created_at column?", call: { sql: "SELECT table_name FROM information_schema.columns WHERE column_name = 'created_at'", limit: 200 },
+    output: `[\n  { "table_name": "orders" },\n  { "table_name": "order_lines" }\n]`,
+    body: { "Node.js": `// postgres-query: run a read-only SELECT and print rows as JSON\nconst { Client } = require("pg");\nconst [sql, limit = "200"] = process.argv.slice(2);\nif (!/^\\s*(select|with)\\b/i.test(sql || "")) { console.error("only SELECT statements are allowed"); process.exit(2); }\n(async () => {\n  const db = new Client({ connectionString: process.env.DATABASE_URL, statement_timeout: 20000 });\n  await db.connect();\n  try {\n    await db.query("BEGIN READ ONLY");\n    const { rows } = await db.query(\`SELECT * FROM (\${sql}) q LIMIT \${Number(limit) || 200}\`);\n    console.log(JSON.stringify(rows, null, 2));\n  } finally { await db.end(); }\n})().catch((e) => { console.error(e.message); process.exit(1); });\n` } },
+  { re: /todo|fixme/, name: "find-todos", desc: "List TODO and FIXME comments under a path, with file and line.",
+    params: [{ name: "path", type: "string", required: true, desc: "Folder or package path to scan" }, { name: "tags", type: "string", required: false, desc: "Comma-separated tags, default TODO,FIXME" }],
+    secrets: [], perms: ["read files"], sampleTest: "List the TODOs in the orders domain package", call: { path: "src/main/java/com/acme/orders", tags: "TODO,FIXME" },
+    output: "src/main/java/com/acme/orders/application/PlaceOrderService.java:19  // TODO publish OrderPlaced via Kafka adapter (T004)\n1 match",
+    body: { "Node.js": `// find-todos: list TODO/FIXME comments under a path\nconst fs = require("node:fs");\nconst path = require("node:path");\nconst [root, tags = "TODO,FIXME"] = process.argv.slice(2);\nif (!root) { console.error("path is required"); process.exit(2); }\nconst re = new RegExp(\`\\\\b(\${tags.split(",").join("|")})\\\\b\`);\nlet n = 0;\nfunction walk(p) {\n  const st = fs.statSync(p);\n  if (st.isDirectory()) { for (const e of fs.readdirSync(p)) if (!["node_modules", ".git", "target"].includes(e)) walk(path.join(p, e)); return; }\n  fs.readFileSync(p, "utf8").split("\\n").forEach((l, i) => { if (re.test(l)) { console.log(\`\${p}:\${i + 1}  \${l.trim()}\`); n++; } });\n}\nwalk(root);\nconsole.log(\`\${n} match\${n === 1 ? "" : "es"}\`);\n`,
+      Bash: `#!/usr/bin/env bash\n# find-todos: list TODO/FIXME comments under a path\nset -euo pipefail\npath="\${1:?path is required}"\ntags="\${2:-TODO,FIXME}"\npattern="$(echo "$tags" | tr ',' '|')"\ngrep -rnE "($pattern)\\b" "$path" || echo "0 matches"\n` } },
+  { re: /jira|ticket|issue/, name: "jira-ticket", desc: "Fetch a Jira ticket by key: summary, status and acceptance criteria.",
+    params: [{ name: "key", type: "string", required: true, desc: "Ticket key, e.g. ORD-142" }],
+    secrets: [{ name: "JIRA_TOKEN", desc: "Jira API token" }, { name: "JIRA_URL", desc: "Base URL, e.g. https://acme.atlassian.net" }], perms: ["network: JIRA_URL only"],
+    sampleTest: "What are the acceptance criteria for ORD-142?", call: { key: "ORD-142" }, output: `{\n  "key": "ORD-142",\n  "summary": "Reject orders when stock is insufficient",\n  "status": "In Progress"\n}`,
+    body: { "Node.js": `// jira-ticket: fetch a ticket. Secrets come from the environment, never from the model.\nasync function main() {\nconst key = process.argv[2];\nif (!key) { console.error("key is required"); process.exit(2); }\nconst res = await fetch(\`\${process.env.JIRA_URL}/rest/api/3/issue/\${key}?fields=summary,status\`, {\n  headers: { Authorization: \`Bearer \${process.env.JIRA_TOKEN}\`, Accept: "application/json" },\n  signal: AbortSignal.timeout(10000),\n});\nif (!res.ok) { console.error(\`Jira: \${res.status}\`); process.exit(1); }\nconst { fields: f } = await res.json();\nconsole.log(JSON.stringify({ key, summary: f.summary, status: f.status.name }, null, 2));\n}\nmain().catch((e) => { console.error(e.message); process.exit(1); });\n` } },
+  { re: /test/, name: "run-tests", desc: "Run unit tests for one package and report only the failures.",
+    params: [{ name: "package", type: "string", required: true, desc: "Java package, e.g. com.acme.orders" }], secrets: [], perms: ["read files", "run build tool"],
+    sampleTest: "Are the order service tests passing?", call: { package: "com.acme.orders" }, output: "Tests run: 1, Failures: 0, Errors: 0, Skipped: 0\nall tests passed",
+    body: { "Node.js": `// run-tests: unit tests for one package, failures only\nconst { spawnSync } = require("node:child_process");\nconst pkg = process.argv[2];\nif (!pkg) { console.error("package is required"); process.exit(2); }\nconst r = spawnSync("./mvnw", ["-q", "test", \`-Dtest=\${pkg}.**\`, "-DfailIfNoTests=false"], { encoding: "utf8", timeout: 600000 });\nconst lines = (r.stdout + r.stderr).split("\\n").filter((l) => /FAIL|ERROR|Tests run:/.test(l));\nconsole.log(lines.join("\\n") || "all tests passed");\nprocess.exit(r.status ?? 1);\n` } },
+  { re: /depend|vulnerab|cve|security/, name: "dep-audit", desc: "Check dependencies for known vulnerabilities and list the high and critical ones.",
+    params: [{ name: "minSeverity", type: "enum(low,medium,high,critical)", required: false, desc: "Lowest severity to report, default high" }],
+    secrets: [{ name: "NVD_API_KEY", desc: "NVD API key for faster lookups" }], perms: ["read files", "network: nvd.nist.gov"],
+    sampleTest: "Do we have any critical vulnerabilities?", call: { minSeverity: "critical" }, output: "no dependencies at or above critical",
+    body: { "Node.js": `// dep-audit: OWASP dependency-check, filtered by severity\nconst { spawnSync } = require("node:child_process");\nconst fs = require("node:fs");\nconst min = process.argv[2] || "high";\nconst order = ["low", "medium", "high", "critical"];\nconst r = spawnSync("./mvnw", ["-q", "org.owasp:dependency-check-maven:check", \`-DnvdApiKey=\${process.env.NVD_API_KEY}\`, "-Dformat=JSON"], { stdio: "inherit" });\nif (r.status) process.exit(r.status);\nconst rep = JSON.parse(fs.readFileSync("target/dependency-check-report.json", "utf8"));\nconst hits = rep.dependencies.flatMap((d) => (d.vulnerabilities || []).filter((v) => order.indexOf(v.severity.toLowerCase()) >= order.indexOf(min)).map((v) => \`\${d.fileName}: \${v.name} (\${v.severity})\`));\nconsole.log(hits.join("\\n") || \`no dependencies at or above \${min}\`);\n` } },
+];
+
+// tools with dependencies live in their own folder (same layout as the Go hub)
+function folderCommand(lang, name, params) {
+  const d = `.codegen/tools/project/${name}`;
+  const run = { "Node.js": `node ${d}/index.js`, Python: `${d}/.venv/bin/python ${d}/main.py`, Go: `${d}/bin/${name}`, Java: `java -cp ${d}/lib/* ${d}/Tool.java` }[lang];
+  return run + " " + params.map((p) => `{{${p.name}}}`).join(" ");
+}
+
+function makeDraft(prompt, lang, connects) {
+  const p = prompt.toLowerCase();
+  const ex = EXAMPLES.find((e) => e.re.test(p));
+  const name = ex ? ex.name : slug(prompt);
+  const params = ex ? clone(ex.params) : [{ name: "input", type: "string", required: true, desc: "What to work on" }];
+  const desc = ex ? ex.desc : prompt.trim().replace(/\.$/, "") + ".";
+  const file = lang === "Python" ? name.replace(/-/g, "_") : name;
+  return {
+    name, desc, lang, params,
+    secrets: ex ? clone(ex.secrets) : connects.includes("rest") || connects.includes("db") ? [{ name: name.toUpperCase().replace(/-/g, "_") + "_TOKEN", desc: "Credential for the connected system" }] : [],
+    perms: ex ? ex.perms : connects.includes("rest") ? ["network"] : ["read files"],
+    command: `${RUN[lang] || "bash"} .codegen/tools/${file}.${EXT[lang] || "sh"} ${params.map((x) => `{{${x.name}}}`).join(" ")}`,
+    script: skeleton(lang, name, desc, params, ex?.body),
+    sampleTest: ex ? ex.sampleTest : "Use the tool on the orders service",
+    call: ex ? clone(ex.call) : { input: "orders-service" },
+    output: ex ? ex.output : "processed orders-service",
+    ...(ex?.deps?.[lang] ? { deps: [...ex.deps[lang]], command: folderCommand(lang, name, params) } : {}),
+  };
+}
