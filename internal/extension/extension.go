@@ -17,10 +17,13 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"sync"
 	"time"
+
+	"codegen/internal/aishim"
 )
 
 // Param is one argument the agent fills in.
@@ -73,6 +76,11 @@ type Extension struct {
 	// "github.com/jackc/pgx/v5@v5.7.1", "org.postgresql:postgresql:42.7.4".
 	Deps []string `json:"deps,omitempty"`
 	Dir  string   `json:"dir,omitempty"`
+	// Copilot extension tools (Kind "copilot"): the tool's name inside the
+	// extension, its entry file, and a fingerprint of the extension's files.
+	Tool  string `json:"tool,omitempty"`
+	Entry string `json:"entry,omitempty"`
+	Tree  string `json:"tree,omitempty"`
 	// Managed is set (by the app, never stored by users) on tools an admin
 	// published in managed-tools.json; they are read-only for everyone else.
 	Managed *ManagedInfo `json:"managed,omitempty"`
@@ -117,6 +125,9 @@ func (e Extension) Fingerprint() string {
 	k := e.Kind + "\x00" + e.Command + "\x00" + e.Script
 	if len(e.Deps) > 0 { // approval covers the dependencies too
 		k += "\x00" + strings.Join(e.Deps, "\n")
+	}
+	if e.Kind == KindCopilot { // and, for a Copilot extension, all its files
+		k += "\x00" + e.Dir + "\x00" + e.Tool + "\x00" + e.Tree
 	}
 	h := sha256.Sum256([]byte(k))
 	return hex.EncodeToString(h[:12])
@@ -212,7 +223,7 @@ func (s *Store) List() ([]Extension, error) {
 		exts = append(exts, Extension{Name: n.name, Desc: "npm script " + n.script + ": " + n.body, Kind: "npm", Scope: "project",
 			Status: "needs approval", Lang: "Node.js", Command: cmd, Script: n.body, Perms: []string{"runs Node.js"}, Revision: 1})
 	}
-	return exts, nil
+	return mergeCopilot(s.root, exts), nil
 }
 
 // Get finds one extension by name.
@@ -408,6 +419,9 @@ type RunResult struct {
 	Command    string   `json:"command"` // argv, quoted as a command template
 	Argv       []string `json:"argv,omitempty"`
 	Error      string   `json:"error,omitempty"`
+	// AI is what the tool spent on AI itself (claude / copilot calls it
+	// made), when SpecWright's AI launchers were on its PATH.
+	AI []aishim.Record `json:"ai,omitempty"`
 }
 
 const maxOutput = 64 * 1024
@@ -431,11 +445,17 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 			return RunResult{Error: fmt.Sprintf("missing required argument %q", p.Name)}
 		}
 	}
+	var argv []string
 	words := SplitWords(e.Command)
-	if len(words) == 0 {
+	if e.Kind == KindCopilot {
+		a, err := copilotArgv(root, e, args)
+		if err != nil {
+			return RunResult{Error: err.Error()}
+		}
+		argv, words = a, nil
+	} else if len(words) == 0 {
 		return RunResult{Error: "extension has no command"}
 	}
-	var argv []string
 	for _, w := range words {
 		only := placeholderRE.FindStringSubmatch(w)
 		sub := placeholderRE.ReplaceAllStringFunc(w, func(m string) string {
@@ -450,7 +470,7 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 		}
 		argv = append(argv, sub)
 	}
-	if e.Kind == "npm" {
+	if e.Kind == "npm" && len(argv) > 0 {
 		if _, err := exec.LookPath("npm"); err != nil {
 			return RunResult{Error: "Node.js (npm) is needed to run ext:* scripts but was not found on PATH"}
 		}
@@ -477,15 +497,39 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 			env = append(env, s.Name+"="+v)
 		}
 	}
+	// count the AI the tool uses itself: the claude/copilot launchers go
+	// first on its PATH and report each call to a file of its own
+	usageFile := ""
+	for _, kv := range extraEnv {
+		if dir, ok := strings.CutPrefix(kv, aishim.EnvDir+"="); ok && dir != "" {
+			if f, err := os.CreateTemp("", "specwright-ai-*.jsonl"); err == nil {
+				usageFile = f.Name()
+				f.Close()
+				env = append(env, "PATH="+dir+string(os.PathListSeparator)+envValue(env, "PATH"), aishim.EnvUsage+"="+usageFile)
+			}
+		}
+	}
 	cmd.Env = env
 	if stdin != nil {
 		cmd.Stdin = strings.NewReader(*stdin)
 	}
-	var buf bytes.Buffer
+	var buf, errBuf bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &limited{w: &buf, n: maxOutput}, &limited{w: &buf, n: maxOutput}
+	if e.Kind == KindCopilot {
+		// the result is what the tool returned; the extension's own logging
+		// (stderr) is shown only when the call fails
+		cmd.Stderr = &limited{w: &errBuf, n: maxOutput}
+	}
 	start := time.Now()
 	err := cmd.Run()
-	res := RunResult{Output: strings.TrimRight(buf.String(), "\n"), DurationMS: time.Since(start).Milliseconds(), Command: JoinWords(argv), Argv: argv}
+	out := strings.TrimRight(buf.String(), "\n")
+	if err != nil && errBuf.Len() > 0 {
+		out = strings.TrimSpace(strings.Join([]string{out, strings.TrimSpace(errBuf.String())}, "\n"))
+	}
+	res := RunResult{Output: out, DurationMS: time.Since(start).Milliseconds(), Command: JoinWords(argv), Argv: argv}
+	if usageFile != "" {
+		res.AI = aishim.ReadUsage(usageFile)
+	}
 	if cmd.ProcessState != nil {
 		res.ExitCode = cmd.ProcessState.ExitCode()
 	}
@@ -515,4 +559,15 @@ func (l *limited) Write(p []byte) (int, error) {
 		}
 	}
 	return len(p), nil
+}
+
+// envValue is the last value of key in env (later entries win, as in exec).
+func envValue(env []string, key string) string {
+	v := ""
+	for _, kv := range env {
+		if k, val, ok := strings.Cut(kv, "="); ok && (k == key || (runtime.GOOS == "windows" && strings.EqualFold(k, key))) {
+			v = val
+		}
+	}
+	return v
 }

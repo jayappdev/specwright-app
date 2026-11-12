@@ -33,7 +33,10 @@ type Request struct {
 	Purpose string // step | generate | test
 	Step    string // workflow step id, e.g. "specify"
 	Prompt  string
-	Dir     string   // working directory (the workspace)
+	Dir     string // working directory (the workspace, or the Spec Kit project folder in it)
+	// AddDirs are more folders the agent may read and write (the workspace
+	// when Dir is a project folder inside it).
+	AddDirs []string
 	Model   string   // optional model override
 	Env     []string // extra KEY=VALUE pairs (session token, bridge address)
 	// MCPConfig is a path to an MCP config JSON naming the agentbridge server.

@@ -130,7 +130,11 @@ func runCommand(ctx context.Context, b *Box, a args) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	dir, _, err := b.resolve(a.str("cwd"))
+	cwd := a.str("cwd")
+	if cwd == "" && b.cwd != nil {
+		cwd = b.cwd()
+	}
+	dir, _, err := b.resolve(cwd)
 	if err != nil {
 		return "", err
 	}

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path"
 	"path/filepath"
 	"regexp"
 	"sort"
@@ -63,24 +64,140 @@ func (h *Hub) ManagedLibraries() []extension.ManagedLibrary {
 	return out
 }
 
-// SaveManagedLibrary signs and publishes a corporate skill (admin only),
-// then refreshes the open project's copy.
-func (h *Hub) SaveManagedLibrary(name, desc, content string) ([]workflow.Library, error) {
+// libraryAdmin returns the unlocked, trusted admin key for publishing name.
+func (h *Hub) libraryAdmin(name string) (ed25519.PrivateKey, string, error) {
 	priv, signer, err := h.adminKey()
 	if err != nil {
-		return nil, err
+		return nil, "", err
 	}
 	if _, ok := h.trustedKeys()[extension.KeyID(priv.Public().(ed25519.PublicKey))]; !ok {
-		return nil, errors.New("your admin key is not trusted on this computer, so the library would be blocked; trust it on the Admin screen or deploy the policy file")
+		return nil, "", errors.New("your admin key is not trusted on this computer, so the library would be blocked; trust it on the Admin screen or deploy the policy file")
 	}
 	if list, _ := extension.NewLibraryStore(MachineLibraryCatalogPath()).List(); len(list) > 0 {
 		for _, l := range list {
 			if l.Name == name {
-				return nil, fmt.Errorf("%s comes from the machine catalog (%s); change it there", name, MachineLibraryCatalogPath())
+				return nil, "", fmt.Errorf("%s comes from the machine catalog (%s); change it there", name, MachineLibraryCatalogPath())
 			}
 		}
 	}
-	if _, err := h.libs.Put(name, desc, content, priv, signer); err != nil {
+	return priv, signer, nil
+}
+
+// SaveManagedLibrary signs and publishes a corporate skill (admin only),
+// then refreshes the open project's copy. It keeps the skill's files; a
+// local copy being published for the first time brings the files in its
+// folder along.
+func (h *Hub) SaveManagedLibrary(name, desc, content string) ([]workflow.Library, error) {
+	priv, signer, err := h.libraryAdmin(name)
+	if err != nil {
+		return nil, err
+	}
+	var files map[string]string
+	if cur, ok := h.libs.Get(name); ok {
+		files = cur.Files
+	} else if files, err = h.localGlobalSkillFiles(name); err != nil {
+		return nil, err
+	}
+	if _, err := h.libs.Put(name, desc, content, files, priv, signer); err != nil {
+		return nil, err
+	}
+	return h.Libraries()
+}
+
+// localGlobalSkillFiles reads the files of an unpublished local skill in
+// the project's corporate skills folder.
+func (h *Hub) localGlobalSkillFiles(name string) (map[string]string, error) {
+	h.mu.RLock()
+	root, p := h.root, h.profile
+	h.mu.RUnlock()
+	if root == "" || !extension.LibraryNameRE.MatchString(name) {
+		return nil, nil
+	}
+	base := filepath.Join(root, filepath.FromSlash(p.LibraryDir(workflow.GlobalSkillsDir)))
+	var marker map[string]string
+	if b, err := os.ReadFile(filepath.Join(base, managedMarker)); err == nil && json.Unmarshal(b, &marker) == nil {
+		if _, ours := marker[name]; ours {
+			return nil, nil // an earlier managed copy, not the user's local skill
+		}
+	}
+	dir := filepath.Join(base, name)
+	files := map[string]string{}
+	for _, f := range workflow.SkillFiles(dir) {
+		b, err := os.ReadFile(filepath.Join(dir, filepath.FromSlash(f)))
+		if err != nil {
+			return nil, err
+		}
+		files[f] = string(b)
+	}
+	return files, nil
+}
+
+// SaveManagedLibraryFile adds, changes or renames one file of a corporate
+// skill and publishes the skill again as a new signed version (admin only).
+func (h *Hub) SaveManagedLibraryFile(name, file, content, oldFile string) ([]workflow.Library, error) {
+	rel, err := extension.CleanSkillPath(file)
+	if err != nil {
+		return nil, err
+	}
+	old := ""
+	if strings.TrimSpace(oldFile) != "" {
+		if old, err = extension.CleanSkillPath(oldFile); err != nil {
+			return nil, err
+		}
+	}
+	if strings.TrimSpace(content) == "" {
+		return nil, errors.New("the file is empty")
+	}
+	priv, signer, err := h.libraryAdmin(name)
+	if err != nil {
+		return nil, err
+	}
+	cur, ok := h.libs.Get(name)
+	if !ok {
+		return nil, fmt.Errorf("publish the corporate skill %s first, then add files to it", name)
+	}
+	files := map[string]string{}
+	for k, v := range cur.Files {
+		files[k] = v
+	}
+	if _, exists := files[rel]; exists && old != rel {
+		return nil, fmt.Errorf("%s already has a file %s", name, rel)
+	}
+	if old != "" && old != rel {
+		delete(files, old)
+	}
+	files[rel] = content
+	if _, err := h.libs.Put(name, cur.Desc, cur.Content, files, priv, signer); err != nil {
+		return nil, err
+	}
+	return h.Libraries()
+}
+
+// DeleteManagedLibraryFile removes one file from a corporate skill and
+// publishes it again (admin only).
+func (h *Hub) DeleteManagedLibraryFile(name, file string) ([]workflow.Library, error) {
+	rel, err := extension.CleanSkillPath(file)
+	if err != nil {
+		return nil, err
+	}
+	priv, signer, err := h.libraryAdmin(name)
+	if err != nil {
+		return nil, err
+	}
+	cur, ok := h.libs.Get(name)
+	if !ok {
+		return nil, fmt.Errorf("there is no corporate skill called %s", name)
+	}
+	if _, ok := cur.Files[rel]; !ok {
+		return nil, fmt.Errorf("%s has no file %s", name, rel)
+	}
+	files := map[string]string{}
+	for k, v := range cur.Files {
+		if k != rel {
+			files[k] = v
+		}
+	}
+	if _, err := h.libs.Put(name, cur.Desc, cur.Content, files, priv, signer); err != nil {
 		return nil, err
 	}
 	return h.Libraries()
@@ -127,20 +244,18 @@ func (h *Hub) syncGlobalLibraries(root string, p *workflow.Profile) error {
 	}
 	changed := false
 	for name, l := range want {
-		target := filepath.Join(dir, name, "SKILL.md")
-		cur, err := os.ReadFile(target)
-		if err == nil && string(cur) == l.Content && marker[name] == l.Signature {
+		folder := filepath.Join(dir, name)
+		if marker[name] == l.Signature && globalCopyMatches(folder, l) {
 			continue
 		}
 		if _, ours := marker[name]; !ours {
-			if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
-				_ = h.toTrash(filepath.Join(dir, name)) // a local skill with the same name
+			if _, err := os.Stat(folder); err == nil {
+				_ = h.toTrash(folder) // a local skill with the same name
 			}
+		} else {
+			_ = os.RemoveAll(folder) // our earlier copy: write it afresh
 		}
-		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
-			return err
-		}
-		if err := os.WriteFile(target, []byte(l.Content), 0o644); err != nil {
+		if err := writeGlobalCopy(folder, l); err != nil {
 			return err
 		}
 		marker[name], changed = l.Signature, true
@@ -169,6 +284,57 @@ func (h *Hub) syncGlobalLibraries(root string, p *workflow.Profile) error {
 		gi.WriteString("/" + n + "/\n")
 	}
 	return os.WriteFile(filepath.Join(dir, ".gitignore"), []byte(gi.String()), 0o644)
+}
+
+// globalCopyMatches says whether a project's copy of a corporate skill is
+// exactly the catalog entry (SKILL.md and its files, nothing else).
+func globalCopyMatches(folder string, l extension.ManagedLibrary) bool {
+	if b, err := os.ReadFile(filepath.Join(folder, "SKILL.md")); err != nil || string(b) != l.Content {
+		return false
+	}
+	have := workflow.SkillFiles(folder)
+	if len(have) != len(l.Files) {
+		return false
+	}
+	for _, f := range have {
+		want, ok := l.Files[f]
+		if !ok {
+			return false
+		}
+		if b, err := os.ReadFile(filepath.Join(folder, filepath.FromSlash(f))); err != nil || string(b) != want {
+			return false
+		}
+	}
+	return true
+}
+
+// writeGlobalCopy writes a corporate skill's SKILL.md and files.
+func writeGlobalCopy(folder string, l extension.ManagedLibrary) error {
+	if err := os.MkdirAll(folder, 0o755); err != nil {
+		return err
+	}
+	if err := os.WriteFile(filepath.Join(folder, "SKILL.md"), []byte(l.Content), 0o644); err != nil {
+		return err
+	}
+	for f, c := range l.Files {
+		rel, err := extension.CleanSkillPath(f)
+		if err != nil || rel != f {
+			continue // never write outside the folder
+		}
+		p := filepath.Join(folder, filepath.FromSlash(rel))
+		if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
+			return err
+		}
+		mode := os.FileMode(0o644)
+		if isScriptFile(rel, c) {
+			mode = 0o755
+		}
+		if err := os.WriteFile(p, []byte(c), mode); err != nil {
+			return err
+		}
+		_ = os.Chmod(p, mode)
+	}
+	return nil
 }
 
 // Libraries rescans the project's libraries (after syncing the corporate
@@ -266,6 +432,15 @@ func (h *Hub) SaveProjectLibrary(r LibrarySave) ([]workflow.Library, error) {
 			return nil, err
 		}
 	}
+	renamedDir := false
+	if r.Kind == "skill" && r.OldPath != "" && r.OldPath != rel && strings.HasSuffix(r.OldPath, "/SKILL.md") && strings.HasSuffix(rel, "/SKILL.md") {
+		// a skill folder keeps its docs and scripts: move the whole folder
+		from := filepath.Join(root, filepath.FromSlash(path.Dir(r.OldPath)))
+		if err := os.Rename(from, filepath.Dir(abs)); err != nil {
+			return nil, err
+		}
+		renamedDir = true
+	}
 	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
 		return nil, err
 	}
@@ -277,7 +452,7 @@ func (h *Hub) SaveProjectLibrary(r LibrarySave) ([]workflow.Library, error) {
 		return nil, err
 	}
 	_ = os.Chmod(abs, mode)
-	if r.OldPath != "" && r.OldPath != rel { // renamed: remove the old one
+	if r.OldPath != "" && r.OldPath != rel && !renamedDir { // renamed: remove the old one
 		_ = h.removeProjectLibrary(root, r.OldPath)
 	}
 	// a rename keeps the library selected

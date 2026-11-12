@@ -5,8 +5,21 @@ import { Pill, Stat } from "../ui.jsx";
 
 const TITLE = { constitution: "Constitution", specify: "Specify", clarify: "Clarify", plan: "Plan", tasks: "Tasks", implement: "Implement" };
 
+// Every list and number present, even on a brand-new machine with no runs.
+function normalizeMetrics(m = {}) {
+  const usage = (u) => ({ input_tokens: 0, output_tokens: 0, cached_tokens: 0, cost_usd: 0, premium_requests: 0, model_calls: 0, tool_calls: 0, ...(u || {}) });
+  return {
+    ...m,
+    project: { filesCreated: 0, files: 0, rules: 0, hoursSaved: 0, ...(m.project || {}), usage: usage(m.project?.usage) },
+    allTime: { timesUsed: 0, hoursSaved: 0, ...(m.allTime || {}), usage: usage(m.allTime?.usage) },
+    perStep: m.perStep || [],
+    recent: m.recent || [],
+    flows: { executed: 0, completed: 0, failed: 0, stopped: 0, toolExecutions: 0, aiCalls: 0, hoursSaved: 0, projectRuns: 0, projectHours: 0, ...(m.flows || {}), usage: usage(m.flows?.usage), top: m.flows?.top || [] },
+  };
+}
+
 export function Metrics() {
-  useEffect(() => { backend.Metrics().then((m) => { S.metrics = m; update(); }, (e) => toast(errMsg(e))); }, []);
+  useEffect(() => { backend.Metrics().then((m) => { S.metrics = normalizeMetrics(m); update(); }, (e) => toast(errMsg(e))); }, []);
   const m = S.metrics;
   if (!m) return <section className="view"><h1>Metrics</h1><p className="muted">Loading…</p></section>;
   const max = Math.max(...m.perStep.map((p) => p.hours), 1);

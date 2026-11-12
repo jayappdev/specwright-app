@@ -1,4 +1,5 @@
 import { backend } from "../backend.js";
+import { ModelPicker } from "../ModelPicker.jsx";
 import { S, update } from "../store.js";
 import { resolveTheme, applyAppearance, ALL_THEMES, ALL_SKINS } from "../theme.js";
 import { FAMILIES, ANDROID_SEEDS, UI_FONTS, CODE_FONTS } from "../palettes.js";
@@ -50,7 +51,8 @@ export function Appearance() {
         <p className="muted" style={{ marginTop: 6 }}>Roboto, Roboto Mono, Mona Sans, Inter and JetBrains Mono ship with the app (SIL Open Font License), so they work offline.</p></div>
       <div className="card"><h3>Account</h3>
         <p>Agent: <b>{agentLabel()}</b>{S.setup.source ? ` · ${S.setup.source}` : ""}{cli?.version ? ` · ${cli.version}` : ""}</p>
-        <label className="field inline" style={{ maxWidth: 320 }}><span>Model override (optional)</span><input value={S.setup.model || ""} placeholder="CLI default" onChange={(e) => { S.setup.model = e.target.value; update(); }} onBlur={() => backend.SetAgent(S.setup.provider === "skipped" ? "mock" : S.setup.provider, "", S.setup.model || "").catch(() => {})} /></label>
+        <div className="field inline"><span>App-wide model</span><ModelPicker value={S.setup.model || ""} inherit="" label="Model" onChange={(v) => { S.setup.model = v; update(); backend.SetAgent(S.setup.provider === "skipped" ? "mock" : S.setup.provider, "", v).catch(() => {}); }} /></div>
+        <p className="muted" style={{ marginTop: 4 }}>Used wherever a screen leaves its own model on Default: workflow steps, the Playground, Ask AI, tool tests and flows.</p>
         <p className="muted" style={{ marginTop: 8 }}>The app never stores agent credentials. The CLIs use their own sign-in; a pasted token lives in memory until the app quits. Run history is kept in <code className="inline-code">{S.info?.storeDir}</code>.</p>
         <div className="row-actions"><button className="btn secondary" onClick={() => { backend.ClearToken(); S.setup = { ...S.setup, done: false }; update(); }}>Change agent or credentials</button></div></div>
     </section>

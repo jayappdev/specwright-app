@@ -2,6 +2,7 @@
 //
 //	SpecWright             start the desktop app
 //	SpecWright agentbridge run the agentbridge MCP server on stdio (started by the agent CLIs)
+//	SpecWright aishim <cli> run claude/copilot for a tool and record the AI it uses
 package main
 
 import (
@@ -14,6 +15,7 @@ import (
 	"github.com/wailsapp/wails/v2/pkg/options/assetserver"
 	"github.com/wailsapp/wails/v2/pkg/options/mac"
 
+	"codegen/internal/aishim"
 	"codegen/internal/extension"
 )
 
@@ -21,6 +23,9 @@ import (
 var assets embed.FS
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "aishim" {
+		os.Exit(aishim.Main(os.Args[2:]))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "agentbridge" {
 		if err := extension.ServeMCP(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "agentbridge:", err)

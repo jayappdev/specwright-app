@@ -2,6 +2,7 @@ package agent
 
 import (
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -98,5 +99,45 @@ func TestCopilotJSONParser(t *testing.T) {
 	u := byType["run.usage"][0].Data
 	if u["input_tokens"] != 54155 || u["output_tokens"] != 79 || u["cached_tokens"] != 27022 || u["premium_requests"] != 1 {
 		t.Fatalf("usage %+v", u)
+	}
+}
+
+func TestParseCopilotModels(t *testing.T) {
+	help := "  `mode`: x\n  `model`: AI model to use; see providers.\n    - \"claude-sonnet-5.5\"\n    - \"gpt-5.6-sol\"\n    - \"gpt-5-mini\"\n\n  `contextTier`: y\n    - \"default\"\n"
+	got := parseCopilotModels(help)
+	if len(got) != 3 || got[0].ID != "claude-sonnet-5.5" || got[1].Label != "GPT 5.6 Sol" || got[2].Tier != "fast" {
+		t.Fatalf("%+v", got)
+	}
+}
+
+func TestCopilotLoadsProjectExtensions(t *testing.T) {
+	dir := t.TempDir()
+	c := NewCopilot()
+	req := Request{Dir: dir, Prompt: "hi"}
+	if strings.Contains(strings.Join(c.Args(req), " "), "--experimental") || len(c.env(req)) != 0 {
+		t.Fatal("no extensions: no flags")
+	}
+	p := filepath.Join(dir, ".github", "extensions", "x")
+	if err := os.MkdirAll(p, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(p, "extension.mjs"), []byte("//"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(strings.Join(c.Args(req), " "), "--experimental") {
+		t.Fatal("want --experimental")
+	}
+	if e := c.env(req); len(e) != 1 || e[0] != "GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS=true" {
+		t.Fatalf("env %v", e)
+	}
+}
+
+func TestAddDirsArgs(t *testing.T) {
+	req := Request{Prompt: "x", Dir: "/w/orders", AddDirs: []string{"/w"}}
+	if a := strings.Join((&Claude{}).Args(req), " "); !strings.Contains(a, "--add-dir /w") {
+		t.Fatal(a)
+	}
+	if a := strings.Join((&Copilot{}).Args(req), " "); !strings.Contains(a, "--add-dir /w") {
+		t.Fatal(a)
 	}
 }

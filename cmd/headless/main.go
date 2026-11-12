@@ -20,6 +20,7 @@ import (
 	"strings"
 	"time"
 
+	"codegen/internal/aishim"
 	"codegen/internal/bus"
 	"codegen/internal/core"
 	"codegen/internal/extension"
@@ -32,6 +33,9 @@ func (m *multi) String() string     { return strings.Join(*m, ",") }
 func (m *multi) Set(s string) error { *m = append(*m, s); return nil }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "aishim" {
+		os.Exit(aishim.Main(os.Args[2:]))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "agentbridge" {
 		if err := extension.ServeMCP(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "agentbridge:", err)
@@ -44,27 +48,31 @@ func main() {
 
 func run() int {
 	var (
-		ws       = flag.String("workspace", ".", "project folder")
-		wfFile   = flag.String("workflow", "", "workflow JSON file (default: the workspace's Spec Kit workflow)")
-		agentN   = flag.String("agent", "claude", "agent: claude | copilot | mock")
-		model    = flag.String("model", "", "model override passed to the agent CLI")
-		steps    = flag.String("steps", "", "comma-separated step ids to run (default: from the current step to the end)")
-		approve  = flag.String("approve", "prompt", "at approval gates: auto | prompt | stop")
-		asJSON   = flag.Bool("json", false, "print events as JSONL instead of text")
-		listRuns = flag.Bool("runs", false, "list recorded runs and exit")
-		replay   = flag.String("replay", "", "replay a recorded run by id")
-		prompt   = flag.String("prompt", "", "run one free-form prompt (like the Playground) and exit")
-		noExt    = flag.Bool("no-project-tools", false, "with -prompt: do not offer project/admin tools (built-ins stay)")
-		cont     = flag.String("continue", "", "with -prompt: continue from earlier runs (comma-separated run ids); their questions, answers and results folders become context")
-		speed    = flag.Float64("speed", 4, "replay speed multiplier (0 = instant)")
-		storeDir = flag.String("store", "", "history directory (default: user config dir)")
-		reset    = flag.Bool("reset", false, "set every step back to pending before running")
-		inputs   multi
+		ws        = flag.String("workspace", ".", "project folder")
+		wfFile    = flag.String("workflow", "", "workflow JSON file (default: the workspace's Spec Kit workflow)")
+		agentN    = flag.String("agent", "claude", "agent: claude | copilot | mock")
+		model     = flag.String("model", "", "model override passed to the agent CLI")
+		steps     = flag.String("steps", "", "comma-separated step ids to run (default: from the current step to the end)")
+		approve   = flag.String("approve", "prompt", "at approval gates: auto | prompt | stop")
+		perms     = flag.String("permissions", "ask", "when the agent asks to use a tool: ask (on the terminal) | allow | deny")
+		asJSON    = flag.Bool("json", false, "print events as JSONL instead of text")
+		listRuns  = flag.Bool("runs", false, "list recorded runs and exit")
+		replay    = flag.String("replay", "", "replay a recorded run by id")
+		prompt    = flag.String("prompt", "", "run one free-form prompt (like the Playground) and exit")
+		noExt     = flag.Bool("no-project-tools", false, "with -prompt: do not offer project/admin tools (built-ins stay)")
+		cont      = flag.String("continue", "", "with -prompt: continue from earlier runs (comma-separated run ids); their questions, answers and results folders become context")
+		speed     = flag.Float64("speed", 4, "replay speed multiplier (0 = instant)")
+		storeDir  = flag.String("store", "", "history directory (default: user config dir)")
+		reset     = flag.Bool("reset", false, "set every step back to pending before running")
+		skInit    = flag.String("init", "", "set the project up with the bundled Spec Kit template first: claude | copilot (like specify init <project> --integration …)")
+		skProject = flag.String("project", "", "with -init: the project folder to create in the workspace (default: the one chosen before, else the workspace itself)")
+		inputs    multi
 	)
 	flag.Var(&inputs, "input", "step input as id=text (repeatable)")
 	flag.Parse()
 
-	h, err := core.New(core.Options{StoreDir: *storeDir, Agent: *agentN})
+	exe, _ := os.Executable()
+	h, err := core.New(core.Options{StoreDir: *storeDir, Agent: *agentN, AIShimExe: exe})
 	if err != nil {
 		return fail(err)
 	}
@@ -93,11 +101,31 @@ func run() int {
 	// no window to ask in: secrets come from the environment, or are typed
 	// (hidden) on the terminal when a tool's source is "ask"
 	h.SetSecretAsker(core.TerminalAsker)
+	switch *perms {
+	case "allow":
+		h.SetPermissionAsker(func(context.Context, extension.PermissionRequest) extension.PermissionAnswer {
+			return extension.PermissionAnswer{Allow: true}
+		})
+	case "deny":
+		h.SetPermissionAsker(func(_ context.Context, r extension.PermissionRequest) extension.PermissionAnswer {
+			return extension.PermissionAnswer{Message: r.Tool + " is not allowed in this unattended run."}
+		})
+	default:
+		h.SetPermissionAsker(core.TerminalPermissionAsker(h))
+	}
 	if err := h.SetAgent(*agentN, os.Getenv("CODEGEN_AGENT_TOKEN"), *model); err != nil {
 		return fail(err)
 	}
 	if _, err := h.OpenWorkspace(*ws); err != nil {
 		return fail(err)
+	}
+	if *skInit != "" {
+		res, err := h.InitSpecKit(*skProject, *skInit)
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Fprintf(os.Stderr, "Spec Kit %s for %s: %d files created, %d updated, %d kept; context in %s\n", res.Version, res.Integration,
+			len(res.Created), len(res.Updated), len(res.Kept), strings.Join(res.Context, ", "))
 	}
 	if *prompt != "" {
 		var parents []string

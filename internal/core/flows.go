@@ -111,6 +111,13 @@ func (h *Hub) flowTools() []flow.ToolInfo {
 		}
 		out = append(out, t)
 	}
+	for _, e := range h.FlowBuiltinTools() {
+		t := flow.ToolInfo{Name: e.Name}
+		for _, p := range e.Params {
+			t.Params = append(t.Params, flow.ToolParam{Name: p.Name, Required: p.Required})
+		}
+		out = append(out, t)
+	}
 	sort.Slice(out, func(i, j int) bool { return out[i].Name < out[j].Name })
 	return out
 }
@@ -170,6 +177,16 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 	}
 	if sample.Steps == nil {
 		sample.Steps = map[string]string{}
+	}
+	// {{<step>.output_file}} in a preview: where the file will be saved
+	sample.Names, _ = f.StepNames()
+	if sample.Files == nil {
+		sample.Files = map[string]string{}
+	}
+	for id, v := range sample.Steps {
+		if sample.Files[id] == "" {
+			sample.Files[id] = ".codegen/runs/<date>/<run id>/steps/" + id + "/output." + contentExt(v)
+		}
 	}
 	parents := f.Parents(n.ID)
 	in := sample.Input

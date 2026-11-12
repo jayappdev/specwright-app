@@ -1,6 +1,7 @@
 // Prompt playground: send any prompt to the chosen agent in the workspace
 // and see its answer, every tool call with arguments and result, and the
 // tokens, cost or premium requests, model calls and timing of the run.
+import { ModelPicker } from "../ModelPicker.jsx";
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
@@ -61,6 +62,17 @@ async function select(id) {
     update();
   }
 }
+
+// Reply to the selected run's answer: a new prompt that continues it.
+async function reply(runId, text) {
+  const p = pg();
+  if (!text.trim()) return;
+  p.prompt = text; p.parents = [runId]; p.reply = "";
+  return run();
+}
+
+// Did the answer end by asking the user something?
+const asksUser = (t) => /\?\s*(\**)?\s*$/.test(t.trim()) || /\b(should I|shall I|do you want|would you like|let me know|please confirm|which (one|option))\b/i.test(t.split("\n").slice(-4).join(" "));
 
 async function run() {
   const p = pg(), prompt = p.prompt.trim();
@@ -147,7 +159,7 @@ export function Playground() {
           </button>); })}
       </nav>
       <div className="fview">
-        <header className="view-head"><h1>Prompt playground</h1><span className="muted">Agent: {agentLabel()} · {S.ws.name}</span></header>
+        <header className="view-head"><h1>Prompt playground</h1><div className="head-controls head-model"><span className="muted">Agent: {agentLabel()} · {S.ws.name}</span><ModelPicker value={p.model} onChange={(v) => { p.model = v; update(); }} label="Model" /></div></header>
         <div className="card pg-composer">
           <textarea ref={box} rows={5} value={p.prompt} placeholder="Ask the agent anything about this project…  (⌘/Ctrl + Enter to run)"
             onChange={(e) => { p.prompt = e.target.value; update(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); } }} />
@@ -159,7 +171,6 @@ export function Playground() {
             {running && <button className="btn secondary" onClick={() => backend.CancelRun(r.id).catch((e) => toast(errMsg(e)))}>Stop</button>}
             <button className="btn secondary" onClick={() => openPicker()}><Icon.history /> Refer to earlier runs…</button>
             <label className="check"><input type="checkbox" checked={p.tools} onChange={(e) => { p.tools = e.target.checked; update(); }} /> Also offer project and admin tools</label>
-            <label className="field inline pg-model"><input value={p.model} placeholder={"model: " + (S.setup.model || "CLI default")} aria-label="Model for this prompt" onChange={(e) => { p.model = e.target.value; update(); }} /></label>
           </div>
           <p className="muted" style={{ margin: "8px 0 0" }}>Runs in <code className="inline-code">{S.ws.root}</code> with the workflow's token and cost budget. The agent can read and edit files there, as in a workflow step. The agent always has SpecWright's built-in tools for reading, searching and editing files and running commands.</p>
         </div>
@@ -186,6 +197,14 @@ export function Playground() {
             {answer ? <div className="row assistant pg-text"><Linkify text={answer} />{running && <span className="caret" />}</div>
               : !running && <p className="muted">No text output.</p>}
             {running && <AiProgress evs={evs} />}
+            {running && S.permAsks.some((x) => x.run === r.id || !x.run) && <div className="pg-waiting"><Icon.shield /> Waiting for your approval to use <b>{S.permAsks[0].tool}</b>.</div>}
+            {!running && answer && evs.some((e) => e.type === "run.end") && <div className={"pg-reply" + (asksUser(answer) ? " asks" : "")}>
+              {asksUser(answer) && <div className="pg-reply-q"><span className="muted">The AI is asking you:</span>
+                {["Yes, go ahead", "No, don't do that", "Explain the options first"].map((x) => <button key={x} className="chip" disabled={anyRunning} onClick={() => reply(r.id, x)}>{x}</button>)}</div>}
+              <div className="pg-reply-box"><input value={p.reply || ""} placeholder={asksUser(answer) ? "Answer the AI…" : "Reply to continue this conversation…"} aria-label="Reply"
+                onChange={(e) => { p.reply = e.target.value; update(); }} onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); reply(r.id, p.reply || ""); } }} />
+                <button className="btn primary" disabled={anyRunning || !(p.reply || "").trim()} onClick={() => reply(r.id, p.reply || "")}>Reply</button></div>
+            </div>}
           </div>
           <div className="card"><div className="card-head"><h3>Tool usage</h3><span className="badge">{calls.length}</span></div>
             {calls.length ? <div className="pg-tools">{calls.map((c, k) => <ToolCall key={c.call.seq} c={c} n={k + 1} runId={r.id} />)}</div> : <p className="muted">{running ? "No tool calls yet." : "The agent answered without tools."}</p>}

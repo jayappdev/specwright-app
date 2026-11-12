@@ -29,6 +29,9 @@ type AIArgs struct {
 
 // toolForFlow finds a callable tool by name.
 func (h *Hub) toolForFlow(name string) (*extension.Extension, error) {
+	if IsBuiltinTool(name) {
+		return h.flowBuiltin(name)
+	}
 	for _, x := range h.Callable() {
 		if x.Name == name {
 			x := x
@@ -110,6 +113,21 @@ func aiArgsPrompt(e *extension.Extension, request string, fixed map[string]any, 
 			in = in[:4000] + "\n…"
 		}
 		fmt.Fprintf(&b, "\nOutput of the previous step (you may use it):\n```\n%s\n```\nIt is also saved in a file: for a parameter that expects a file path to this data, use the exact value {{input_file}}.\n", in)
+	}
+	if len(d.Files) > 0 {
+		ids := make([]string, 0, len(d.Files))
+		for id := range d.Files {
+			if id != "start" {
+				ids = append(ids, id)
+			}
+		}
+		sort.Strings(ids)
+		if len(ids) > 0 {
+			b.WriteString("\nEarlier steps saved their output in files. For a parameter that expects the path of one of them, use its value exactly as written here:\n")
+			for _, id := range ids {
+				fmt.Fprintf(&b, "- step %s: {{%s.output_file}}\n", id, id)
+			}
+		}
 	}
 	if len(d.Inputs) > 0 {
 		keys := make([]string, 0, len(d.Inputs))

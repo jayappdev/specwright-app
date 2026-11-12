@@ -3,7 +3,9 @@ package agent
 import (
 	"context"
 	"fmt"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -69,10 +71,48 @@ func (c *Copilot) Args(req Request) []string {
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
+	for _, d := range req.AddDirs {
+		args = append(args, "--add-dir", d)
+	}
 	if req.MCPConfig != "" {
 		args = append(args, "--additional-mcp-config", "@"+req.MCPConfig)
 	}
+	if hasProjectExtensions(req.Dir) {
+		args = append(args, "--experimental") // Copilot extensions are experimental
+	}
 	return args
+}
+
+// hasProjectExtensions reports whether dir has Copilot extensions in
+// .github/extensions (each a folder with extension.mjs/.cjs/.js).
+func hasProjectExtensions(dir string) bool {
+	if dir == "" {
+		return false
+	}
+	ents, err := os.ReadDir(filepath.Join(dir, ".github", "extensions"))
+	if err != nil {
+		return false
+	}
+	for _, e := range ents {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+			continue
+		}
+		for _, n := range []string{"extension.mjs", "extension.cjs", "extension.js"} {
+			if _, err := os.Stat(filepath.Join(dir, ".github", "extensions", e.Name(), n)); err == nil {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// env is req.Env plus what makes -p mode load the project's extensions
+// (it skips them unless GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS is true).
+func (c *Copilot) env(req Request) []string {
+	if !hasProjectExtensions(req.Dir) {
+		return req.Env
+	}
+	return append(append([]string{}, req.Env...), "GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS=true")
 }
 
 // Run implements Driver.
@@ -86,7 +126,7 @@ func (c *Copilot) Run(ctx context.Context, req Request, emit func(Event)) (Resul
 	}
 	p := &copilotParser{emit: emit}
 	emit(Event{Type: "model.request", Summary: "Request → Copilot", Data: map[string]any{"input_tokens": 0, "model": modelOr(req.Model, "copilot/default")}})
-	_, _, err = proc{bin: bin, args: c.Args(req), dir: req.Dir, env: req.Env, onLine: p.line,
+	_, _, err = proc{bin: bin, args: c.Args(req), dir: req.Dir, env: c.env(req), onLine: p.line,
 		onErr: func(l string) {
 			emit(Event{Type: "agent.log", Summary: short(l, 200), Data: map[string]any{"line": l, "stream": "stderr"}})
 		},

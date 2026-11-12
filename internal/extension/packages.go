@@ -196,6 +196,10 @@ func (s PackageSettings) Env(root string) []string {
 	set("PIP_INDEX_URL", s.Pip.IndexURL)
 	set("PIP_EXTRA_INDEX_URL", s.Pip.ExtraIndexURL)
 	set("PIP_TRUSTED_HOST", s.Pip.TrustedHost)
+	// uv (used to fetch Spec Kit's CLI) reads its own index variables
+	set("UV_DEFAULT_INDEX", s.Pip.IndexURL)
+	set("UV_INDEX", s.Pip.ExtraIndexURL)
+	set("UV_INSECURE_HOST", s.Pip.TrustedHost)
 	set("GOPROXY", s.Go.Proxy)
 	set("GOPRIVATE", s.Go.Private)
 	set("GONOSUMDB", s.Go.NoSumDB)
@@ -357,6 +361,14 @@ type RegistryCheck struct {
 // CheckRegistries requests a small known file from each registry through
 // the configured proxy and CA bundle (eff = Effective settings).
 func CheckRegistries(ctx context.Context, eff PackageSettings) []RegistryCheck {
+	hc := eff.HTTPClient(12 * time.Second)
+	goProxy := strings.Split(strings.Split(eff.Go.Proxy, ",")[0], "|")[0]
+	return checkRegistries(ctx, eff, hc, goProxy)
+}
+
+// HTTPClient reaches the internet through the configured proxy and CA
+// bundle.
+func (eff PackageSettings) HTTPClient(timeout time.Duration) *http.Client {
 	tr := &http.Transport{Proxy: func(r *http.Request) (*url.URL, error) {
 		raw := eff.Proxy.HTTP
 		if r.URL.Scheme == "https" {
@@ -377,8 +389,10 @@ func CheckRegistries(ctx context.Context, eff PackageSettings) []RegistryCheck {
 			tr.TLSClientConfig = &tls.Config{RootCAs: pool}
 		}
 	}
-	hc := &http.Client{Transport: tr, Timeout: 12 * time.Second}
-	goProxy := strings.Split(strings.Split(eff.Go.Proxy, ",")[0], "|")[0]
+	return &http.Client{Transport: tr, Timeout: timeout}
+}
+
+func checkRegistries(ctx context.Context, eff PackageSettings, hc *http.Client, goProxy string) []RegistryCheck {
 	targets := []struct{ eco, url string }{
 		{"npm", strings.TrimRight(eff.Npm.Registry, "/") + "/-/ping"},
 		{"pip", strings.TrimRight(eff.Pip.IndexURL, "/") + "/pip/"},
@@ -402,7 +416,7 @@ func CheckRegistries(ctx context.Context, eff PackageSettings) []RegistryCheck {
 				c.Status = err.Error()
 				return
 			}
-			if p, _ := tr.Proxy(req); p != nil {
+			if p, _ := hc.Transport.(*http.Transport).Proxy(req); p != nil {
 				c.Via = maskCreds(p.String())
 			}
 			start := time.Now()

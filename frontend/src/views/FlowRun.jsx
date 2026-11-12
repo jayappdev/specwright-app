@@ -4,6 +4,7 @@
 //            the review panel (accept, stop, refine with AI, run a command,
 //            edit, change settings and retry), outputs and activity
 //   sidebar  progress and metrics: steps, elapsed time, tokens, credits, tools
+import { ModelPicker } from "../ModelPicker.jsx";
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
@@ -15,7 +16,7 @@ import { RunPanel } from "./Workflow.jsx";
 import { continueInPlayground } from "./Playground.jsx";
 import { ResultsLink } from "../RunResults.jsx";
 import { AiProgress } from "../AiProgress.jsx";
-import { AttachBar, onPasteAttach } from "../Attachments.jsx";
+import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../Attachments.jsx";
 import { FileLink, Linkify } from "../FileLinks.jsx";
 import { mdToHtml } from "../richtext.js";
 
@@ -61,9 +62,15 @@ async function openRun(id) {
 
 async function start() {
   const r = frs(), f = r.flow, o = r.opts;
-  const inputs = { ...r.inputs };
-  for (const i of f.inputs) if (["file", "files"].includes(i.type)) inputs[i.name] = (r.files[i.name] || []).filter((a) => a.path).map((a) => a.path).join("\n") || inputs[i.name] || "";
-  const opts = { inputs, review: o.review, repeat: +o.repeat || 1, timeoutMinutes: +o.timeoutMinutes || 0, stepTimeoutSeconds: +o.stepTimeoutSeconds || 0, skip: o.skip, stopAfter: o.stopAfter, model: o.model.trim() };
+  const inputs = { ...r.inputs }, files = {};
+  if (f.inputs.some((i) => (r.files[i.name] || []).some((a) => a.saving))) return toast("Wait until the attached files are saved.");
+  // files go separately; the backend checks them and builds each input's value by its type
+  for (const i of f.inputs) {
+    const paths = (r.files[i.name] || []).filter((a) => a.path).map((a) => a.path);
+    if (["file", "files", "clipboard", "multiline"].includes(i.type) && paths.length) files[i.name] = paths;
+    if (["file", "files"].includes(i.type) && paths.length) inputs[i.name] = "";
+  }
+  const opts = { inputs, files, review: o.review, repeat: +o.repeat || 1, timeoutMinutes: +o.timeoutMinutes || 0, stepTimeoutSeconds: +o.stepTimeoutSeconds || 0, skip: o.skip, stopAfter: o.stopAfter, model: o.model.trim() };
   if (o.forEach.input) opts.forEach = { input: o.forEach.input, split: o.forEach.split, filter: o.forEach.filter, max: +o.forEach.max || 100 };
   if (o.startAt) opts.startAt = new Date(o.startAt).toISOString();
   try {
@@ -82,22 +89,34 @@ async function decide(action, extra = {}) {
 
 // --- setup ------------------------------------------------------------------------
 
+// One input, by its type: text, long text (with attachments), number, yes/no,
+// choice, one file, several files, or the clipboard (text, images, files).
 function InputField({ i }) {
   const r = frs(), v = r.inputs[i.name] ?? "", set = (x) => { r.inputs[i.name] = x; update(); };
   const list = (r.files[i.name] ||= []);
   const label = <span><b>{i.label || i.name}</b>{i.required && <span className="err-text"> *</span>} <code className="inline-code" data-nofile>{`{{inputs.${i.name}}}`}</code></span>;
-  let field;
+  const append = (t) => set((v ? v.replace(/\n*$/, "\n") : "") + t);
+  let field, simple = true;
   switch (i.type) {
-    case "multiline": field = <><textarea rows={5} value={v} onChange={(e) => set(e.target.value)} onPaste={onPasteAttach(list)} /><AttachBar list={list} insertText={(t) => set((v ? v + "\n" : "") + t)} /></>; break;
-    case "number": field = <input type="number" value={v} onChange={(e) => set(e.target.value)} />; break;
+    case "multiline": simple = false; field = <DropZone list={list}><textarea rows={5} value={v} onChange={(e) => set(e.target.value)} onPaste={onPasteAttach(list)} /><AttachBar list={list} insertText={append} /></DropZone>; break;
+    case "number": field = <input type="number" step="any" value={v} onChange={(e) => set(e.target.value)} />; break;
     case "boolean": field = <label className="check"><input type="checkbox" checked={v === "true"} onChange={(e) => set(e.target.checked ? "true" : "false")} /> Yes</label>; break;
     case "choice": field = <select value={v} onChange={(e) => set(e.target.value)}><option value="">Choose…</option>{(i.options || []).filter(Boolean).map((o) => <option key={o}>{o}</option>)}</select>; break;
-    case "file": case "files": field = <AttachBar list={list} />; break;
-    case "clipboard": field = <><textarea rows={4} value={v} placeholder="Paste here (⌘V), or use the button" onChange={(e) => set(e.target.value)} onPaste={onPasteAttach(list)} />
-      <div className="row-actions"><button className="btn secondary" onClick={async () => { try { set(await navigator.clipboard.readText()); } catch { toast("Click in the box and press ⌘V (Ctrl+V) to paste."); } }}><Icon.paste /> Paste from clipboard</button></div></>; break;
+    case "file": case "files": {
+      simple = false;
+      const single = i.type === "file";
+      field = <DropZone list={list} single={single} className="fr-drop">
+        {!list.length && <div className="muted fr-drop-hint">{single ? "Drop a file here, or choose one" : "Drop files here, or choose them"}{i.accept ? <> · <code className="inline-code" data-nofile>{i.accept}</code></> : null}</div>}
+        <AttachBar list={list} single={single} accept={i.accept} hint={single ? "one file · up to 25 MB" : "several files · up to 25 MB each"} /></DropZone>;
+      break;
+    }
+    case "clipboard": simple = false; field = <DropZone list={list}>
+      <textarea rows={4} value={v} placeholder="Paste here (⌘V): text stays text; images and files are attached" onChange={(e) => set(e.target.value)} onPaste={onPasteFiles(list)} />
+      <AttachBar list={list} insertText={append} textInline hint="text, images (screenshots, diagrams), PDFs or files" /></DropZone>; break;
     default: field = <input value={v} onChange={(e) => set(e.target.value)} />;
   }
-  return <label className="field fr-input">{label}{field}{i.description && <small className="muted">{i.description}</small>}</label>;
+  const Wrap = simple ? "label" : "div";
+  return <Wrap className="field fr-input">{label}{field}{i.description && <small className="muted">{i.description}</small>}</Wrap>;
 }
 
 const VIA = { env: (c) => <span className="badge badge-ok">${c.env} is set</span>, keychain: () => <span className="badge badge-ok"><Icon.lock /> in the keychain</span>, session: () => <span className="badge badge-ok">entered this session</span>, ask: () => <span className="badge">will ask when needed</span>, missing: (c) => <span className="badge badge-warn">{c.source === "env" ? "$" + c.env + " not set" : "no value"}</span> };
@@ -148,7 +167,6 @@ function Options() {
         <label className="field"><span className="muted">Stop the run after (minutes)</span><input type="number" min="0" value={o.timeoutMinutes} onChange={(e) => set("timeoutMinutes", e.target.value)} /><small className="muted">0: no limit</small></label>
         <label className="field"><span className="muted">Each step may take (seconds)</span><input type="number" min="0" value={o.stepTimeoutSeconds} onChange={(e) => set("stepTimeoutSeconds", e.target.value)} /><small className="muted">0: 2 min for tools, 10 min for AI</small></label>
         <label className="field"><span className="muted">Stop after step</span><select value={o.stopAfter} onChange={(e) => set("stopAfter", e.target.value)}><option value="">— run to the end —</option>{steps.map((n) => <option key={n.id} value={n.id}>{n.title || n.id}</option>)}</select></label>
-        <label className="field"><span className="muted">Model for AI steps</span><input value={o.model} placeholder={S.setup.model || "the agent's default"} onChange={(e) => set("model", e.target.value)} /></label>
       </div>
       <div className="fr-skip"><span className="muted">Skip steps:</span>{steps.map((n) => <label key={n.id} className="check"><input type="checkbox" checked={o.skip.includes(n.id)} onChange={(e) => { o.skip = e.target.checked ? [...o.skip, n.id] : o.skip.filter((x) => x !== n.id); update(); }} /> {n.title || n.id}</label>)}</div>
     </details>
@@ -158,7 +176,7 @@ function Options() {
 function Setup() {
   const r = frs(), f = r.flow;
   return <>
-    <header className="view-head"><select className="fr-switch" aria-label="Flow" value={f.id} onChange={(e) => loadFlow(e.target.value)}>{(r.flows || []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select><h1>{f.name}</h1><div className="head-controls"><button className="link" onClick={() => openFlowInDesigner(f.id)}>Edit in the designer</button></div></header>
+    <header className="view-head"><select className="fr-switch" aria-label="Flow" value={f.id} onChange={(e) => loadFlow(e.target.value)}>{(r.flows || []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</select><h1>{f.name}</h1><div className="head-controls head-model"><button className="link" onClick={() => openFlowInDesigner(f.id)}>Edit in the designer</button><ModelPicker value={r.opts.model || ""} onChange={(v) => { r.opts.model = v; update(); }} label="Model for AI steps" /></div></header>
     {f.description && <p className="wf-desc">{f.description}</p>}
     <div className="card"><div className="card-head"><Icon.inputs /><h3>Inputs</h3><span className="badge">{f.inputs.length}</span></div>
       {f.inputs.length ? <div className="fr-inputs">{f.inputs.map((i) => <InputField key={i.name} i={i} />)}</div> : <p className="muted">This flow asks for nothing.</p>}</div>
@@ -238,7 +256,7 @@ function Steps({ st }) {
         return <li key={s.id} className={"fr-step s-" + s.status}>
           <button className="fr-step-head" disabled={!can} onClick={() => setOpen({ ...open, [s.id]: !open[s.id] })} aria-expanded={!!open[s.id]}>
             <StepIcon n={n} tools={S.ws?.extensions || []} size={28} />
-            <span className="fr-step-title"><b>{s.title}</b><small>{s.type === "tool" ? s.tool + (s.why ? " · arguments by AI" : n.instruction ? " · AI builds the arguments" : "") : s.type}{s.attempts > 1 ? ` · ${s.attempts} attempts` : ""}{s.notes?.length ? " · " + s.notes[s.notes.length - 1] : ""}</small></span>
+            <span className="fr-step-title"><b>{s.title}</b><small>{s.type === "tool" ? String(s.tool || "").replace(/^builtin:(.*)$/, "$1 · built-in") + (s.why ? " · arguments by AI" : n.instruction ? " · AI builds the arguments" : "") : s.type}{s.attempts > 1 ? ` · ${s.attempts} attempts` : ""}{s.notes?.length ? " · " + s.notes[s.notes.length - 1] : ""}</small></span>
             {s.status === "running" ? <span className="spinner" /> : <Pill s={pill(s.status)} label={STATUS_LABEL[s.status] || s.status} />}
             <span className="muted fr-dur">{s.durationMs ? fmtMs(s.durationMs) : ""}</span>
           </button>

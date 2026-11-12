@@ -27,6 +27,7 @@ export const Icon = {
   warn: mk(<><path d="M8 2.5l6 10.5H2z" /><path d="M8 6.8v2.8M8 11.6v.1" /></>, 14),
   file: mk(<path d="M4 2h5l3 3v9H4z" />, 14),
   folder: mk(<path d="M2 4.5h4l1.2 1.5H14v7H2z" />, 14),
+  terminal: mk(<><rect x="2" y="3" width="12" height="10" rx="1.5" /><path d="M4.8 6.3l2 1.7-2 1.7M8.5 10.2h2.7" /></>, 14),
   tool: mk(<path d="M9.5 3a3 3 0 00-2.6 4.2L2.5 11.6l2 2 4.4-4.4A3 3 0 0013 6.5l-1.8 1.8-1.5-.5-.5-1.5L11 4.5A3 3 0 009.5 3z" />),
   pkg: mk(<><path d="M8 1.8l5.5 3v6.4L8 14.2l-5.5-3V4.8z" /><path d="M2.5 4.8L8 7.8l5.5-3M8 7.8v6.4" /></>, 14),
 };

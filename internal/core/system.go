@@ -89,7 +89,7 @@ func ghAccount(s string) string {
 }
 
 // HoursSaved estimates human hours saved per approved step.
-var HoursSaved = map[string]float64{"constitution": 0.5, "specify": 3, "clarify": 1.5, "plan": 4, "tasks": 2, "implement": 14}
+var HoursSaved = map[string]float64{"constitution": 0.5, "specify": 3, "clarify": 1.5, "plan": 4, "tasks": 2, "analyze": 1, "implement": 14}
 
 // Metrics summarizes the usage ledger.
 type Metrics struct {

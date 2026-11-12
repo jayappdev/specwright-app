@@ -1,10 +1,11 @@
 import { backend } from "../backend.js";
+import { ModelPicker } from "../ModelPicker.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { Linkify } from "../FileLinks.jsx";
 import { AiProgress } from "../AiProgress.jsx";
 import { EventIcon } from "../EventIcon.jsx";
 import { ResultsLink } from "../RunResults.jsx";
-import { S, update, toast, errMsg, saveWorkflow, currentStep, usageOf, stepUsage, totals, isCopilot, fmtK, fmtMs, fmtCredits, loadStepEvents, saveText } from "../store.js";
+import { S, update, toast, errMsg, saveWorkflow, currentStep, usageOf, stepUsage, totals, isCopilot, fmtK, fmtMs, fmtCredits, loadStepEvents, saveText, downloadProjectZip } from "../store.js";
 import { Icon, Pill, Chip, Stat } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { agentLabel } from "./Setup.jsx";
@@ -118,7 +119,11 @@ export function Workflow() {
             {allDone && <button className="link" style={{ marginLeft: "auto" }} onClick={async () => { if (await confirmDialog("Every step goes back to pending; inputs are kept.", { title: "Start the next iteration?", ok: "Start" })) { await backend.ResetWorkflow().catch((e) => toast(errMsg(e))); } }}>Start next iteration</button>}</div>
         </div>
 
-        <header className="view-head"><h1>{i + 1} · {st.title} <span className="muted" style={{ fontWeight: 400, fontSize: ".7em" }}><code>{st.cmd}</code></span></h1>{statePill(state)}</header>
+        <header className="view-head"><h1>{i + 1} · {st.title} <span className="muted" style={{ fontWeight: 400, fontSize: ".7em" }}><code>{st.cmd}</code></span></h1>{statePill(state)}
+          <span className="wf-model"><ModelPicker compact label="Model for workflow steps" value={S.wf.model || ""} disabled={state === "running"}
+            onChange={(v) => { S.wf.model = v; update(); saveWorkflow(); }} /></span></header>
+        {wf.steps.some((x) => x.id === "implement" && x.status === "done") && <div className="banner ok zip-banner"><Icon.check /> <span><b>Implementation is done.</b> Download the whole project{S.ws.speckit?.project ? <> (<code className="inline-code">{S.ws.speckit.project}/</code> with the skills, rules and diagrams it uses)</> : null} as one zip.</span>
+          <button className="btn primary" disabled={S.zipBusy} onClick={() => downloadProjectZip(true)}>{S.zipBusy ? "Zipping…" : "Download project (.zip)"}</button></div>}
         {i !== cur && !allDone && <div className="banner">You are viewing <b>{st.title}</b>. The workflow is currently at <b>{wf.steps[cur].title}</b>. <button className="link" onClick={() => { S.sel = cur; update(); loadStepEvents(cur); }}>Go to current step</button></div>}
         {state === "paused" && (
           <div className={"gate-banner" + (gate === "loop" ? " loop" : "")}><div className="gate-text"><Icon.warn /><div>
@@ -216,6 +221,8 @@ function ActivityRow({ e, evs }) {
     case "flow.scheduled": return <Act e={e} kind="act-quiet">{e.summary}</Act>;
     case "run.start": return <div className="row marker run-marker"><span className="marker-line" /><span className="marker-text">{e.summary}{e.model ? " · " + e.model : ""}</span><span className="marker-line" /></div>;
     case "run.usage": return <Act e={e} kind="act-quiet act-usage">{e.summary}</Act>;
+    // the AI a tool used itself (its own claude / copilot calls)
+    case "model.usage": return e.source === "tool" ? <Act e={e} kind="act-usage act-tool-ai"><Linkify text={e.summary} />{e.model ? <span className="muted"> · {e.model}</span> : null}</Act> : null;
     case "run.end": return e.state === "cancelled" || e.state === "stopped" ? <Act e={e} kind="act-bad">{e.state === "stopped" ? "Stopped" : "Cancelled"}</Act> : e.state === "failed" ? <Act e={e} kind="act-bad">Failed{e.reason ? ": " + e.reason : ""}</Act> : <Act e={e} kind="act-good">Finished</Act>;
   }
   return null;

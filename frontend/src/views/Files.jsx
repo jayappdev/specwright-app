@@ -1,4 +1,5 @@
 import { useEffect, useRef } from "react";
+import { ModelPicker } from "../ModelPicker.jsx";
 import { backend } from "../backend.js";
 import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, fmtCredits } from "../store.js";
 import { Icon, Pill, Chip } from "../ui.jsx";
@@ -44,7 +45,7 @@ function Tree({ node, prefix, depth }) {
 // open file and the last compile output as context; file paths in the answer
 // open here, and the project can be compiled again when the agent finishes.
 
-const fa = () => (S.fa ||= { prompt: "", runId: "", auto: true, kind: "", seen: "" });
+const fa = () => (S.fa ||= { prompt: "", runId: "", auto: true, kind: "", seen: "", model: "" });
 
 const tail = (s, n) => (s.length > n ? "…" + s.slice(-n) : s);
 
@@ -75,7 +76,7 @@ async function ask(text, kind) {
   text = (text ?? a.prompt).trim();
   if (!text) return toast("Type what you want the AI to do.");
   try {
-    const id = await backend.RunPrompt(compose(text, kind ?? a.kind), { tools: true, model: "" });
+    const id = await backend.RunPrompt(compose(text, kind ?? a.kind), { tools: true, model: a.model || "" });
     S.loaded[id] = true; S.events[id] ||= [];
     Object.assign(a, { runId: id, asked: text, kind: "", prompt: "", seen: "" });
     if (kind === "fix" || kind === "packages" || kind === "compile") a.auto = true;
@@ -104,7 +105,7 @@ function Assistant() {
   useEffect(() => {
     if (!a.runId || running || !evs.length || a.seen === a.runId) return;
     a.seen = a.runId;
-    backend.ListFiles().then((l) => { f.list = l; update(); }).catch(() => {});
+    backend.ListFiles().then((l) => { f.list = l || []; update(); }).catch(() => {});
     reloadView();
     if (a.auto && state === "done" && u.files.length) compile();
   }, [a.runId, running, evs.length]);
@@ -157,7 +158,7 @@ async function compile() {
 
 export function Files() {
   const f = S.files;
-  useEffect(() => { if (S.ws) backend.ListFiles().then((l) => { f.list = l; if (!f.sel && l.length) f.sel = l.find((x) => x.startsWith("specs/") || x.startsWith("src/")) || l[0]; update(); }).catch((e) => toast(errMsg(e))); }, [S.ws?.root]);
+  useEffect(() => { if (S.ws) backend.ListFiles().then((l) => { l = l || []; f.list = l; if (!f.sel && l.length) f.sel = l.find((x) => x.startsWith("specs/") || x.startsWith("src/")) || l[0]; update(); }).catch((e) => toast(errMsg(e))); }, [S.ws?.root]);
   useEffect(() => { if (f.sel) return loadFileInto(view(), f.sel); }, [f.sel, f.list.length]);
   if (!S.ws) return <NeedWorkspace what="files" />;
   const c = f.compile;
@@ -166,7 +167,7 @@ export function Files() {
       <nav className="ftree" aria-label="Files, packages and folders"><h1 style={{ padding: "0 8px 8px" }}>Files</h1><div className="tree-folder" title={S.ws.root}>{S.ws.name}</div><Tree node={buildTree(f.list)} prefix="" depth={0} /></nav>
       <div className="fview">
         <header className="view-head"><h1 style={{ fontFamily: "var(--font-mono)", fontSize: "1em", wordBreak: "break-all" }}>{f.sel || "No file selected"}</h1>
-          <div className="head-controls"><button className="btn primary" disabled={c?.running} onClick={compile}>{c?.running ? "Compiling…" : "Compile project"}</button></div></header>
+          <div className="head-controls head-model"><ModelPicker value={fa().model || ""} onChange={(v) => { fa().model = v; update(); }} label="Model" /><button className="btn primary" disabled={c?.running} onClick={compile}>{c?.running ? "Compiling…" : "Compile project"}</button></div></header>
         <Assistant />
         {c && <div className="card"><div className="card-head"><h3>Compilation {c.cmd && <span className="muted" style={{ fontWeight: 400 }}><code>{c.cmd}</code></span>}</h3>{c.running ? <span className="spinner" /> : <Pill s={c.ok ? "done" : "failed"} label={c.ok ? "Passed" : "Failed"} />}</div><pre className="code console-out">{c.out ? <FileLinkify text={c.out} /> : "…"}</pre></div>}
         {f.sel && <div className="fv-card"><FileView slot={view()} line={f.line} /></div>}

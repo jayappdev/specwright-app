@@ -1,10 +1,12 @@
 import { backend } from "../backend.js";
+import { ModelPicker } from "../ModelPicker.jsx";
 import { ContentView } from "../ContentView.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { S, update, toast, errMsg, refreshExtensions, refreshSecrets, refreshSecretsSoon, refreshAdmin } from "../store.js";
 import { Icon, Chip, Pill } from "../ui.jsx";
 import { NeedWorkspace, StatusBadge } from "./Wizard.jsx";
 import { BuiltinList, BuiltinView, builtinsVisible } from "./Builtins.jsx";
+import { CopilotExtList, CopilotExtView, CopilotToolReview, approveCopilotTool, loadCopilotExts } from "./CopilotExts.jsx";
 import { loadPackages, registryFor } from "./Packages.jsx";
 import { AttachBar, AttachmentChips, DropZone, onPasteAttach } from "../Attachments.jsx";
 import { Linkify } from "../FileLinks.jsx";
@@ -35,20 +37,38 @@ const fromPaths = (paths) => (paths || []).map((p) => ({ path: p, name: p.split(
 const manualDraft = () => ({ name: "my-tool", desc: "", kind: "script", lang: "Node.js", params: [], secrets: [], perms: ["read files"], command: "node .codegen/tools/my-tool.js", script: "// my-tool: describe what it does\n", sampleTest: "", call: {}, revision: 1 });
 
 export function newTool(manual) {
-  S.bt = null;
+  S.bt = null; if (S.cx) S.cx.sel = "";
   S.tb = tbDefaults();
   if (manual) { S.tb.draft = manualDraft(); S.tb.stage = "review"; }
   S.view = "tools"; update();
 }
 // A managed (admin) tool opens read-only, unless admin mode is unlocked.
 export function openTool(t) {
-  S.bt = null;
+  S.bt = null; if (S.cx) S.cx.sel = "";
   const admin = !!t.managed && !!S.admin?.unlocked;
   S.tb = { ...tbDefaults(), editing: t.name, draft: clone(t), scope: t.scope, stage: "review", testPrompt: t.testPrompt || t.sampleTest || "", attachments: fromPaths(t.testFiles), prompt: t.prompt || "", test: t.lastTest || null,
     ro: !!t.managed && !admin, admin };
   S.view = "tools"; update(); refreshSecrets();
 }
 // Start a new managed tool (admin mode): built with the same steps, published to all projects.
+// Delete a project tool: its files and record move to .codegen/archive/<datetime>/.
+// A Copilot extension tool takes its whole extension with it.
+export async function archiveTool(d) {
+  const cop = d.kind === "copilot", ext = cop ? (d.dir || "").split("/").pop() : "";
+  const siblings = cop ? (S.ws?.extensions || []).filter((t) => t.kind === "copilot" && t.dir === d.dir).map((t) => t.name) : [d.name];
+  const msg = cop
+    ? `This deletes the Copilot extension ${ext} from the project${siblings.length > 1 ? `, with all its tools (${siblings.join(", ")})` : ""}. The folder ${d.dir} moves to .codegen/archive/<date-time>/ in the project, so you can restore it; your own copy in ~/.copilot is not touched.`
+    : `Its files and settings move to .codegen/archive/<date-time>/ in the project, so you can restore them. Agents and flows can no longer use it; flow steps that call it will need another tool.`;
+  if (!(await confirmDialog(msg, { title: cop ? `Delete ${ext} from this project?` : `Delete ${d.name}?`, ok: "Delete", danger: true }))) return false;
+  try {
+    const r = await backend.ArchiveTool(d.name);
+    toast(`Deleted ${(r.tools || [d.name]).join(", ")}. Archived in ${r.path}.`);
+    S.tb = tbDefaults(); if (S.cx) S.cx.sel = "";
+    await refreshExtensions(); loadCopilotExts(true);
+    return true;
+  } catch (e) { toast(errMsg(e)); return false; }
+}
+
 export function newManagedTool(manual) {
   newTool(manual);
   S.tb.admin = true; S.tb.scope = "managed"; update();
@@ -74,7 +94,7 @@ async function runTest() {
   if (!tb.testPrompt.trim()) return toast("Write what you would ask the agent.");
   if ((tb.attachments || []).some((a) => a.saving)) return toast("Wait for the attachments to finish saving.");
   tb.test = { running: true, steps: [], checks: [] }; update();
-  try { tb.test = await backend.TestExtensionWith(tb.draft, tb.testPrompt, attPaths(tb)); }
+  try { tb.test = await backend.TestExtensionWith(tb.draft, tb.testPrompt, attPaths(tb), tb.testModel || ""); }
   catch (e) { tb.test = { pass: false, steps: [{ k: "out", v: "error: " + errMsg(e) }], checks: [], summary: errMsg(e) }; }
   update();
 }
@@ -236,6 +256,13 @@ export function Tools() {
         {tb.gen && <div className="transcript" style={{ minHeight: 0, marginTop: 10 }}><div className="transcript-inner">{tb.gen.lines.map((l, k) => <div className="row note" key={k}><Icon.check /><span>{l}</span></div>)}<AiProgress phases={GEN_PHASES} /></div></div>}
       </div>
     );
+  } else if (tb.stage === "review" && d && d.kind === "copilot") {
+    body = <CopilotToolReview d={d} onNext={() => set("stage", "test")} />;
+  } else if (tb.stage === "save" && d && d.kind === "copilot") {
+    body = <div className="card"><h3>{d.status === "needs approval" ? "Approve this Copilot extension tool?" : "Nothing to save"}</h3>
+      <p className="wf-desc">{d.status === "needs approval" ? "Approving reads the extension's tools again from its current files and lets agents and flows use them." : <>Copilot extension tools are saved by their files in <code className="inline-code">{d.dir}</code>; it is approved and available to agents and flows.</>}</p>
+      <div className="row-actions"><button className="btn secondary" onClick={() => set("stage", "test")}>Back</button>
+        {d.status === "needs approval" && <button className="btn primary" onClick={() => approveCopilotTool(d)}>Approve for agents</button>}</div></div>;
   } else if (tb.stage === "review" && d) {
     const npm = d.kind === "npm";
     body = <><fieldset className="ro-fieldset" disabled={!!tb.ro}>
@@ -264,7 +291,7 @@ export function Tools() {
           <div className="setup-input"><input value={tb.refine} placeholder="e.g. add a 30 second timeout, also scan .kt files" onChange={(e) => set("refine", e.target.value)} /><button className="btn secondary" disabled={!!tb.gen} onClick={() => generate(true)}>{tb.gen ? "Updating…" : "Update"}</button></div></label>}
         {tb.gen && <AiProgress phases={["Reading the change", "Updating the script", "Checking the parameters", "Finishing up"]} />}</div>
       <div className="row-actions"><button className="btn secondary" onClick={() => set("stage", "describe")}>Back</button><button className="btn primary" onClick={() => set("stage", npm ? "save" : "test")}>{npm ? "Next: approve" : "Next: test with AI"}</button>
-        {tb.editing && !tb.ro && !tb.admin && <><span className="status-spacer" /><button className="btn secondary" onClick={async () => { if (!(await confirmDialog("It is removed from extensions.json; its script file stays on disk.", { title: `Remove ${tb.editing}?`, ok: "Remove", danger: true }))) return; await backend.DeleteExtension(tb.editing).catch((e) => toast(errMsg(e))); S.tb = tbDefaults(); await refreshExtensions(); }}>Remove tool</button></>}</div>
+        {tb.editing && !tb.ro && !tb.admin && <><span className="status-spacer" />{d?.kind !== "npm" && d?.scope !== "global" && <button className="btn danger" onClick={() => archiveTool(d)}><Icon.x /> Delete tool</button>}</>}</div>
     </fieldset></>;
   } else if (tb.stage === "test" && d) {
     const t = tb.test;
@@ -272,6 +299,7 @@ export function Tools() {
       <DropZone list={tb.attachments} className="card att-zone"><h3>Test with AI</h3><p className="wf-desc">Ask something a developer would ask, and attach screenshots, PDFs or text if they help. The agent is offered only <code className="inline-code">{d.name}</code>, decides whether to use it, fills the arguments, runs it, and the result is checked.</p>
         <div className="setup-input"><input value={tb.testPrompt} placeholder={d.sampleTest} onPaste={onPasteAttach(tb.attachments)} onChange={(e) => set("testPrompt", e.target.value)} /><button className="btn primary" disabled={t?.running || tb.fix?.running} onClick={testAndMaybeFix}>{t?.running ? "Testing…" : t ? "Test again" : "Run test"}</button></div>
         <AttachBar list={tb.attachments} disabled={t?.running} insertText={(x) => set("testPrompt", (tb.testPrompt ? tb.testPrompt + " " : "") + x)} />
+        <div className="tb-model"><ModelPicker value={tb.testModel || ""} onChange={(v) => set("testModel", v)} label="Test with" disabled={t?.running} /></div>
         <label className="check" style={{ marginTop: 8 }}><input type="checkbox" checked={tb.autoFix !== false} onChange={(e) => set("autoFix", e.target.checked)} /> Fix automatically with AI when the test fails (up to {MAX_FIX} attempts)</label>
         {missing.length > 0 && <p className="muted" style={{ marginTop: 8, color: "var(--warn)" }}><Icon.warn /> {missing.map((s) => s.name).join(", ")} has no value. Set the environment variable, enter it under Review › Secrets, or switch it to “Ask me”.</p>}
         {(d.secrets || []).some((s) => S.secretInfo[s.name]?.via === "ask") && <p className="muted" style={{ marginTop: 8 }}>You will be asked for {(d.secrets || []).filter((s) => S.secretInfo[s.name]?.via === "ask").map((s) => s.name).join(", ")} when the tool runs.</p>}
@@ -339,10 +367,11 @@ export function Tools() {
         <BuiltinList />
         {[["managed", "Managed by admin · all projects"], ["project", "Project tools"], ["global", "Global tools"]].map(([g, l]) => (
           <ToolGrid key={g} title={l} compact tools={exts.filter((t) => t.scope === g)} render={(t) => <ToolTile key={t.name} t={t} compact active={S.tb?.editing === t.name} onOpen={() => openTool(t)} />} />))}
+        <CopilotExtList />
       </nav>
       <div className="fview">
-        {S.bt?.sel && builtinsVisible() ? <BuiltinView /> : <>
-        <header className="view-head"><h1>{tb.admin ? (tb.editing ? "Managed tool · " + tb.editing : "New managed tool") : tb.ro ? "Managed tool · " + tb.editing : tb.editing ? "Edit tool · " + tb.editing : "New tool"}</h1>
+        {S.cx?.sel ? <CopilotExtView /> : S.bt?.sel && builtinsVisible() ? <BuiltinView /> : <>
+        <header className="view-head"><h1>{tb.admin ? (tb.editing ? "Managed tool · " + tb.editing : "New managed tool") : tb.ro ? "Managed tool · " + tb.editing : tb.editing ? (d?.kind === "copilot" ? "Copilot tool · " : "Edit tool · ") + tb.editing : "New tool"}</h1>
           {(tb.admin || tb.ro) && <span className={"badge " + (tb.admin ? "badge-warn" : "")}><Icon.lock /> {tb.admin ? "admin mode" : "read-only"}</span>}</header>
         {tb.ro && <ManagedBanner d={d} />}
         {tb.admin && !tb.editing && <div className="banner admin-banner"><Icon.lock /> Admin mode: this tool will be signed and published to every project in the app.</div>}
