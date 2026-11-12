@@ -33,6 +33,24 @@ type Provider interface {
 	// Builtins lists the enabled built-in tools; RunBuiltin runs one.
 	Builtins() []BuiltinInfo
 	RunBuiltin(ctx context.Context, name string, args map[string]any) (string, error)
+	// AskPermission asks the user whether the agent may use a tool it has
+	// no standing permission for (Claude's permission prompts).
+	AskPermission(ctx context.Context, req PermissionRequest) PermissionAnswer
+}
+
+// PermissionRequest is one permission prompt from an agent CLI.
+type PermissionRequest struct {
+	// Agent identifies one agent process (one run): "allow for this run"
+	// answers are remembered per Agent.
+	Agent string         `json:"agent"`
+	Tool  string         `json:"tool"`
+	Input map[string]any `json:"input"`
+}
+
+// PermissionAnswer is the user's decision.
+type PermissionAnswer struct {
+	Allow   bool   `json:"allow"`
+	Message string `json:"message,omitempty"` // why it was denied (shown to the model)
 }
 
 // Bridge is a loopback-only HTTP server the agentbridge MCP process calls.
@@ -61,6 +79,7 @@ func StartBridge(p Provider) (*Bridge, error) {
 	mux.HandleFunc("POST /call", br.auth(br.handleCall))
 	mux.HandleFunc("GET /builtins", br.auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, br.p.Builtins()) }))
 	mux.HandleFunc("POST /builtin", br.auth(br.handleBuiltin))
+	mux.HandleFunc("POST /permission", br.auth(br.handlePermission))
 	br.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = br.srv.Serve(ln) }()
 	return br, nil
@@ -104,10 +123,19 @@ func (b *Bridge) auth(h http.HandlerFunc) http.HandlerFunc {
 	}
 }
 
+// ToolFilter is an optional Provider method: whether the run in progress
+// may call a tool (e.g. only the tools chosen for a spec workflow).
+type ToolFilter interface {
+	AllowedNow(name string) bool
+}
+
 func (b *Bridge) callable() map[string]Extension {
 	out := map[string]Extension{}
+	f, _ := b.p.(ToolFilter)
 	for _, e := range b.p.Callable() {
-		out[e.Name] = e
+		if f == nil || f.AllowedNow(e.Name) {
+			out[e.Name] = e
+		}
 	}
 	b.mu.Lock()
 	for k, e := range b.extra {
@@ -190,6 +218,15 @@ func (b *Bridge) handleBuiltin(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, BuiltinResult{Output: out})
+}
+
+func (b *Bridge) handlePermission(w http.ResponseWriter, r *http.Request) {
+	var req PermissionRequest
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4<<20)).Decode(&req); err != nil {
+		writeJSON(w, PermissionAnswer{Message: "bad request: " + err.Error()})
+		return
+	}
+	writeJSON(w, b.p.AskPermission(r.Context(), req))
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

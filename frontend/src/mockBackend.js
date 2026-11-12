@@ -2,7 +2,20 @@
 // It mirrors the Go API method-for-method and emits events with the same
 // flattened shape as bus.Event, driven by a scripted agent.
 
+import { stepNames, isStepField } from "./flowNames.js";
 import { BUILTINS } from "./builtins.generated.js";
+
+// built-in tools as flow tools ("builtin:<name>"), shaped like project tools (mirrors core.FlowBuiltinTools)
+const NOT_IN_FLOWS = new Set(["todo_list", "get_command_output"]);
+function flowBuiltins() {
+  return BUILTINS.filter((t) => !NOT_IN_FLOWS.has(t.name)).map((t) => {
+    const props = t.inputSchema?.properties || {}, req = new Set(t.inputSchema?.required || []);
+    const names = Object.keys(props).sort((a, b) => (req.has(b) - req.has(a)) || a.localeCompare(b));
+    return { name: "builtin:" + t.name, desc: t.title + ": " + t.description, kind: "builtin", scope: "builtin", status: "tested", approved: true, lang: t.group,
+      params: names.map((n) => ({ name: n, type: props[n].type || "string", required: req.has(n), desc: (props[n].description || "") + (props[n].type === "array" ? " (one per line, or a JSON array)" : props[n].type === "object" ? " (JSON)" : "") })),
+      secrets: [], perms: t.readOnly ? [] : ["writes"] };
+  });
+}
 
 const KEY = "codegen.mock.v1";
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
@@ -42,6 +55,7 @@ const SCRIPT = {
   clarify: [["say", "Q1: Are partial shipments allowed?  Q2: Single currency or multi-currency?"], ["Edit", "specs/001-orders/spec.md"], ["say", "Recorded your answers in the Clarifications section."]],
   plan: [["Read", "specs/001-orders/spec.md"], ["Write", "specs/001-orders/plan.md"], ["Write", "specs/001-orders/data-model.md"], ["say", "Plan: Java 21, Spring Boot 3, PostgreSQL, Kafka, hexagonal layout. Constitution check passed."]],
   tasks: [["Write", "specs/001-orders/tasks.md"], ["say", "Broke the plan into 5 tasks, 1 parallel. Tests come first for each service."]],
+  analyze: [["Read", "specs/001-orders/spec.md"], ["Read", "specs/001-orders/plan.md"], ["Read", "specs/001-orders/tasks.md"], ["say", "Analysis: 0 critical, 1 medium (FR-004 has no task), 2 low. No constitution conflicts. Ready to implement after adding a task for FR-004."]],
   implement: [["Write", "src/main/java/com/acme/orders/domain/Order.java"], ["Write", "src/main/java/com/acme/orders/domain/OrderLine.java"], ["Write", "src/main/java/com/acme/orders/application/PlaceOrderService.java"], ["ext", "gen-dto"], ["say", "Implemented T001–T003. T004–T005 are left for the next pass."]],
 };
 
@@ -52,6 +66,7 @@ const specKit = () => ({ version: 1, id: "speckit", name: "Spec workflow", budge
   step("clarify", "Clarify", "Answers to open questions, or areas to probe", "e.g. Partial shipments are allowed; currency is always EUR.", "Ask at most 5 questions, highest impact first. Record answers in the spec."),
   step("plan", "Plan", "Tech stack and architecture choices", "e.g. Java 21, Spring Boot 3, PostgreSQL, Kafka, hexagonal layout.", "Check the plan against the constitution. Prefer the corporate golden path."),
   step("tasks", "Tasks", "Constraints for the task breakdown", "e.g. Tests first; keep tasks under half a day; mark parallel tasks.", "Order tasks by dependency, tests first. Mark tasks that can run in parallel with [P]."),
+  { ...step("analyze", "Analyze", "What to check before implementation", "e.g. Every requirement has tasks; the plan follows the constitution.", "Read-only: report gaps, duplicates and conflicts across spec, plan and tasks, constitution conflicts first."), input: "Check spec.md, plan.md and tasks.md for gaps, ambiguities and conflicts with the constitution before implementation." },
   step("implement", "Implement", "Scope for this implementation pass", "e.g. Implement phase 1 and 2 tasks only.", "Work task by task, run the build after each one, stop on the first failure."),
 ] });
 
@@ -78,18 +93,39 @@ function seed() {
   };
 }
 
-const HOURS = { constitution: 0.5, specify: 3, clarify: 1.5, plan: 4, tasks: 2, implement: 14 };
+const HOURS = { constitution: 0.5, specify: 3, clarify: 1.5, plan: 4, tasks: 2, analyze: 1, implement: 14 };
+
+// A minimal zip writer (stored, no compression) for the preview's download.
+const CRC_T = (() => { const t = new Uint32Array(256); for (let n = 0; n < 256; n++) { let c = n; for (let k = 0; k < 8; k++) c = c & 1 ? 0xedb88320 ^ (c >>> 1) : c >>> 1; t[n] = c >>> 0; } return t; })();
+const crc32 = (d) => { let c = 0xffffffff; for (let i = 0; i < d.length; i++) c = CRC_T[(c ^ d[i]) & 0xff] ^ (c >>> 8); return (c ^ 0xffffffff) >>> 0; };
+function zipStore(entries) {
+  const enc = new TextEncoder(), parts = [], central = []; let off = 0;
+  const le = (n, b) => { const a = new Uint8Array(b); for (let i = 0; i < b; i++) a[i] = (n >>> (8 * i)) & 0xff; return a; };
+  for (const e of entries) {
+    const name = enc.encode(e.name), crc = crc32(e.data), sz = e.data.length;
+    const head = [le(0x04034b50, 4), le(20, 2), le(0x0800, 2), le(0, 2), le(0, 2), le(0x21, 2), le(crc, 4), le(sz, 4), le(sz, 4), le(name.length, 2), le(0, 2), name];
+    central.push([le(0x02014b50, 4), le(20, 2), le(20, 2), le(0x0800, 2), le(0, 2), le(0, 2), le(0x21, 2), le(crc, 4), le(sz, 4), le(sz, 4), le(name.length, 2), le(0, 2), le(0, 2), le(0, 2), le(0, 2), le(0, 4), le(off, 4), name]);
+    parts.push(...head, e.data); off += head.reduce((n, a) => n + a.length, 0) + sz;
+  }
+  const cd = central.flat(), cdLen = cd.reduce((n, a) => n + a.length, 0);
+  const all = [...parts, ...cd, le(0x06054b50, 4), le(0, 2), le(0, 2), le(entries.length, 2), le(entries.length, 2), le(cdLen, 4), le(off, 4), le(0, 2)];
+  const out = new Uint8Array(all.reduce((n, a) => n + a.length, 0)); let p = 0; for (const a of all) { out.set(a, p); p += a.length; } return out;
+}
 
 export function createMockBackend(methods) {
   let db; try { db = JSON.parse(localStorage.getItem(KEY) || "null"); } catch { db = null; }
   if (!db || !db.wf) db = seed();
   if (db.wf.name === "Spec Kit") db.wf.name = "Spec workflow";
+  // Analyze (between Tasks and Implement) for workflows saved before it existed
+  if (db.wf.id === "speckit" && !db.wf.steps.some((x) => x.id === "analyze")) { const k = db.wf.steps.findIndex((x) => x.id === "implement"); if (k > 0) db.wf.steps.splice(k, 0, { ...specKit().steps.find((x) => x.id === "analyze"), options: { ...db.wf.steps[0].options }, status: db.wf.steps[k].status === "done" ? "done" : "pending" }); }
   const persist = () => { try { localStorage.setItem(KEY, JSON.stringify(db)); } catch { /* ignore */ } };
   const listeners = new Set();
   const secrets = {};
   // environment variables the preview pretends are exported in ~/.zshrc
   const ENV = { SONAR_TOKEN: "sonar-preview-token", PGHOST: "localhost", PGUSER: "orders_ro" };
   const pendingAsks = new Map();
+  const pendingPerms = new Map();
+  const cxProject = {}; // Copilot extensions loaded into the preview project
   const infoOf = (s) => {
     const src = s.source || "auto", env = s.env || s.name, envSet = env in ENV, inSession = s.name in secrets;
     const via = src === "env" ? (envSet ? "env" : "missing") : src === "session" ? (inSession ? "session" : "missing") : src === "ask" ? (inSession ? "session" : "ask") : inSession ? "session" : envSet ? "env" : "ask";
@@ -123,7 +159,11 @@ export function createMockBackend(methods) {
     const out = [];
     for (const p of Object.keys(db.files)) {
       let m;
-      if ((m = p.match(/^\.codegen\/skills\/(global|project)\/([^/]+)\/SKILL\.md$/))) out.push({ id: `${m[1]}:skill:${m[2]}`, name: m[2], kind: "skill", scope: m[1], path: p, note: (db.files[p].match(/description: (.*)/) || [])[1] || "" });
+      if ((m = p.match(/^\.codegen\/skills\/(global|project)\/([^/]+)\/SKILL\.md$/))) {
+        const dir = `.codegen/skills/${m[1]}/${m[2]}`;
+        const files = Object.keys(db.files).filter((f) => f.startsWith(dir + "/") && f !== p && !f.slice(dir.length + 1).split("/").some((x) => x.startsWith("."))).map((f) => f.slice(dir.length + 1)).sort();
+        out.push({ id: `${m[1]}:skill:${m[2]}`, name: m[2], kind: "skill", scope: m[1], path: p, dir, files, note: (db.files[p].match(/description: (.*)/) || [])[1] || (db.files[p].split("\n").find((x) => x.trim() && x.trim() !== "---") || "").replace(/^#+\s*/, "") });
+      }
       else if ((m = p.match(/^\.codegen\/skills\/(global|project)\/([^/]+)\.md$/))) out.push({ id: `${m[1]}:skill:${m[2]}`, name: m[2], kind: "skill", scope: m[1], path: p, note: db.files[p].replace(/^#\s*/, "").split("\n")[0] });
       else if ((m = p.match(/^\.codegen\/scripts\/([^/]+)$/))) out.push({ id: `project:script:${m[1]}`, name: m[1], kind: "script", scope: "project", path: p, note: (db.files[p].split("\n")[1] || "").replace(/^#\s*/, "") });
     }
@@ -142,8 +182,13 @@ export function createMockBackend(methods) {
   // corporate libraries: copy the catalog into the project, drop retired ones
   const syncLibs = () => {
     db.mlibs ||= [];
-    for (const l of adm.libs) db.files[`.codegen/skills/global/${l.name}/SKILL.md`] = l.content;
-    for (const n of db.mlibs) if (!adm.libs.some((l) => l.name === n)) delete db.files[`.codegen/skills/global/${n}/SKILL.md`];
+    const clear = (n) => { for (const f of Object.keys(db.files)) if (f.startsWith(`.codegen/skills/global/${n}/`)) delete db.files[f]; };
+    for (const l of adm.libs) {
+      if (db.mlibs.includes(l.name)) clear(l.name);
+      db.files[`.codegen/skills/global/${l.name}/SKILL.md`] = l.content;
+      for (const [f, c] of Object.entries(l.files || {})) db.files[`.codegen/skills/global/${l.name}/${f}`] = c;
+    }
+    for (const n of db.mlibs) if (!adm.libs.some((l) => l.name === n)) clear(n);
     db.mlibs = adm.libs.map((l) => l.name); persist();
   };
   const annotated = () => { syncLibs(); return libraries().map((l) => { const m = l.scope === "global" && adm.libs.find((x) => x.name === l.name); return m ? { ...l, note: m.desc || l.note, managed: { version: m.version, signer: m.signer, signedAt: m.signedAt, status: "verified", source: "app" } } : l; }); };
@@ -166,9 +211,65 @@ export function createMockBackend(methods) {
       if (saved) { if (saved.script !== v) { saved.status = "needs approval"; saved.approved = false; } continue; }
       list.push({ name, desc: `npm script ${k}: ${v}`, kind: "npm", scope: "project", status: "needs approval", lang: "Node.js", command: "npm run --silent " + k, script: v, params: [], secrets: [], perms: ["runs Node.js"], revision: 1, approved: false });
     }
+    for (const n of Object.keys(cxProject)) {
+      if (n !== "html-formatter" || list.some((e) => e.name === "format_html")) continue;
+      list.push({ name: "format_html", desc: "Format an existing HTML file in the current workspace with Prettier. Modifies the file in place; accepts a workspace-relative or absolute path.", kind: "copilot", scope: "project", status: "untested", lang: "Node.js",
+        command: "copilot-extension .github/extensions/html-formatter/extension.mjs format_html", tool: "format_html", entry: "extension.mjs", dir: ".github/extensions/html-formatter", deps: ["prettier@3.6.2"],
+        params: [{ name: "path", type: "string", required: true, desc: "Path to an existing .html or .htm file inside the current workspace." }], secrets: [], perms: ["runs Node.js", "Copilot extension html-formatter"], revision: 1, approved: true,
+        call: { path: "docs/report.html" }, output: "Formatted: docs/report.html", sampleTest: "Format docs/report.html" });
+    }
     return [...managedView(), ...list.filter((e) => !isManaged(e.name))];
   };
-  const wsState = () => ({ root: db.root, name: db.root.split("/").pop(), profile: db.profile, libraries: annotated(), workflow: clone(db.wf), extensions: extensions(), fileCount: Object.keys(db.files).length, specKit: true });
+  const wsState = () => ({ root: db.root, name: db.root.split("/").pop(), profile: db.profile, libraries: annotated(), workflow: clone(db.wf), extensions: extensions(), fileCount: Object.keys(db.files).length, specKit: !!skInfo().initialized, speckit: skInfo() });
+  // Spec Kit (mirrors internal/speckit): the bundled v1.4.0 template
+  const SK_STEPS = ["analyze", "checklist", "clarify", "constitution", "converge", "implement", "plan", "specify", "tasks"];
+  const SK_CORE = [".specify/.gitignore", ".specify/memory/.constitution-template.json", ".specify/memory/constitution.md", ...["check-prerequisites", "common", "create-new-feature", "resolve-template", "setup-plan", "setup-tasks"].map((n) => `.specify/scripts/bash/${n}.sh`),
+    ...["checklist", "constitution", "plan", "spec", "tasks"].map((n) => `.specify/templates/${n}-template.md`), ".specify/workflows/speckit/workflow.yml"];
+  const skDir = (i) => (i === "copilot" ? ".github/skills" : ".claude/skills");
+  const pd = () => (db.profile.specProject ? db.profile.specProject + "/" : ""); // the Spec Kit project folder
+  const up = (p) => (pd() && p && !p.startsWith(pd()) ? "../" + p : p && pd() ? p.slice(pd().length) : p);
+  // the Spec Kit download (the app fetches it through the proxy; the preview pretends)
+  const skDl = { running: false, progress: "", error: "" };
+  const skDownload = () => {
+    if (skDl.running) return skDl.promise;
+    Object.assign(skDl, { running: true, error: "", progress: "Looking up the latest Spec Kit release…" });
+    skDl.promise = (async () => {
+      for (const l of ["Downloading Spec Kit 1.4.0 with uv from https://github.com/github/spec-kit/archive/refs/tags/v1.4.0.zip…", "Running specify init for claude…", "Running specify init for copilot…"]) { skDl.progress = l; await wait(900); }
+      db.speckitAvailable = "1.4.0"; persist(); Object.assign(skDl, { running: false, progress: "" });
+    })();
+    return skDl.promise;
+  };
+  const dlInfo = () => ({ available: db.speckitAvailable || "", downloading: skDl.running, progress: skDl.progress, error: skDl.error });
+  function skInfo() { return { ...skInfoProject(), ...dlInfo() }; }
+  function skInfoProject() {
+    const ij = db.files[pd() + ".specify/integration.json"], project = db.profile.specProject || "";
+    if (!ij && !Object.keys(db.files).some((f) => f.startsWith(pd() + ".specify/"))) return { initialized: false, project };
+    const j = ij ? JSON.parse(ij) : { installed_integrations: ["claude"], integration: "claude", version: "0.x" };
+    const c = db.files[pd() + ".specify/memory/constitution.md"] || "";
+    return { project, initialized: true, version: j.version, integration: j.integration, integrations: j.installed_integrations, constitution: !!c && !c.includes("[PROJECT_NAME]") };
+  }
+  const CTX_BEGIN = "<!-- SPECWRIGHT:BEGIN — managed by SpecWright (Choose input); edits inside this block are replaced -->", CTX_END = "<!-- SPECWRIGHT:END -->";
+  function writeAgentContext() {
+    const info = skInfo(); if (!info.initialized) return [];
+    const p = db.profile, c = db.wf.context || {}, has = (l, v) => !l || l.includes(v), libs = libraries();
+    const lines = ["## Project context (from SpecWright)", "", "This project follows spec-driven development with GitHub Spec Kit (`.specify/`). Run one `speckit-*` step at a time and keep to its scope; the constitution is `.specify/memory/constitution.md` and feature specs live in `specs/`.", "", `Language: ${p.lang} · build: ${p.build}`];
+    const rules = p.rules.filter((r) => has(c.rules, r.id)); if (rules.length) lines.push("", "### Rules", ...rules.map((r) => `- ${r.id}: ${r.text}`));
+    const g = libs.filter((l) => p.global.includes(l.id)), pr = libs.filter((l) => p.project.includes(l.id));
+    if (g.length) lines.push("", "### Corporate skills (read before you start)", ...g.map((l) => `- ${l.name} (${l.kind}): \`${up(l.path)}\``));
+    if (pr.length) lines.push("", "### Project skills and scripts", ...pr.map((l) => `- ${l.name} (${l.kind}): \`${up(l.path)}\``));
+    const ts = db.exts.filter((t) => t.approved && has(c.tools, t.name)); if (ts.length) lines.push("", "### Project tools", ...ts.map((t) => `- ${t.name}: ${t.desc}`));
+    const bs = c.tools ? flowBuiltins().filter((t) => c.tools.includes(t.name)) : []; if (bs.length) lines.push("", "### Built-in tools to use", ...bs.map((t) => `- ${t.name.slice(8)}`));
+    if (pd()) lines.push("", `SpecWright's skills, rules and inputs live in the workspace one level up (\`../.codegen/\`); this project folder is \`${pd()}\`.`);
+    const block = CTX_BEGIN + "\n" + lines.join("\n") + "\n" + CTX_END + "\n", out = [];
+    for (const i of info.integrations || [info.integration]) {
+      const f = pd() + (i === "copilot" ? ".github/copilot-instructions.md" : "CLAUDE.md"), cur = db.files[f] || "";
+      const a = cur.indexOf(CTX_BEGIN), b = cur.indexOf(CTX_END);
+      const next = a >= 0 && b > a ? cur.slice(0, a) + block + cur.slice(b + CTX_END.length).replace(/^\n/, "") : (cur ? cur.replace(/\n*$/, "\n\n") : "") + block;
+      if (next !== cur) { db.files[f] = next; out.push(f); }
+    }
+    return out;
+  }
+  const SK_SCOPE = { constitution: "Only create or update `.specify/memory/constitution.md` (with its Sync Impact Report). Do not create specs, plans, tasks or code; list anything else as Next Actions.", specify: "Create this feature's spec only: the feature folder under `specs/` (made by `.specify/scripts/bash/create-new-feature.sh`), its `spec.md` and requirements checklist. No plan, tasks or code.", clarify: "Only update the current feature's `spec.md`. This run is not interactive: use the answers given above, and record any question still open in the spec instead of waiting for a reply.", plan: "Only write the plan documents in the current feature folder: `plan.md`, `research.md`, `data-model.md`, `contracts/` and `quickstart.md`. No tasks or code.", tasks: "Only write `tasks.md` in the current feature folder.", analyze: "Read-only: report findings; do not change any file.", implement: "Implement the tasks in `tasks.md` in order, marking each one done ([X]) when it is finished. Stop at the first failing build or test and report it." };
 
   function writeFile(path, content, run) {
     const old = db.files[path];
@@ -191,7 +292,10 @@ export function createMockBackend(methods) {
     const model = agent === "copilot" ? "copilot/default" : "claude-sonnet-5-5";
     let ctx = 2400 + Math.round(prompt.length / 3.6);
     run.pub("prompt.compose", `Prompt composed (${prompt.length} chars)`, { prompt });
-    for (const [kind, arg] of st.script || SCRIPT[st.id] || [["say", "Done."]]) {
+    // spec steps run in the Spec Kit project folder: their files go there
+    const inProj = !st.script && pd() && (st.cmd || "").startsWith("/speckit");
+    const steps = (st.script || SCRIPT[st.id] || [["say", "Done."]]).map(([k, a]) => [k, inProj && ["Read", "Write", "Edit"].includes(k) && !a.startsWith(".codegen/") && !a.startsWith("inputs/") ? pd() + a : a]);
+    for (const [kind, arg] of steps) {
       await wait(280 + R() * 420); if (run.cancelled) return "cancelled";
       run.pub("model.request", "Request → " + model, { input_tokens: ctx, cached_tokens: Math.round(ctx * 0.8), model });
       await wait(300 + R() * 500); if (run.cancelled) return "cancelled";
@@ -204,6 +308,17 @@ export function createMockBackend(methods) {
       const out = 80 + Math.round(R() * (kind === "Write" ? 900 : 120));
       run.pub("model.response", "Response · tool_use", { output_tokens: out, stop_reason: "tool_use" });
       const id = "t" + run.seq;
+      if (kind === "WebFetch") {
+        // a tool with no standing permission: ask, as Claude does through agentbridge
+        const pid = "p" + Math.random().toString(16).slice(2, 10);
+        run.pub("tool.call", "WebFetch " + arg, { tool: "WebFetch", args: { url: arg }, id });
+        const d = await new Promise((res) => { pendingPerms.set(pid, res); run.pub("permission.request", "Allow WebFetch? " + arg, { id: pid, tool: "WebFetch", input: { url: arg, prompt: "Read the install instructions" }, target: arg }); });
+        pendingPerms.delete(pid);
+        run.pub("permission.resolved", "WebFetch: " + d.decision, { id: pid, tool: "WebFetch", decision: d.decision });
+        const ok = d.decision !== "deny";
+        run.pub("tool.result", `WebFetch ${ok ? "ok" : "denied"} · 420ms`, { tool: "WebFetch", id, ok, duration_ms: 420, output: ok ? "Install with: npm i -g example-cli" : "The user denied permission to use WebFetch." + (d.note ? " They said: " + d.note : "") });
+        continue;
+      }
       if (kind === "ext") {
         const e = db.exts.find((x) => x.name === arg);
         run.pub("tool.call", "extension_managed " + arg, { tool: "mcp__agentbridge__extension_managed", args: { name: arg, arguments: e?.call || {} }, id });
@@ -322,15 +437,21 @@ export function createMockBackend(methods) {
   }
 
   function compose(st, feedback) {
-    const p = db.profile, o = st.options, libs = libraries();
-    const pick = (ids) => libs.filter((l) => ids.includes(l.id)).map((l) => `- ${l.name} (${l.kind}): ${l.path}`).join("\n");
-    return [`${st.cmd} ${st.input.trim()}`,
+    const p = db.profile, o = st.options, libs = libraries(), c = db.wf.context || {}, has = (list, v) => !list || list.includes(v);
+    const rules = p.rules.filter((r) => has(c.rules, r.id));
+    const exts = db.exts.filter((t) => t.approved && t.status !== "in review" && has(c.tools, t.name)), bts = c.tools ? flowBuiltins().filter((t) => c.tools.includes(t.name)) : [];
+    const pick = (ids) => libs.filter((l) => ids.includes(l.id)).map((l) => `- ${l.name} (${l.kind}): ${l.path}` + (l.files?.length ? `\n  Its folder ${l.dir}/ also has these files (paths in SKILL.md are relative to that folder):\n` + l.files.map((f) => `  - ${f}`).join("\n") : "")).join("\n");
+    const info = skInfo(), skill = [skDir(info.integration), skDir(info.integration === "copilot" ? "claude" : "copilot")].map((d) => `${d}/speckit-${st.id}/SKILL.md`).find((f) => pd() + f in db.files);
+    const cmd = st.cmd.startsWith("/speckit") ? (skill ? "/speckit-" + st.id : st.cmd) : st.cmd;
+    const guide = st.cmd.startsWith("/speckit") && [skill && `This is the Spec Kit command \`${cmd}\`: read \`${skill}\` and follow it exactly, with the text after the command above as its input ($ARGUMENTS).`, SK_SCOPE[st.id], pd() && `Your working directory is the project folder \`${pd()}\` (where \`.specify/\` is): keep every spec, plan and source file inside it. SpecWright's skills and inputs are one level up, in \`../.codegen/\`.`, "You run without a person at the keyboard: where the command would ask and wait, use the input above or make a reasonable assumption and say so."].filter(Boolean).join("\n");
+    return [`${cmd} ${st.input.trim()}`, guide && `\n## How to run this step\n${guide}`,
       st.instructions.trim() && `\n## Instructions\n${st.instructions.trim()}`,
-      o.rules && p.rules.length && `\n## Rules\n${p.rules.map((r) => `- ${r.id}: ${r.text}`).join("\n")}`,
+      o.rules && rules.length && `\n## Rules\n${rules.map((r) => `- ${r.id}: ${r.text}`).join("\n")}`,
       o.global && p.global.length && `\n## Corporate skills (read before you start)\n${pick(p.global)}`,
       o.project && p.project.length && `\n## Project skills and scripts\n${pick(p.project)}`,
       o.diagrams && Object.keys(p.diagrams || {}).length && `\n## Input diagrams\n${Object.entries(p.diagrams).map(([k, v]) => `- ${k} diagram: ${v}`).join("\n")}`,
-      o.tools && `\n## Tools available\nCall them with the extension_managed tool (MCP server agentbridge).\n${db.exts.filter((t) => t.approved && t.status !== "in review").map((t) => `- ${t.name}: ${t.desc}${t.secrets.length ? ` (env: ${t.secrets.map((s) => s.name + "=[REDACTED]").join(", ")})` : ""}`).join("\n")}`,
+      o.tools && bts.length && `\n## Built-in tools to use\nThey are tools of the MCP server agentbridge, called by these names.\n${bts.map((t) => `- ${t.name.slice(8)}: ${t.desc.replace(/^[^:]*:\s*/, "")}`).join("\n")}`,
+      o.tools && exts.length && `\n## Tools available\nCall them with the extension_managed tool (MCP server agentbridge).\n${exts.map((t) => `- ${t.name}: ${t.desc}${t.secrets.length ? ` (env: ${t.secrets.map((s) => s.name + "=[REDACTED]").join(", ")})` : ""}`).join("\n")}`,
       `\n## Project\nLanguage: ${p.lang} · build: ${p.build}`,
       feedback && `\n## Change request from the reviewer\n${feedback}\nRevise your previous output for this step accordingly.`,
     ].filter(Boolean).join("\n");
@@ -375,13 +496,20 @@ export function createMockBackend(methods) {
   const flowAnc = (f, id) => { const seen = new Set(), walk = (n) => f.edges.filter((e) => e.to === n).forEach((e) => { if (!seen.has(e.from)) { seen.add(e.from); walk(e.from); } }); walk(id); return seen; };
   const validateFlow = (f) => {
     const out = [], add = (node, level, message) => out.push({ node, level, message });
-    const tools = extensions(), inputs = new Set(f.inputs.map((i) => i.name)), ids = new Set(f.nodes.map((n) => n.id));
+    const tools = [...extensions(), ...flowBuiltins()], inputs = new Set(f.inputs.map((i) => i.name)), ids = new Set(f.nodes.map((n) => n.id));
     if (!f.name?.trim()) add("", "error", "Give the flow a name.");
     if (!f.nodes.some((n) => n.type === "output")) add("", "warning", "Add an output so the flow produces something.");
     const check = (n, what, tpl) => { const anc = flowAnc(f, n.id); for (const v of flowVars(tpl)) { const [h, r = ""] = [v.split(".")[0], v.split(".").slice(1).join(".")]; const name = r.split(".")[0];
       if (h === "inputs" && !inputs.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but there is no input called "${name}".`);
       if (h === "steps" && !ids.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but there is no step "${name}".`);
-      else if (h === "steps" && !anc.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but "${name}" does not run before this step. Connect it first.`); } };
+      else if (h === "steps" && !anc.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but "${name}" does not run before this step. Connect it first.`);
+      else if (!["inputs", "steps", "context", "skills", "input", "input_file", "output", "flow", "date", "now"].includes(h) && isStepField(r)) {
+        const { names, ambiguous } = stepNames(f), sid = ids.has(h) ? h : names[h];
+        if (!sid && ambiguous.has(h)) add(n.id, "error", `${what} uses {{${v}}}, but more than one step is called "${h}". Use the step's id instead.`);
+        else if (!sid) add(n.id, "error", `${what} uses {{${v}}}, but no step or tool is called "${h}".`);
+        else if (sid === n.id) add(n.id, "error", `${what} uses {{${v}}}: a step cannot read its own output.`);
+        else if (!anc.has(sid)) add(n.id, "error", `${what} uses {{${v}}}, but "${h}" does not run before this step. Connect it first.`);
+      } } };
     for (const n of f.nodes) {
       const label = n.title || n.id;
       if (n.type !== "start" && !f.edges.some((e) => e.to === n.id)) add(n.id, "warning", `${label} is not connected to anything before it.`);
@@ -389,7 +517,9 @@ export function createMockBackend(methods) {
         else if (!(n.instruction || "").trim()) (t.params || []).forEach((p) => { if (p.required && !(n.args?.[p.name] || "").trim()) add(n.id, "error", `${label}: the required parameter "${p.name}" is empty (fill it in, or describe the step and let AI build it).`); });
         for (const k in n.args || {}) check(n, `${label} › ${k}`, n.args[k]);
         const feeders = f.edges.filter((e) => e.to === n.id).map((e) => f.nodes.find((x) => x.id === e.from)).filter((x) => x && x.type !== "start");
-        const uses = Object.values(n.args || {}).some((v) => /\{\{\s*input(_file)?\b/.test(v) || feeders.some((x) => new RegExp("\\{\\{\\s*steps\\." + x.id + "(?=[.}\\s])").test(v)));
+        const { names: nm } = stepNames(f);
+        const uses = Object.values(n.args || {}).some((v) => /\{\{\s*input(_file)?\b/.test(v) || feeders.some((x) => new RegExp("\\{\\{\\s*steps\\." + x.id + "(?=[.}\\s])").test(v)
+          || [...String(v).matchAll(/\{\{\s*([^.{}\s]+)\.(output_file|buffer_output)/g)].some((m) => m[1] === x.id || nm[m[1]] === x.id)));
         if (feeders.length && !(n.instruction || "").trim() && !uses) add(n.id, "warning", `None of ${label}'s fields use the result of ${feeders.map((x) => x.title || x.id).join(" and ")}. It is still piped in, which only helps tools that read piped data. To use it in a field, click “← ${feeders[0].title || feeders[0].id}” next to that field, or describe the step and let AI fill the fields.`); }
       if (n.type === "ai") { if (!(n.prompt || "").trim()) add(n.id, "error", `${label} needs a prompt.`); check(n, label, n.prompt); }
       if (n.type === "merge" && f.edges.filter((e) => e.to === n.id).length < 2) add(n.id, "warning", `${label} merges fewer than two steps.`);
@@ -398,7 +528,9 @@ export function createMockBackend(methods) {
     }
     return out;
   };
-  const render = (tpl, d) => String(tpl || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, v) => { const [h, ...r] = v.split("."); if (h === "inputs") return d.inputs?.[r[0]] ?? ""; if (h === "steps") { const s = d.steps?.[r[0]] ?? ""; if (r[1] === "json") { try { return jpath(JSON.parse(s), r.slice(2).join(".")); } catch { return ""; } } return s; } if (h === "input") return d.input ?? ""; if (h === "input_file") return d.input ? "/tmp/specwright/flow-input/step.txt" : ""; return d[h] ?? ""; });
+  const render = (tpl, d) => String(tpl || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, v) => { const [h, ...r] = v.split("."); if (h === "inputs") return d.inputs?.[r[0]] ?? ""; if (h === "steps") { const s = d.steps?.[r[0]] ?? ""; if (r[1] === "json") { try { return jpath(JSON.parse(s), r.slice(2).join(".")); } catch { return ""; } } return s; } if (h === "input") return d.input ?? ""; if (h === "input_file") return d.inputFile || "/tmp/specwright/flow-input/step.txt";
+    if (isStepField(r.join("."))) { const id = h in (d.steps || {}) ? h : d.names?.[h]; if (id && id in (d.steps || {})) { if (r[0] === "output_file") return d.files?.[id] || ""; if (r[1] === "json") { try { return jtext(jpath(JSON.parse(d.steps[id]), r.slice(2).join("."))); } catch { return ""; } } return d.steps[id]; } return ""; }
+    return d[h] ?? ""; });
   const jtext = (v) => (typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? JSON.stringify(v, null, 2) : String(v));
   const jpath = (v, path) => { let cur = [v], wild = false; for (const m of String(path).replace(/^\$\.?/, "").matchAll(/\[(\d+|\*)\]|([^.[\]]+)/g)) { const nx = []; for (const c of cur) { if (m[1] === "*") { wild = true; nx.push(...(Array.isArray(c) ? c : Object.values(c || {}))); } else if (m[1] != null) { if (Array.isArray(c) && +m[1] < c.length) nx.push(c[+m[1]]); } else if (Array.isArray(c)) { wild = true; c.forEach((e) => e && m[2] in e && nx.push(e[m[2]])); } else if (c && typeof c === "object" && m[2] in c) nx.push(c[m[2]]); } cur = nx; if (!cur.length) throw new Error(`nothing at "${m[0]}"`); } return jtext(wild ? cur : cur[0]); };
   const toCsv = (v) => { const rows = (Array.isArray(v) ? v : [v]).map((r) => (r && typeof r === "object" ? r : { value: r })); const head = [...new Set(rows.flatMap((r) => Object.keys(r)))]; const q = (x) => { const s = jtext(x).replace(/\n/g, " "); return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }; return [head.join(","), ...rows.map((r) => head.map((k) => (k in r ? q(r[k]) : "")).join(","))].join("\n") + "\n"; };
@@ -459,6 +591,20 @@ export function createMockBackend(methods) {
       Object.assign(st.usage, { input_tokens: st.usage.input_tokens + ctx, output_tokens: st.usage.output_tokens + out, model_calls: st.usage.model_calls + 1, cost_usd: st.usage.cost_usd + cost, premium_requests: st.usage.premium_requests + (agent === "copilot" ? 1 : 0) });
       return text;
     };
+    // a rough stand-in for the built-in tools, over the mock's files
+    const mockBuiltin = (name, a) => {
+      const files = Object.keys(db.files).sort();
+      if (name === "read_file") { const t = db.files[a.path]; if (t == null) return `${a.path}: no such file`; const ls = t.split("\n"), from = Number(a.start_line) || 1, to = Number(a.end_line) || ls.length; return ls.slice(from - 1, to).map((l, i) => String(from + i).padStart(4) + " | " + l).join("\n"); }
+      if (name === "list_directory") { const d = (a.path || "").replace(/\/$/, ""); return files.filter((f) => !d || f.startsWith(d + "/")).map((f) => f.slice(d ? d.length + 1 : 0)).join("\n"); }
+      if (name === "file_search") { const re = new RegExp("^" + (a.pattern || "*").replace(/[.+^$()|[\]\\]/g, "\\$&").replace(/\*\*\//g, "(?:.*/)?").replace(/\*/g, "[^/]*").replace(/\?/g, ".") + "$"); return files.filter((f) => re.test(f) || re.test(f.split("/").pop())).join("\n") || "No files match."; }
+      if (name === "text_search" || name === "find_usages") { const q = String(a.query || a.symbol || ""), out = []; for (const f of files) db.files[f].split("\n").forEach((l, i) => { if (q && l.toLowerCase().includes(q.toLowerCase())) out.push(`${f}:${i + 1}: ${l.trim()}`); }); return out.slice(0, 200).join("\n") || `No matches for "${q}".`; }
+      if (name === "create_file") { db.files[a.path] = a.content || ""; return `Created ${a.path} (${(a.content || "").split("\n").length} lines)`; }
+      if (name === "workspace_changes") return "On branch main\nChanges not staged for commit:\n  modified: src/main/java/com/acme/orders/domain/Order.java";
+      if (name === "run_command") return `$ ${a.command}\nok\n(exit code 0)`;
+      if (name === "get_problems") return "Build OK: no errors or warnings.";
+      if (name === "fetch_webpage") return `# ${a.url}\n\nThe page's text (preview).`;
+      return name + ": ok";
+    };
     const tool = async (step, name, args) => {
       const e = db.exts.find((x) => x.name === name) || adm.managed.find((x) => x.name === name);
       const cid = step + "-" + lr.seq;
@@ -468,7 +614,7 @@ export function createMockBackend(methods) {
         await resolveSecrets(e, e.secrets);
       }
       await wait(450);
-      const out = e?.output || (name === "find-todos" ? "src/main/java/com/acme/orders/domain/OrderStatus.java:4: TODO add CANCELLED\nsrc/main/java/com/acme/orders/ports/StockPort.java:9: FIXME timeout handling\nsrc/main/java/com/acme/orders/ports/OrderRepository.java:12: TODO(urgent) paging" : name + ": ok");
+      const out = name.startsWith("builtin:") ? mockBuiltin(name.slice(8), args) : e?.output || (name === "find-todos" ? "src/main/java/com/acme/orders/domain/OrderStatus.java:4: TODO add CANCELLED\nsrc/main/java/com/acme/orders/ports/StockPort.java:9: FIXME timeout handling\nsrc/main/java/com/acme/orders/ports/OrderRepository.java:12: TODO(urgent) paging" : name + ": ok");
       const sdir = resultsDir(id) + "/steps/" + step, isOut = f.nodes.find((x) => x.id === step)?.type === "output", pre = isOut ? name + "-" : "";
       const ext = /^\s*</.test(out) ? "html" : /^[[{]/.test(out.trim()) ? "json" : out.includes(",") && out.split("\n").length > 1 ? "csv" : "txt";
       const inputText = (lr.curInput || "");
@@ -479,6 +625,11 @@ export function createMockBackend(methods) {
       if (sst && !isOut) { sst.outputFile = `${sdir}/output.${ext}`; if (inputText) sst.inputFile = `${sdir}/input.txt`; }
       pub("tool.result", `${name} ok · 450ms`, { step, tool: name, id: cid, ok: true, output: out, duration_ms: 450, output_file: `${sdir}/${pre}output.${ext}`, args_file: `${sdir}/${pre}args.json`, ...(inputText ? { input_file: `${sdir}/${isOut ? "action-input" : "input"}.txt` } : {}) });
       st.usage.tool_calls++;
+      // a tool that calls AI itself (counted by the aishim launchers in the app)
+      if (/lint|uml|diagram|summar/i.test(name)) {
+        pub("model.usage", `${name} used AI: 1 AI call via Copilot · 1 premium request · 1840 in / 310 out tokens`, { step, tool: name, source: "tool", calls: 1, premium_requests: 1, input_tokens: 1840, output_tokens: 310, model: "gpt-5" });
+        st.usage.premium_requests = (st.usage.premium_requests || 0) + 1; st.usage.input_tokens = (st.usage.input_tokens || 0) + 1840; st.usage.output_tokens = (st.usage.output_tokens || 0) + 310;
+      }
       return out;
     };
     const exec = async (n, d) => {
@@ -567,7 +718,7 @@ export function createMockBackend(methods) {
           Object.assign(st, { pass, item: i + 1, itemLabel: items[i] != null ? String(items[i]).slice(0, 60) : "", status: "running", steps: stepsFresh() });
           if (st.passes > 1 || items.length > 1) pub("flow.pass", [st.passes > 1 ? `Run ${pass} of ${st.passes}` : "", items.length > 1 ? `item ${i + 1} of ${items.length}` : ""].filter(Boolean).join(" · ") + (st.itemLabel ? ": " + st.itemLabel : ""));
           state();
-          const d = { inputs, steps: {}, context: f.context?.text || "" }, bad = new Set();
+          const d = { inputs, steps: {}, files: {}, names: stepNames(f).names, context: f.context?.text || "" }, bad = new Set();
           for (const nid of flowOrder(f)) {
             if (lr.stop) throw Object.assign(new Error("stopped by you"), { stopped: true });
             const n = f.nodes.find((x) => x.id === nid), s = stepOf(nid);
@@ -577,6 +728,8 @@ export function createMockBackend(methods) {
             try { out = await runStep(n, d); } catch (e) { if (e.stopped) throw e; bad.add(nid); failed = true; reason = `${s.title} failed: ${e.message}`; continue; }
             if (wants(n)) out = await review(n, d, out);
             d.steps[nid] = out;
+            { const ext = /^\s*</.test(out) ? "html" : /^[[{]/.test(String(out).trim()) ? "json" : "txt", rel = resultsDir(id) + "/steps/" + nid + "/output." + ext;
+              db.files[rel] = out; d.files[nid] = db.root + "/" + rel; const ss = st.steps.find((x) => x.id === nid); if (ss) ss.outputFile = rel; }
             if (o.stopAfter === nid) { st.steps.filter((x) => x.status === "pending").forEach((x) => { x.status = "skipped"; x.error = "the run stops after " + s.title; }); state(); break; }
           }
         }
@@ -594,6 +747,20 @@ export function createMockBackend(methods) {
     return clone(st);
   };
   const blobs = new Map(); // attachments, kept in memory for previews
+  // mirrors core.flowInputValue
+  const inputValue = (i, text, files) => {
+    const label = i.label || i.name;
+    files = [...new Set(files.map((p) => p.trim()).filter(Boolean))];
+    for (const p of files) if (!(p in db.files) && !p.startsWith(".codegen/attachments/")) throw new Error(`${label}: the file ${p} was not found`);
+    if (!text.trim() && !files.length) { text = i.default || ""; files = i.files || []; }
+    const t = text.trim();
+    if (i.type === "number") { if (t && isNaN(Number(t))) throw new Error(`${label} must be a number, not "${t}"`); return t; }
+    if (i.type === "boolean") return /^(true|yes|y|1|on)$/i.test(t) ? "true" : "false";
+    if (i.type === "choice") { if (t && (i.options || []).length && !i.options.includes(t)) throw new Error(`${label} must be one of: ${i.options.join(", ")}`); return t; }
+    if (i.type === "file" || i.type === "files") { const ps = files.length ? files : t.split("\n").map((x) => x.trim()).filter(Boolean); if (i.type === "file" && ps.length > 1) throw new Error(`${label} takes one file; ${ps.length} were given`); return ps.join("\n"); }
+    if (!files.length) return text;
+    return t ? text.replace(/\n+$/, "") + "\n\nAttached files:\n- " + files.join("\n- ") : files.join("\n");
+  };
   const api = {
     kind: "mock",
     on(cb) { listeners.add(cb); return () => listeners.delete(cb); },
@@ -622,6 +789,43 @@ export function createMockBackend(methods) {
     async OpenWorkspace(path) { if (!path?.trim()) throw new Error("enter a folder"); if (path !== db.root) db.root = path.trim(); persist(); return wsState(); },
     async PickFolder() { return wsState(); },
     async Workspace() { return wsState(); },
+    async SpecKitInfo() { return skInfo(); },
+    async DownloadSpecKit(force) { if (force || !db.speckitAvailable) skDownload(); return skInfo(); },
+    async InitSpecKit(project, integration) {
+      if (!db.speckitAvailable) await skDownload();
+      await wait(400);
+      integration ||= "claude"; project = (project || "").trim().replace(/^\/+|\/+$/g, "") || db.profile.specProject || "";
+      if (project && (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(project))) throw new Error(`"${project}" is not a good project folder name: use letters, digits, - . _ (e.g. orders-service)`);
+      db.profile.specProject = project; const P = pd();
+      const res = { version: "1.4.0", integration, created: [], updated: [], kept: [] };
+      for (const f0 of [...SK_CORE, ...SK_STEPS.map((s) => `${skDir(integration)}/speckit-${s}/SKILL.md`)]) {
+        const f = P + f0;
+        if (f in db.files) { res.kept.push(f); continue; }
+        db.files[f] = f.endsWith("constitution.md") ? "# [PROJECT_NAME] Constitution\n\n(Browser preview: the real file comes from the Spec Kit downloaded on your computer.)\n" : f.endsWith(".sh") ? "#!/usr/bin/env bash\n# Spec Kit script (preview)\n" : `# ${f.split("/").slice(-2).join("/")} (Spec Kit 1.4.0, preview)\n`;
+        res.created.push(f);
+      }
+      const prev = db.files[P + ".specify/integration.json"] ? JSON.parse(db.files[P + ".specify/integration.json"]) : { installed_integrations: [] };
+      const inst = [...new Set([...(prev.installed_integrations || []), integration])];
+      db.files[P + ".specify/integration.json"] = JSON.stringify({ version: "1.4.0", integration_state_schema: 1, installed_integrations: inst, integration, default_integration: integration }, null, 2);
+      db.files[P + ".specify/init-options.json"] = JSON.stringify({ ai: integration, integration, script: "sh", speckit_version: "1.4.0" }, null, 2);
+      const context = writeAgentContext(); persist();
+      return { ...res, context, info: skInfo() };
+    },
+    async ExportProjectZip(withContext) {
+      await wait(300);
+      const P = pd(), skip = /(^|\/)(node_modules|target|build|dist|\.git)\//;
+      let names = Object.keys(db.files).filter((f) => (P ? f.startsWith(P) : !f.startsWith(".codegen/runs/")) && !skip.test(f));
+      if (P && withContext) {
+        const sel = new Set([...db.profile.global, ...db.profile.project]);
+        for (const l of libraries().filter((x) => sel.has(x.id))) names.push(...Object.keys(db.files).filter((f) => f === l.path || (l.dir && f.startsWith(l.dir + "/"))));
+        names.push(...Object.keys(db.files).filter((f) => f.startsWith(".codegen/rules/")), ...Object.values(db.profile.diagrams || {}).filter((f) => f in db.files));
+      }
+      names = [...new Set(names)].sort();
+      const enc = new TextEncoder(), entries = names.map((n) => ({ name: n, data: enc.encode(String(db.files[n])) }));
+      const blob = new Blob([zipStore(entries)], { type: "application/zip" }), name = (db.profile.specProject || db.root.split("/").pop()) + "-" + new Date().toISOString().slice(0, 16).replace(/[-:T]/g, "").replace(/^(\d{8})/, "$1-") + ".zip";
+      const a = document.createElement("a"); a.href = URL.createObjectURL(blob); a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+      return { path: name + " (browser download)", name, files: entries.length, bytes: entries.reduce((n, e) => n + e.data.length, 0), skipped: [] };
+    },
     async SaveProfile(p) { db.profile = clone(p); persist(); },
     async BuildRules(section, mode) { await wait(300); return mode === "bulk" ? "Bulk load: rewrote 2 file(s) in .codegen/rules." : "Incremental: 1 file(s) updated, 1 unchanged."; },
     async SaveRulesDoc(format, content) {
@@ -680,7 +884,7 @@ export function createMockBackend(methods) {
     async Workflow() { return clone(db.wf); },
     async SaveWorkflow(w) {
       for (const s of w.steps) { const d = db.wf.steps.find((x) => x.id === s.id); if (d) Object.assign(d, { input: s.input, instructions: s.instructions, options: s.options, feedback: s.feedback, gate: s.gate, retries: s.retries }); }
-      db.wf.budget = w.budget; persist();
+      db.wf.budget = w.budget; db.wf.model = (w.model || "").trim(); db.wf.context = w.context || {}; persist();
     },
     async ResetWorkflow() { if (live) throw new Error("a step is still running"); db.wf.steps.forEach((s) => (s.status = "pending")); persist(); emit({ type: "workflow.changed" }); },
     async Compose(id, fb) { return compose(db.wf.steps.find((s) => s.id === id), fb); },
@@ -702,6 +906,7 @@ export function createMockBackend(methods) {
       }
       const script = [["Read", "specs/001-orders/spec.md"], ["Read", "src/main/java/com/acme/orders/domain/OrderStatus.java"]];
       if (o.tools && /dto|openapi|generat/i.test(q)) script.push(["ext", "gen-dto"]);
+      if (/web|fetch|url|http|install|setup|set up/i.test(req)) script.push(["WebFetch", "https://docs.example.com/install"]);
       script.push(["say", `Here is what I found for “${short}”:\n\n• The project is an orders service (Java 21, Maven) laid out hexagonally: domain, application, ports.\n• The spec in specs/001-orders/spec.md covers placing an order and rejecting it when stock is missing.\n• OrderStatus has three states: NEW, PLACED and REJECTED.\n\nThis is the browser preview's scripted agent; the desktop app sends your prompt to ${agent === "copilot" ? "the Copilot CLI" : "Claude Code"}.`]);
       if (o.parents?.length) script.unshift(["Read", resultsDir(o.parents[o.parents.length - 1]) + "/answer.md"]);
       return startRunP({ id: "playground", title: "Playground", input: q, rawPrompt: q, gate: false, script, status: "pending", lastRun: "" });
@@ -711,6 +916,8 @@ export function createMockBackend(methods) {
       if (!st) throw new Error(`no step "${id}"`);
       if (live) throw new Error("another step is still running or waiting for approval");
       if (i > 0 && db.wf.steps[i - 1].status !== "done") throw new Error(`cannot run ${st.title}: ${db.wf.steps[i - 1].title} is not approved yet`);
+      if (st.cmd.startsWith("/speckit") && !skInfo().initialized) throw new Error("this project is not set up for Spec Kit yet: use Set up Spec Kit on Choose input first");
+      writeAgentContext();
       if (!st.input.trim()) throw new Error(`cannot run ${st.title}: inputs are missing`);
       return startRun(st);
     },
@@ -720,6 +927,7 @@ export function createMockBackend(methods) {
     async Runs(limit) { return clone(db.runs.filter((r) => r.workspace === db.root).slice(0, limit || 50)); },
     async RunEvents(id) { return clone(db.events[id] || []); },
     async Extensions() { return extensions(); },
+    async FlowBuiltinTools() { return flowBuiltins(); },
     async BuiltinTools() { return unlocked ? clone(BUILTINS) : []; },
     async CallBuiltin(name, a = {}) {
       if (!unlocked) throw new Error("built-in tools can only be viewed and tried in admin mode; agents can still use them");
@@ -791,7 +999,37 @@ export function createMockBackend(methods) {
       const k = db.exts.findIndex((x) => x.name === name); if (k >= 0) db.exts[k] = rec; else db.exts.push(rec);
       persist(); return rec;
     },
+    async ArchiveTool(name) {
+      if (isManaged(name)) refuse(name);
+      const e = extensions().find((x) => x.name === name); if (!e) throw new Error(`no extension named "${name}"`);
+      if (e.kind === "npm") throw new Error(`${name} is the npm script ext:${name} in package.json: delete it there and it disappears from Tools`);
+      const d = new Date(), p2 = (n) => String(n).padStart(2, "0");
+      const path = `.codegen/archive/${d.getFullYear()}${p2(d.getMonth() + 1)}${p2(d.getDate())}-${p2(d.getHours())}${p2(d.getMinutes())}${p2(d.getSeconds())}`;
+      if (e.kind === "copilot") {
+        const ext = e.dir.split("/").pop(), tools = extensions().filter((x) => x.kind === "copilot" && x.dir === e.dir).map((x) => x.name);
+        delete cxProject[ext]; db.exts = db.exts.filter((x) => !(x.kind === "copilot" && x.dir === e.dir)); persist();
+        return { path, tools, moved: [e.dir] };
+      }
+      db.exts = db.exts.filter((x) => x.name !== name); persist();
+      return { path, tools: [name], moved: e.scriptPath ? [e.scriptPath] : [] };
+    },
     async DeleteExtension(name) { if (isManaged(name)) refuse(name); db.exts = db.exts.filter((e) => e.name !== name); persist(); },
+    async GenerateScript(r) {
+      if (!(r.description || "").trim()) throw new Error(r.current ? "describe what to change in the script" : "describe what the script should do");
+      await wait(900);
+      const lang = r.language || (/json|api|http/i.test(r.description) ? "node" : /csv|data|parse|report/i.test(r.description) ? "python" : "bash");
+      const ext = { bash: ".sh", python: ".py", node: ".mjs" }[lang];
+      const slugged = r.description.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").split("-").slice(0, 4).join("-") || "script";
+      const name = r.fileName || slugged + ext;
+      const head = { bash: "#!/usr/bin/env bash", python: "#!/usr/bin/env python3", node: "#!/usr/bin/env node" }[lang];
+      const c = lang === "bash" ? "#" : lang === "python" ? "#" : "//";
+      let body = lang === "bash"
+        ? `set -euo pipefail\n\nif [[ "\${1:-}" == "-h" || "\${1:-}" == "--help" ]]; then\n  echo "usage: $0 [folder]" >&2\n  exit 0\nfi\ndir="\${1:-src}"\n\n# ${r.description}\ngrep -rn "TODO" "$dir" || true\n`
+        : lang === "python" ? `import sys\n\n\ndef main(argv):\n    if len(argv) < 2 or argv[1] in ("-h", "--help"):\n        print("usage: %s <file>" % argv[0], file=sys.stderr)\n        return 2\n    # ${r.description}\n    with open(argv[1], encoding="utf-8") as f:\n        print(sum(1 for _ in f))\n    return 0\n\n\nif __name__ == "__main__":\n    sys.exit(main(sys.argv))\n`
+        : `const [, , arg] = process.argv;\nif (!arg || arg === "-h" || arg === "--help") { console.error("usage: ${name} <url>"); process.exit(2); }\n// ${r.description}\nconst res = await fetch(arg);\nconsole.log(JSON.stringify(await res.json(), null, 2));\n`;
+      if (r.current) body = r.current.split("\n").slice(1).join("\n").replace(/\n*$/, "\n") + `${c} Changed: ${r.description}\n`;
+      return { fileName: name, content: r.current ? head + "\n" + body : `${head}\n${c} ${r.description.split("\n")[0]}\n${body}`, summary: (r.current ? "Updated: " : "") + r.description.split("\n")[0] + ". Run: .codegen/scripts/" + name + " --help" };
+    },
     async GenerateExtension(r) {
       const lang = r.draft ? r.draft.lang : pickRuntime(r.runsIn);
       const lines = r.failure ? ["Reading the failed test", "Finding the cause", "Rewriting the script", "Re-checking secrets stay out of the code"]
@@ -845,7 +1083,7 @@ export function createMockBackend(methods) {
       const f = db.flows[id]; if (!f) throw new Error(`no flow "${id}"`);
       const errs = validateFlow(f).filter((i) => i.level === "error"); if (errs.length) throw new Error("fix the flow first: " + errs.map((i) => i.message).join(" "));
       o = { ...o, inputs: { ...(o.inputs || {}) } };
-      for (const i of f.inputs) { if (!o.inputs[i.name]) o.inputs[i.name] = i.default || ""; if (i.required && !o.inputs[i.name].trim() && o.forEach?.input !== i.name) throw new Error(`${i.label || i.name} is required`); }
+      for (const i of f.inputs) { o.inputs[i.name] = inputValue(i, o.inputs[i.name] || "", (o.files || {})[i.name] || []); if (i.required && !o.inputs[i.name].trim() && o.forEach?.input !== i.name) throw new Error(`${i.label || i.name} is required`); }
       return startFlowRun(clone(f), o);
     },
     async FlowRun(id) { const l = flowLive.get(id); if (l) return clone(l.st); const st = [...(db.events[id] || [])].reverse().find((e) => e.type === "flow.state")?.state; if (!st) throw new Error(`no flow run "${id}"`); return clone({ ...st, status: ["running", "review", "scheduled"].includes(st.status) ? "interrupted" : st.status }); },
@@ -873,8 +1111,34 @@ export function createMockBackend(methods) {
       if (!/^[a-z0-9][a-z0-9._-]{0,59}$/.test(name || "")) throw new Error("name must start with a lowercase letter or digit and use lowercase letters, digits, '.', '-' and '_' (max 60)");
       if (!content?.trim()) throw new Error("the skill is empty");
       const old = adm.libs.find((l) => l.name === name);
-      const rec = { name, desc: desc || "", content, version: (old?.version || 0) + 1, signedBy: adm.key?.id || "sw1-mock", signer: adm.key?.name || "Admin", signedAt: new Date().toISOString() };
+      const dir = `.codegen/skills/global/${name}/`;
+      const files = old ? old.files || {} : Object.fromEntries(Object.keys(db.files).filter((f) => f.startsWith(dir) && f !== dir + "SKILL.md").map((f) => [f.slice(dir.length), db.files[f]]));
+      const rec = { name, desc: desc || "", content, files, version: (old?.version || 0) + 1, signedBy: adm.key?.id || "sw1-mock", signer: adm.key?.name || "Admin", signedAt: new Date().toISOString() };
       adm.libs = [...adm.libs.filter((l) => l.name !== name), rec].sort((a, b) => a.name.localeCompare(b.name)); savAdm();
+      return annotated();
+    },
+    async SaveManagedLibraryFile(name, file, content, oldFile) {
+      await wait(200);
+      if (!unlocked) throw new Error("unlock admin mode first (Admin screen)");
+      const ok = (x) => !!x && x !== "SKILL.md" && x.split("/").length <= 6 && x.split("/").every((s) => /^[A-Za-z0-9_][A-Za-z0-9._-]{0,79}$/.test(s));
+      if (!ok(file)) throw new Error("folder and file names use letters, digits, '.', '-' and '_'");
+      if (!content?.trim()) throw new Error("the file is empty");
+      const cur = adm.libs.find((l) => l.name === name);
+      if (!cur) throw new Error(`publish the corporate skill ${name} first, then add files to it`);
+      const files = { ...(cur.files || {}) };
+      if (file in files && oldFile !== file) throw new Error(`${name} already has a file ${file}`);
+      if (oldFile && oldFile !== file) delete files[oldFile];
+      files[file] = content;
+      const rec = { ...cur, files, version: cur.version + 1, signedBy: adm.key?.id || "sw1-mock", signer: adm.key?.name || "Admin", signedAt: new Date().toISOString() };
+      adm.libs = adm.libs.map((l) => (l.name === name ? rec : l)); savAdm();
+      return annotated();
+    },
+    async DeleteManagedLibraryFile(name, file) {
+      if (!unlocked) throw new Error("unlock admin mode first (Admin screen)");
+      const cur = adm.libs.find((l) => l.name === name);
+      if (!cur || !(file in (cur.files || {}))) throw new Error(`${name} has no file ${file}`);
+      const files = { ...cur.files }; delete files[file];
+      adm.libs = adm.libs.map((l) => (l.name === name ? { ...cur, files, version: cur.version + 1, signedAt: new Date().toISOString() } : l)); savAdm();
       return annotated();
     },
     async DeleteManagedLibrary(name) { if (!unlocked) throw new Error("unlock admin mode first (Admin screen)"); adm.libs = adm.libs.filter((l) => l.name !== name); savAdm(); return annotated(); },
@@ -887,6 +1151,11 @@ export function createMockBackend(methods) {
       let rel = r.kind === "skill" ? `.codegen/skills/project/${name}/SKILL.md` : `.codegen/scripts/${name}`;
       if (r.kind === "skill" && r.oldPath === `.codegen/skills/project/${name}.md`) rel = r.oldPath;
       if (r.oldPath !== rel && rel in db.files) throw new Error(`a ${r.kind} called ${name} already exists`);
+      if (r.kind === "skill" && r.oldPath && r.oldPath !== rel && r.oldPath.endsWith("/SKILL.md")) {
+        // a skill folder keeps its docs and scripts
+        const from = r.oldPath.replace(/\/SKILL\.md$/, "/"), to = rel.replace(/\/SKILL\.md$/, "/");
+        for (const f of Object.keys(db.files)) if (f.startsWith(from) && f !== r.oldPath) { db.files[to + f.slice(from.length)] = db.files[f]; delete db.files[f]; }
+      }
       db.files[rel] = r.content;
       if (r.oldPath && r.oldPath !== rel) {
         delete db.files[r.oldPath];
@@ -895,9 +1164,33 @@ export function createMockBackend(methods) {
       }
       persist(); return annotated();
     },
+    async SaveSkillFile(r) {
+      await wait(120);
+      const clean = (x) => String(x || "").trim().replace(/^\/+|\/+$/g, "");
+      const ok = (x) => !!x && x !== "SKILL.md" && x.split("/").length <= 6 && x.split("/").every((s) => /^[A-Za-z0-9_][A-Za-z0-9._-]{0,79}$/.test(s));
+      const rel = clean(r.path), old = clean(r.oldPath);
+      if (!ok(rel)) throw new Error(rel === "SKILL.md" ? "SKILL.md is the skill itself; edit it with Edit" : "folder and file names use letters, digits, '.', '-' and '_'");
+      if (!r.content?.trim()) throw new Error("the file is empty");
+      const name = (r.skill || "").trim(), dir = `.codegen/skills/project/${name}`;
+      if (!(dir + "/SKILL.md" in db.files)) {
+        if (`${dir}.md` in db.files) { db.files[dir + "/SKILL.md"] = db.files[`${dir}.md`]; delete db.files[`${dir}.md`]; }
+        else throw new Error(`there is no project skill called ${name}; create it first`);
+      }
+      if (old !== rel && (dir + "/" + rel) in db.files) throw new Error(`${name} already has a file ${rel}`);
+      db.files[dir + "/" + rel] = r.content;
+      if (old && old !== rel) delete db.files[dir + "/" + old];
+      persist(); return annotated();
+    },
+    async DeleteSkillFile(skill, file) {
+      const k = `.codegen/skills/project/${skill}/${file}`;
+      if (!(k in db.files) || file.includes("..")) throw new Error(`${k}: no such file`);
+      delete db.files[k]; persist(); return annotated();
+    },
     async DeleteProjectLibrary(path) {
       if (!/^\.codegen\/(skills\/project|scripts)\//.test(path || "") || path.includes("..")) throw new Error(/skills\/global/.test(path) ? "corporate libraries are managed by an admin; unlock admin mode to change them" : `${path} is not a project skill or script`);
-      delete db.files[path]; persist(); return annotated();
+      delete db.files[path];
+      if (path.endsWith("/SKILL.md")) { const d = path.slice(0, -"SKILL.md".length); for (const f of Object.keys(db.files)) if (f.startsWith(d)) delete db.files[f]; }
+      persist(); return annotated();
     },
     async PreviewFile(path) {
       await wait(80);
@@ -982,6 +1275,7 @@ export function createMockBackend(methods) {
         detected: { proxy: { http: "", https: "", noProxy: "" }, caFile: "", npm: { registry: "https://registry.npmjs.org/" }, pip: { indexUrl: "https://pypi.org/simple", extraIndexUrl: "", trustedHost: "" }, go: { proxy: "https://proxy.golang.org,direct", private: "", noSumDb: "", sumDb: "sum.golang.org", insecure: "", toolchain: "auto" }, maven: { mirrorUrl: "https://repo.maven.apache.org/maven2", mirrorOf: "central" } } };
     },
     async SavePackageSettings(s) {
+      if (!db.speckitAvailable) skDownload(); // proxies set up for the first time: fetch Spec Kit through them
       for (const u of [s.proxy.http, s.proxy.https, s.npm.registry, s.pip.indexUrl, s.pip.extraIndexUrl, s.maven.mirrorUrl]) if (u && !/^[a-z]+:\/\/[^/]+/i.test(u)) throw new Error(`"${u}" is not a URL (want e.g. https://host:port/path)`);
       const old = db.pkg || {}; const next = clone(s);
       for (const k of ["http", "https"]) if (/:xxxxx@/.test(next.proxy[k])) next.proxy[k] = old.proxy?.[k] || next.proxy[k];
@@ -999,6 +1293,38 @@ export function createMockBackend(methods) {
     async SecretStatus(names) { return Object.fromEntries(names.map((n) => [n, ["session", "env"].includes(infoOf({ name: n }).via)])); },
     async SecretInfo(list) { return (list || []).map(infoOf); },
     async AnswerSecrets(id, values, remember) { const r = pendingAsks.get(id); if (!r) throw new Error("that request is no longer waiting"); r({ values, remember }); },
+    async CopilotExtensions() {
+      const user = { name: "html-formatter", source: "user", dir: "~/.copilot/extensions/html-formatter", entry: "extension.mjs", desc: "Formats an existing .html or .htm file in the workspace in place using Prettier.",
+        tools: [{ name: "format_html", desc: "Format an existing HTML file in the current workspace with Prettier. Modifies the file in place; accepts a workspace-relative or absolute path." }],
+        files: ["README.md", "extension.mjs", "formatter.mjs", "formatter.test.mjs", "package-lock.json", "package.json", "sdk-loader.mjs"], size: 9420, deps: { prettier: "3.6.2" }, modules: true };
+      const out = [{ ...user, inProject: !!cxProject[user.name], projectSame: cxProject[user.name] === "same" }];
+      for (const n of Object.keys(cxProject)) out.push({ ...user, name: n, source: "project", dir: db.root + "/.github/extensions/" + n, modules: true, fromUser: n === user.name, inProject: false, projectSame: false });
+      return out;
+    },
+    async LoadCopilotExtension(name, replace, install) {
+      if (cxProject[name] && !replace) throw new Error(".github/extensions/" + name + " already exists in this project");
+      await wait(install ? 900 : 300);
+      cxProject[name] = "same";
+      return { path: ".github/extensions/" + name, tools: name === "html-formatter" ? ["format_html"] : [], log: install ? ["$ npm install --no-audit --no-fund --no-package-lock --omit=dev --loglevel=error", "added 1 package in 0.8s", "Added .github/extensions/*/node_modules/ to .gitignore."] : [] };
+    },
+    async RemoveCopilotExtension(name) { delete cxProject[name]; db.exts = db.exts.filter((e) => !(e.kind === "copilot" && e.dir === ".github/extensions/" + name)); return { path: ".codegen/archive/" + new Date().toISOString().replace(/[-:]/g, "").replace("T", "-").slice(0, 15), tools: name === "html-formatter" ? ["format_html"] : [], moved: [".github/extensions/" + name] }; },
+    async Models() {
+      return [
+        { agent: "claude", current: "", models: [
+          { id: "opus", label: "Opus", note: "Most capable for long, complex coding work", tier: "best", alias: true },
+          { id: "fable", label: "Fable", note: "Frontier reasoning for the hardest problems", tier: "best", alias: true },
+          { id: "sonnet", label: "Sonnet", note: "Fast and strong; a good everyday default", tier: "balanced", alias: true },
+          { id: "haiku", label: "Haiku", note: "Fastest and cheapest, for quick questions", tier: "fast", alias: true },
+          { id: "claude-opus-5-5", label: "Claude Opus 5.5", tier: "best" }, { id: "claude-fable-5-1", label: "Claude Fable 5.1", tier: "best" },
+          { id: "claude-sonnet-5-5", label: "Claude Sonnet 5.5", tier: "balanced" }, { id: "claude-haiku-5-5", label: "Claude Haiku 5.5", tier: "fast" }] },
+        { agent: "copilot", current: "", models: [
+          { id: "auto", label: "Auto", note: "Copilot picks a model for each request", tier: "auto" },
+          { id: "claude-sonnet-5.5", label: "Claude Sonnet 5.5", tier: "balanced" }, { id: "claude-opus-5.5", label: "Claude Opus 5.5", tier: "best" },
+          { id: "gpt-5.6-sol", label: "GPT 5.6 Sol", tier: "balanced" }] },
+        { agent: "mock", current: "", models: [{ id: "mock-fast", label: "Mock fast", tier: "fast" }, { id: "mock-best", label: "Mock best", tier: "best" }] },
+      ];
+    },
+    async AnswerPermission(id, decision, note) { const r = pendingPerms.get(id); if (!r) throw new Error("that request is no longer waiting"); r({ decision, note }); },
     async CancelSecrets(id) { const r = pendingAsks.get(id); if (r) r({ cancel: true }); },
   };
   for (const m of methods) if (!api[m]) api[m] = async () => { throw new Error(m + " is not available in the browser preview"); };

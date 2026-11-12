@@ -5,6 +5,7 @@ import { applyAppearance, onSystemThemeChange, resolveTheme } from "./theme.js";
 import { Icon, Pill } from "./ui.jsx";
 import { Logo } from "./Logo.jsx";
 import { SecretPrompt } from "./SecretPrompt.jsx";
+import { PermissionPrompt } from "./PermissionPrompt.jsx";
 import { RulesEditors } from "./views/RulesEditors.jsx";
 import { Setup, agentLabel } from "./views/Setup.jsx";
 import { Wizard } from "./views/Wizard.jsx";
@@ -105,6 +106,7 @@ export function App() {
       </div>
       <RulesEditors />
       <SecretPrompt />
+      <PermissionPrompt />
       <FilePreview />
       <LibraryEditor />
       <RunPicker />

@@ -3,6 +3,8 @@ package extension
 import (
 	"bufio"
 	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,13 +18,18 @@ import (
 // ToolName is the single MCP tool the agentbridge server exposes.
 const ToolName = "extension_managed"
 
+// PermissionTool answers Claude's permission prompts
+// (--permission-prompt-tool mcp__agentbridge__permission_prompt): the CLI
+// calls it, not the model, and the user decides in the app.
+const PermissionTool = "permission_prompt"
+
 // ServeMCP runs the agentbridge MCP server over newline-delimited JSON-RPC
 // on in/out. It forwards tools/call to the loopback bridge named by
 // CODEGEN_BRIDGE_URL / CODEGEN_BRIDGE_TOKEN.
 func ServeMCP(in io.Reader, out io.Writer) error {
 	url, tok := os.Getenv("CODEGEN_BRIDGE_URL"), os.Getenv("CODEGEN_BRIDGE_TOKEN")
 	// long enough for the user to type a secret the tool asks for
-	c := &bridgeClient{url: url, tok: tok, hc: &http.Client{Timeout: 15 * time.Minute}}
+	c := &bridgeClient{url: url, tok: tok, hc: &http.Client{Timeout: 15 * time.Minute}, agent: agentID()}
 	enc := json.NewEncoder(out)
 	sc := bufio.NewScanner(in)
 	sc.Buffer(make([]byte, 0, 64*1024), 8*1024*1024)
@@ -95,6 +102,11 @@ func handleMCP(c *bridgeClient, req rpcReq) (any, *rpcErr) {
 					"annotations": map[string]any{"readOnlyHint": b.ReadOnly, "destructiveHint": b.Name == "delete_path", "openWorldHint": b.Name == "fetch_webpage"}})
 			}
 		}
+		out = append(out, map[string]any{"name": PermissionTool, "title": "Ask the user for permission",
+			"description": "Used by the CLI to ask the user whether a tool may run. Do not call it yourself.",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{
+				"tool_name": map[string]any{"type": "string"}, "input": map[string]any{"type": "object", "additionalProperties": true}, "tool_use_id": map[string]any{"type": "string"}},
+				"required": []string{"tool_name"}}})
 		if os.Getenv("CODEGEN_BRIDGE_EXT") == "0" {
 			return map[string]any{"tools": out}, nil
 		}
@@ -147,6 +159,9 @@ func handleMCP(c *bridgeClient, req rpcReq) (any, *rpcErr) {
 		if err := json.Unmarshal(req.Params, &head); err != nil {
 			return nil, &rpcErr{Code: -32602, Message: "invalid params"}
 		}
+		if head.Name == PermissionTool {
+			return c.permission(head.Arguments), nil
+		}
 		if head.Name != ToolName {
 			res, err := c.builtin(head.Name, decodeArgs(head.Arguments))
 			if err != nil {
@@ -190,6 +205,46 @@ func toolText(s string, isErr bool) map[string]any {
 type bridgeClient struct {
 	url, tok string
 	hc       *http.Client
+	agent    string // random id of this agent process (one run)
+}
+
+func agentID() string {
+	b := make([]byte, 8)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
+}
+
+// permission answers one permission prompt in the format Claude Code
+// expects from a --permission-prompt-tool: a JSON text block with
+// behavior allow (and the input to run with) or deny (and a message).
+func (c *bridgeClient) permission(raw json.RawMessage) map[string]any {
+	var p struct {
+		Tool  string         `json:"tool_name"`
+		Input map[string]any `json:"input"`
+	}
+	_ = json.Unmarshal(raw, &p)
+	if p.Input == nil {
+		p.Input = map[string]any{}
+	}
+	var ans PermissionAnswer
+	if err := c.do("POST", "/permission", PermissionRequest{Agent: c.agent, Tool: p.Tool, Input: p.Input}, &ans); err != nil {
+		ans = PermissionAnswer{Message: "could not ask the user: " + err.Error()}
+	}
+	var out map[string]any
+	if ans.Allow {
+		out = map[string]any{"behavior": "allow", "updatedInput": p.Input}
+	} else {
+		out = map[string]any{"behavior": "deny", "message": firstNonBlank(ans.Message, "The user denied this.")}
+	}
+	b, _ := json.Marshal(out)
+	return toolText(string(b), false)
+}
+
+func firstNonBlank(a, b string) string {
+	if strings.TrimSpace(a) != "" {
+		return a
+	}
+	return b
 }
 
 func (c *bridgeClient) do(method, path string, body any, out any) error {

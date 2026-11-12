@@ -43,16 +43,20 @@ import (
 
 // FlowRunOptions tune one run.
 type FlowRunOptions struct {
-	Inputs             map[string]string `json:"inputs"`
-	Review             string            `json:"review"` // none | marked | ai | each (default ai: AI steps and marked steps)
-	Repeat             int               `json:"repeat"`
-	ForEach            *ForEach          `json:"forEach,omitempty"`
-	TimeoutMinutes     int               `json:"timeoutMinutes"`
-	StepTimeoutSeconds int               `json:"stepTimeoutSeconds"`
-	StartAt            time.Time         `json:"startAt,omitzero"`
-	Skip               []string          `json:"skip"`
-	StopAfter          string            `json:"stopAfter"`
-	Model              string            `json:"model"`
+	Inputs map[string]string `json:"inputs"`
+	// Files are files attached to an input (workspace paths): uploads for
+	// file inputs, and pasted or dropped images, PDFs and documents for
+	// clipboard and long-text inputs.
+	Files              map[string][]string `json:"files,omitempty"`
+	Review             string              `json:"review"` // none | marked | ai | each (default ai: AI steps and marked steps)
+	Repeat             int                 `json:"repeat"`
+	ForEach            *ForEach            `json:"forEach,omitempty"`
+	TimeoutMinutes     int                 `json:"timeoutMinutes"`
+	StepTimeoutSeconds int                 `json:"stepTimeoutSeconds"`
+	StartAt            time.Time           `json:"startAt,omitzero"`
+	Skip               []string            `json:"skip"`
+	StopAfter          string              `json:"stopAfter"`
+	Model              string              `json:"model"`
 }
 
 // ForEach runs the flow once per item of an input.
@@ -213,14 +217,11 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 		o.Inputs = map[string]string{}
 	}
 	for _, in := range f.Inputs {
-		v, ok := o.Inputs[in.Name]
-		if !ok || v == "" {
-			v = in.Default
-			if v == "" && len(in.Files) > 0 {
-				v = strings.Join(in.Files, "\n")
-			}
-			o.Inputs[in.Name] = v
+		v, err := flowInputValue(root, in, o.Inputs[in.Name], o.Files[in.Name])
+		if err != nil {
+			return FlowRunState{}, err
 		}
+		o.Inputs[in.Name] = v
 		if in.Required && strings.TrimSpace(o.Inputs[in.Name]) == "" && (o.ForEach == nil || o.ForEach.Input != in.Name) {
 			return FlowRunState{}, fmt.Errorf("%s is required", firstNonEmpty(in.Label, in.Name))
 		}
@@ -643,7 +644,9 @@ func (h *Hub) execPass(ctx context.Context, root string, fr *flowRun, inputs map
 	for _, s := range o.Skip {
 		skip[s] = true
 	}
-	d := flow.Data{Inputs: inputs, Steps: map[string]string{}, Context: h.flowContext(f), Skills: h.flowSkills(f), Flow: f.Name}
+	names, _ := f.StepNames()
+	d := flow.Data{Inputs: inputs, Steps: map[string]string{}, Context: h.flowContext(f), Skills: h.flowSkills(f), Flow: f.Name,
+		Files: map[string]string{}, Names: names}
 	status := map[string]string{}
 	var firstErr error
 	for _, id := range order {
@@ -686,6 +689,9 @@ func (h *Hub) execPass(ctx context.Context, root string, fr *flowRun, inputs map
 			}
 		}
 		d.Steps[id] = out
+		if p := h.flowOutputFile(fr, id, out); p != "" {
+			d.Files[id] = p // {{<step>.output_file}}
+		}
 		status[id] = "done"
 		if o.StopAfter != "" && o.StopAfter == id {
 			// mark the rest as skipped
@@ -791,8 +797,10 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 		b, _ := json.MarshalIndent(d.Inputs, "", "  ")
 		return string(b), u, nil
 	case "tool":
-		// the previous steps' output as a file, for {{input_file}} and $SPECWRIGHT_INPUT_FILE
-		if d.Input != "" {
+		// the previous steps' output as a file, for {{input_file}} and
+		// $SPECWRIGHT_INPUT_FILE; written even when they printed nothing, so
+		// the path always names a real file
+		if len(parents) > 0 {
 			if p, done := h.flowInputFile(fr, n.ID, d.Input); p != "" {
 				defer done()
 				d.InputFile = p
@@ -965,6 +973,7 @@ func (h *Hub) flowSkills(f *flow.Flow) string {
 // aiSuffix adds the flow's context and skills to an AI prompt.
 func (h *Hub) aiSuffix(f *flow.Flow, d flow.Data) string {
 	var b strings.Builder
+	b.WriteString(inputFilesNote(inputFiles(h.Root(), f, d.Inputs)))
 	if d.Context != "" {
 		b.WriteString("\n\n## Context\n" + d.Context)
 	}
@@ -1005,6 +1014,24 @@ func (h *Hub) flowInputFile(fr *flowRun, step, text string) (string, func()) {
 	return filepath.Join(h.Root(), filepath.FromSlash(rel)), func() {}
 }
 
+// flowOutputFile saves a finished step's output (as it goes on to the next
+// steps: redacted, and after any review edits) to steps/<step>/output.<ext>
+// in the run's results folder, and returns its absolute path. It is written
+// even when the output is empty, so {{<step>.output_file}} always names a
+// real file.
+func (h *Hub) flowOutputFile(fr *flowRun, step, out string) string {
+	rel, err := h.writeRunFile(stepFilesDir(fr.st.ID, step)+"/output."+contentExt(out), out)
+	if err != nil {
+		return ""
+	}
+	fr.update(func(st *FlowRunState) {
+		if s := fr.step(step); s != nil {
+			s.OutputFile = rel
+		}
+	})
+	return filepath.Join(h.Root(), filepath.FromSlash(rel))
+}
+
 var inputFileVar = regexp.MustCompile(`\$\{?SPECWRIGHT_INPUT_FILE\}?`)
 
 // expandInputFile replaces a literal $SPECWRIGHT_INPUT_FILE typed into a
@@ -1025,6 +1052,14 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 			e = &x
 		}
 	}
+	builtinTool := IsBuiltinTool(name)
+	if builtinTool {
+		b, err := h.flowBuiltin(name)
+		if err != nil {
+			return "", err
+		}
+		e = b
+	}
 	if e == nil {
 		return "", fmt.Errorf("the tool %s is not available or not approved", name)
 	}
@@ -1034,37 +1069,61 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 		h.flowPublish(fr, "tool.result", name+" failed", map[string]any{"_step": step, "tool": name, "id": id, "ok": false, "output": err.Error()})
 		return "", err
 	}
-	if err := e.Runnable(); err != nil {
-		return fail(err)
-	}
-	if extension.HasDeps(*e) {
-		if err := h.Prepare(ctx, *e); err != nil {
-			return fail(fmt.Errorf("installing dependencies failed: %v", err))
-		}
-	}
-	secrets, err := h.ResolveSecrets(ctx, *e)
-	if err != nil {
-		return fail(fmt.Errorf("credentials: %v", err))
-	}
-	// the previous steps' output, always handed over: on standard input and
-	// as a file named by $SPECWRIGHT_INPUT_FILE (tools can use either)
-	env := h.Env()
-	var stdin *string
-	if len(input) > 0 && input[0].text != "" {
-		in := input[0]
-		stdin = &in.text
-		if in.file == "" {
-			if p, done := h.flowInputFile(fr, step, in.text); p != "" {
-				defer done()
-				in.file = p
+	var res extension.RunResult
+	if builtinTool {
+		// built-ins take their data through their fields; the connected
+		// steps' output is still saved for {{input_file}}
+		res = h.runFlowBuiltin(ctx, e, args, timeout)
+	} else {
+		r, err := func() (extension.RunResult, error) {
+			if err := e.Runnable(); err != nil {
+				return extension.RunResult{}, err
 			}
+			if extension.HasDeps(*e) {
+				if err := h.Prepare(ctx, *e); err != nil {
+					return extension.RunResult{}, fmt.Errorf("installing dependencies failed: %v", err)
+				}
+			}
+			secrets, err := h.ResolveSecrets(ctx, *e)
+			if err != nil {
+				return extension.RunResult{}, fmt.Errorf("credentials: %v", err)
+			}
+			// the previous steps' output, always handed over: on standard input and
+			// as a file named by $SPECWRIGHT_INPUT_FILE (tools can use either)
+			env := h.Env()
+			var stdin *string
+			if len(input) > 0 && input[0].text != "" {
+				in := input[0]
+				stdin = &in.text
+				if in.file == "" {
+					if p, done := h.flowInputFile(fr, step, in.text); p != "" {
+						defer done()
+						in.file = p
+					}
+				}
+				if in.file != "" {
+					env = append(env, "SPECWRIGHT_INPUT_FILE="+in.file)
+				}
+				env = append(env, "SPECWRIGHT_STEP="+step, "SPECWRIGHT_RUN="+fr.st.ID)
+			}
+			return extension.ExecInput(ctx, root, *e, args, secrets, env, timeout, stdin), nil
+		}()
+		if err != nil {
+			return fail(err)
 		}
-		if in.file != "" {
-			env = append(env, "SPECWRIGHT_INPUT_FILE="+in.file)
-		}
-		env = append(env, "SPECWRIGHT_STEP="+step, "SPECWRIGHT_RUN="+fr.st.ID)
+		res = r
 	}
-	res := extension.ExecInput(ctx, root, *e, args, secrets, env, timeout, stdin)
+	// the AI the tool used itself (its own claude / copilot calls)
+	if au, ev, used := toolAIUsage(name, res.AI); used {
+		fr.update(func(st *FlowRunState) {
+			st.Usage.Add(au)
+			if s := fr.step(strings.TrimSuffix(step, "-out")); s != nil {
+				s.Usage.Add(au)
+			}
+		})
+		ev.Data["_step"] = step
+		h.flowPublish(fr, ev.Type, ev.Summary, ev.Data)
+	}
 	// keep what the tool was called with and what it returned
 	files := map[string]any{}
 	base := stepFilesDir(fr.st.ID, strings.TrimSuffix(step, "-out"))

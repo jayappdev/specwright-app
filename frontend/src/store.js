@@ -28,6 +28,7 @@ export const S = {
   tb: null,          // tool builder state
   secrets: {},       // name -> bool: has a value without asking; values never kept here
   secretInfo: {},    // name -> { source, env, envSet, via: session|env|ask|missing }
+  permAsks: [],      // pending "permission.request" events (the AI asks to use a tool)
   secretAsks: [],    // pending "secret.request" events (a tool waits for the user)
   flowRuns: {},      // flow run id → latest state (from "flow.state" events)
   results: {},       // run id → its results folder (RunResults), loaded on demand
@@ -63,6 +64,7 @@ export async function openWorkspace(path, viaPicker) {
     // Go encodes empty slices as null
     ws.libraries = ws.libraries || []; ws.extensions = ws.extensions || [];
     if (ws.profile) for (const k of ["global", "project", "folders", "rules"]) ws.profile[k] = ws.profile[k] || [];
+    if (ws.workflow) ws.workflow.steps ||= [];
     S.ws = ws; S.wf = ws.workflow; S.wsError = ""; S.lastWorkspace = ws.root;
     S.sel = currentStep(S.wf);
     S.files = { list: [], sel: "", content: "", open: {}, compile: null };
@@ -78,13 +80,15 @@ export async function refreshWorkflow() {
   if (!S.ws) return;
   const wf = await backend.Workflow();
   // keep local edits that may not have been saved yet
+  if (!wf) return;
+  wf.steps ||= [];
   if (S.wf) for (const st of wf.steps) { const o = S.wf.steps.find((x) => x.id === st.id); if (o) Object.assign(st, { input: o.input, instructions: o.instructions, options: o.options, feedback: o.feedback }); }
   S.wf = wf; update();
 }
 
 export async function refreshExtensions() {
   if (!S.ws) return;
-  S.ws.extensions = await backend.Extensions(); update();
+  S.ws.extensions = (await backend.Extensions().catch(() => [])) || []; update();
 }
 
 // Admin mode state (key, lock, trust) and the global managed tools.
@@ -132,7 +136,7 @@ export function onHubEvent(e) {
       clearTimeout(wfTimer); wfTimer = setTimeout(refreshWorkflow, 60);
       break;
     case "workspace.files":
-      if (S.view === "files" && S.ws) backend.ListFiles().then((l) => { S.files.list = l; update(); }).catch(() => {});
+      if (S.view === "files" && S.ws) backend.ListFiles().then((l) => { S.files.list = l || []; update(); }).catch(() => {});
       if ((e.changes || []).some((c) => c.path === "package.json" || c.path.startsWith(".codegen/skills") || c.path.startsWith(".codegen/scripts"))) backend.Workspace().then((ws) => { S.ws = { ...S.ws, extensions: ws.extensions || [], libraries: ws.libraries || [] }; update(); }).catch(() => {});
       break;
     case "build.line":
@@ -146,6 +150,12 @@ export function onHubEvent(e) {
       break;
     case "secret.request":
       if (!S.secretAsks.some((r) => r.id === e.id)) S.secretAsks.push({ id: e.id, tool: e.tool, secrets: e.secrets || [], reason: e.reason || "", step: e.step || "", run: e.run_id || "", at: Date.now() });
+      break;
+    case "permission.request":
+      if (!S.permAsks.some((r) => r.id === e.id)) S.permAsks.push({ id: e.id, tool: e.tool, input: e.input || {}, target: e.target || "", step: e.step || "", run: e.run_id || "", at: Date.now() });
+      break;
+    case "permission.resolved":
+      S.permAsks = S.permAsks.filter((r) => r.id !== e.id);
       break;
     case "secret.resolved":
       S.secretAsks = S.secretAsks.filter((r) => r.id !== e.id);
@@ -167,6 +177,7 @@ export function usageOf(evs = []) {
       case "model.response": u.out += e.output_tokens || 0; break;
       case "model.usage":
         u.usd += e.cost_usd || 0; u.premium += e.premium_requests || 0;
+        if (e.source === "tool") u.calls += e.calls || 0; // AI a tool used itself
         if (e.input_tokens) { u.in += e.input_tokens; u.out += e.output_tokens || 0; u.cached += e.cached_tokens || 0; }
         break;
       case "tool.call": u.tools++; break;
@@ -201,4 +212,16 @@ export async function saveText(name, text, type = "text/plain") {
   const a = document.createElement("a");
   a.href = URL.createObjectURL(new Blob([text], { type })); a.download = name; a.click();
   setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+}
+
+// Download the project (the Spec Kit project folder, with the skills, rules
+// and diagrams it uses) as a zip.
+export async function downloadProjectZip(withContext = true) {
+  if (S.zipBusy) return;
+  S.zipBusy = true; update();
+  try {
+    const r = await backend.ExportProjectZip(withContext);
+    if (r?.path) toast(`Saved ${r.files} files (${r.bytes >= 1 << 20 ? (r.bytes / (1 << 20)).toFixed(1) + " MB" : Math.max(1, Math.round(r.bytes / 1024)) + " KB"}) to ${r.path}${r.skipped?.length ? ` · ${r.skipped.length} large file(s) left out` : ""}`);
+  } catch (e) { toast(errMsg(e)); }
+  S.zipBusy = false; update();
 }

@@ -34,6 +34,14 @@ func (h *Hub) newToolbox() *builtin.Box {
 		// packages in .codegen/cache.)
 		Env:   func() []string { return h.agentPackageEnv(h.Root()) },
 		Trash: filepath.Join(h.Store.Dir(), "trash"),
+		// during a Spec workflow step, commands run in the Spec Kit project
+		// folder (spec-kit's scripts find their project from there)
+		DefaultCwd: func() string {
+			if a := h.activeRun(); a != nil && a.Session.Step != PlaygroundStep {
+				return h.specRel()
+			}
+			return ""
+		},
 		Problems: func(ctx context.Context) (string, string, error) {
 			res, err := h.Compile()
 			if err != nil {

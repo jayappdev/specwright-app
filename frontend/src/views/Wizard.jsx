@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { backend } from "../backend.js";
 import { Linkify } from "../FileLinks.jsx";
 import { S, update, saveProfile, toast, call, saveText, openWorkspace } from "../store.js";
@@ -7,8 +8,9 @@ import { RichText } from "../RichEditor.jsx";
 import { mdToRules, rulesToMd, rulesToHtmlDoc } from "../richtext.js";
 import { openRuleDrawer, openBulkEditor } from "./RulesEditors.jsx";
 import { PackagesCard } from "./Packages.jsx";
-import { openLibraryEditor, deleteLibrary } from "./LibraryEditor.jsx";
+import { openLibraryEditor, deleteLibrary, deleteSkillFile } from "./LibraryEditor.jsx";
 import { ToolTile, ToolGrid } from "../ToolTile.jsx";
+import { CopilotExtTiles } from "./CopilotExts.jsx";
 
 const WIZ = [["w-lang", "Language"], ["w-global", "Corporate libraries"], ["w-project", "Project skills"], ["w-folders", "Folder structure"], ["w-rules", "Rules"], ["w-tools", "Tools & extensions"], ["w-packages", "Packages & proxy"]];
 
@@ -49,6 +51,26 @@ function BuildRow({ modeKey }) {
   );
 }
 
+// The files in a project skill's folder besides SKILL.md, grouped by folder.
+function SkillFiles({ l, canEdit, scope = "project" }) {
+  const files = l.files || [], [all, setAll] = useState(false);
+  const shown = all ? files : files.slice(0, 8);
+  const openFile = (f) => openLibraryEditor(scope, /^scripts\/[^/]+$/.test(f) ? "script" : "doc", null, { skill: l.name, file: f });
+  return (
+    <div className="skill-files">
+      {files.length > 0 && <ul>{shown.map((f) => { const i = f.lastIndexOf("/"); return (
+        <li key={f}>{/^scripts\//.test(f) ? <Icon.terminal /> : <Icon.file />}
+          {canEdit ? <button className="link sf-name" title={"Edit " + f} onClick={() => openFile(f)}><span className="muted">{f.slice(0, i + 1)}</span>{f.slice(i + 1)}</button>
+            : <span className="link sf-name" role="link" tabIndex={0} data-file={(l.dir || "") + "/" + f}><span className="muted">{f.slice(0, i + 1)}</span>{f.slice(i + 1)}</span>}
+          {canEdit && <button className="sf-del" aria-label={"Delete " + f} title={"Delete " + f} onClick={() => deleteSkillFile(l.name, f, scope)}><Icon.x /></button>}</li>); })}
+        {files.length > 8 && <li><button className="link" onClick={() => setAll(!all)}>{all ? "Show fewer" : `…and ${files.length - 8} more`}</button></li>}</ul>}
+      {canEdit && <span className="sf-add">
+        <button className="link" onClick={() => openLibraryEditor(scope, "script", null, { skill: l.name })}><Icon.plus /> Script</button>
+        <button className="link" onClick={() => openLibraryEditor(scope, "doc", null, { skill: l.name })}><Icon.plus /> File or doc</button></span>}
+    </div>
+  );
+}
+
 function LibCard({ id, n, title, desc, scope, key2, modeKey }) {
   const p = S.ws.profile, sel = p[key2] || (p[key2] = []);
   const libs = (S.ws.libraries || []).filter((l) => l.scope === scope);
@@ -62,7 +84,12 @@ function LibCard({ id, n, title, desc, scope, key2, modeKey }) {
           <li key={l.id}><input type="checkbox" id={l.id} checked={sel.includes(l.id)} onChange={(e) => { e.target.checked ? sel.push(l.id) : sel.splice(sel.indexOf(l.id), 1); update(); saveProfile(); }} />
             <label className="grow" htmlFor={l.id}><b>{l.name}</b> <span className={"badge " + (l.kind === "skill" ? "badge-info" : "badge-warn")}>{l.kind}</span>
               {g && (l.managed ? <span className="badge badge-ok" title={`Signed by ${l.managed.signer} on ${new Date(l.managed.signedAt).toLocaleString()}${l.managed.source === "machine" ? " · machine catalog" : ""}`}>v{l.managed.version} · {l.managed.signer}</span> : <span className="badge" title="A file in this project only, not published by an admin">local copy</span>)}
-              <small><Linkify text={l.note || l.path} /></small></label>
+              <small><Linkify text={l.note || l.path} /></small>
+              {l.kind === "skill" && (() => {
+                // corporate skills: an unlocked admin edits the files of a published (app catalog) skill
+                const editFiles = g ? admin && !!l.managed && l.managed.source !== "machine" : canEdit;
+                return (editFiles || l.files?.length > 0) && <SkillFiles l={l} scope={scope} canEdit={editFiles} />;
+              })()}</label>
             <span className="lib-actions">
               {canEdit && !(g && l.managed?.source === "machine") && (g && !l.managed
                 ? <button className="link" title="Sign this local copy and publish it to every project" onClick={() => openLibraryEditor("global", "skill", l, { publish: true })}>Publish</button>
@@ -71,7 +98,7 @@ function LibCard({ id, n, title, desc, scope, key2, modeKey }) {
               {!canEdit && <span className="link" role="link" tabIndex={0} data-file={l.path} title={"View " + l.path}>View</span>}
             </span></li>
         ))}
-        {!libs.length && <li className="muted">{g ? (admin ? "No corporate skills yet. Publish one for every project." : "Your admin has not published any corporate skills yet.") : "No project skills or scripts yet."}</li>}
+        {!libs.length && <li className="muted">{g ? (admin ? "No corporate skills yet. Publish one for every project." : "Your admin has not published any corporate skills yet.") : <>No project skills yet. Press <b>New skill</b> to create one: it becomes a folder (<code className="inline-code">.codegen/skills/project/&lt;name&gt;/</code>) where you can then add docs in sub-folders and its own <code className="inline-code">scripts/</code>.</>}</li>}
       </ul>
       {canEdit && <div className="row-actions">
         {g ? <button className="btn secondary" onClick={() => openLibraryEditor("global", "skill", null)}><Icon.plus /> New corporate skill</button>
@@ -143,10 +170,11 @@ export function Wizard() {
               <button className="btn secondary" onClick={() => saveText("codegen-rules.html", rulesToHtmlDoc(p.rules), "text/html")}>Download rich text</button></div>
           </Card>
           <Card id="w-tools" index={6} title="Tools and extensions" badge={<span className="badge">{exts.length}</span>}>
-            <p className="wf-desc">Tools the agent may call while it runs a workflow step. Describe one in plain language and the AI writes it, tests it, and you save it. Approved <code className="inline-code">ext:*</code> npm scripts from package.json appear here too.</p>
+            <p className="wf-desc">Tools the agent may call while it runs a workflow step. Describe one in plain language and the AI writes it, tests it, and you save it. Approved <code className="inline-code">ext:*</code> npm scripts from package.json appear here too. GitHub Copilot extensions are listed below: load one into the project and its tools become project tools (marked CP) that work with any agent and in flows.</p>
             {[["managed", "Managed by admin · all projects"], ["project", "Project-specific"], ["global", "Global"]].map(([g, l]) => (
               <ToolGrid key={g} title={l} tools={exts.filter((t) => t.scope === g)} render={(t) => <ToolTile key={t.name} t={t} onOpen={() => openTool(t)}
                 action={<span className="link">{t.managed ? (S.admin?.unlocked ? "Edit" : "View") : t.status === "needs approval" ? "Review" : "Edit"}</span>} />} />))}
+            <CopilotExtTiles />
             <div className="row-actions"><button className="btn primary" onClick={() => newTool(false)}>Create a tool with AI</button><button className="btn secondary" onClick={() => newTool(true)}>Write a script myself</button></div>
           </Card>
           <PackagesCard index={7} />

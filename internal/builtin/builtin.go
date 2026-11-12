@@ -47,6 +47,7 @@ type Box struct {
 	procs    map[string]*proc
 	nextProc int
 	todos    map[string][]Todo // per workspace
+	cwd      func() string     // run_command's folder when none is given (workspace-relative)
 }
 
 // Config wires a Box to the app.
@@ -54,11 +55,15 @@ type Config struct {
 	Env      func() []string                                   // extra environment for commands
 	Trash    string                                            // where delete_path moves things
 	Problems func(ctx context.Context) (string, string, error) // build/compile for get_problems
+	// DefaultCwd is where run_command runs when the call names no cwd
+	// (workspace-relative; "" = the root), e.g. the Spec Kit project folder
+	// of the step in progress.
+	DefaultCwd func() string
 }
 
 // New returns a Box.
 func New(c Config) *Box {
-	return &Box{env: c.Env, trash: c.Trash, problems: c.Problems, procs: map[string]*proc{}, todos: map[string][]Todo{}}
+	return &Box{env: c.Env, trash: c.Trash, problems: c.Problems, cwd: c.DefaultCwd, procs: map[string]*proc{}, todos: map[string][]Todo{}}
 }
 
 // SetRoot points the tools at a workspace.

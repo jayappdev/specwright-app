@@ -28,20 +28,35 @@ var LibraryNameRE = regexp.MustCompile(`^[a-z0-9][a-z0-9._-]{0,59}$`)
 
 // ManagedLibrary is one signed corporate skill.
 type ManagedLibrary struct {
-	Name      string    `json:"name"`
-	Desc      string    `json:"desc"`
-	Content   string    `json:"content"` // SKILL.md (Markdown)
-	Version   int       `json:"version"`
-	SignedBy  string    `json:"signedBy"`
-	Signer    string    `json:"signer"`
-	SignedAt  time.Time `json:"signedAt"`
-	Signature string    `json:"signature"`
-	Status    string    `json:"status,omitempty"` // set when listed: verified | signature invalid | …
-	Source    string    `json:"source,omitempty"` // app | machine
+	Name    string `json:"name"`
+	Desc    string `json:"desc"`
+	Content string `json:"content"` // SKILL.md (Markdown)
+	// Files are the skill's other files (docs, references, scripts/…),
+	// path relative to the skill folder → text. They are signed with it.
+	Files     map[string]string `json:"files,omitempty"`
+	Version   int               `json:"version"`
+	SignedBy  string            `json:"signedBy"`
+	Signer    string            `json:"signer"`
+	SignedAt  time.Time         `json:"signedAt"`
+	Signature string            `json:"signature"`
+	Status    string            `json:"status,omitempty"` // set when listed: verified | signature invalid | …
+	Source    string            `json:"source,omitempty"` // app | machine
 }
 
-// Payload is the canonical bytes that are signed.
+// Payload is the canonical bytes that are signed. A skill with files uses
+// v2 (the files are part of it); one without keeps v1, so signatures made
+// before skills could have files still verify.
 func (m ManagedLibrary) Payload() []byte {
+	if len(m.Files) > 0 {
+		b, _ := json.Marshal(struct {
+			Name, Desc, Content string
+			Files               map[string]string // encoding/json sorts the keys
+			Version             int
+			SignedBy, Signer    string
+			SignedAt            string
+		}{m.Name, m.Desc, m.Content, m.Files, m.Version, m.SignedBy, m.Signer, m.SignedAt.UTC().Format(time.RFC3339)})
+		return append([]byte("specwright-managed-library-v2\n"), b...)
+	}
 	b, _ := json.Marshal(struct {
 		Name, Desc, Content string
 		Version             int
@@ -130,8 +145,71 @@ func (s *LibraryStore) write(ls []ManagedLibrary) error {
 	return os.Rename(tmp, s.path)
 }
 
-// Put signs and stores a library (a new version if the name exists).
-func (s *LibraryStore) Put(name, desc, content string, priv ed25519.PrivateKey, signer string) (ManagedLibrary, error) {
+// Limits for a skill's files in the catalog.
+const (
+	MaxSkillFileCount = 200
+	MaxSkillFileSize  = 1 << 20
+	MaxSkillFilesSize = 8 << 20
+)
+
+var skillSegRE = regexp.MustCompile(`^[A-Za-z0-9_][A-Za-z0-9._-]{0,79}$`)
+
+// CleanSkillPath checks a file path inside a skill folder (forward slashes,
+// at most six parts, no "..", not SKILL.md) and returns it tidied.
+func CleanSkillPath(p string) (string, error) {
+	p = strings.Trim(strings.TrimSpace(filepath.ToSlash(p)), "/")
+	if p == "" {
+		return "", errors.New("give the file a name, e.g. docs/api.md or scripts/gen.sh")
+	}
+	segs := strings.Split(p, "/")
+	if len(segs) > 6 {
+		return "", errors.New("use at most five folders inside a skill")
+	}
+	for _, s := range segs {
+		if !skillSegRE.MatchString(s) {
+			return "", fmt.Errorf("%q: folder and file names use letters, digits, '.', '-' and '_'", s)
+		}
+	}
+	if p == "SKILL.md" {
+		return "", errors.New("SKILL.md is the skill itself; edit it with Edit")
+	}
+	return p, nil
+}
+
+func checkSkillFiles(files map[string]string) error {
+	if len(files) > MaxSkillFileCount {
+		return fmt.Errorf("a skill can have at most %d files", MaxSkillFileCount)
+	}
+	total := 0
+	for p, c := range files {
+		if q, err := CleanSkillPath(p); err != nil || q != p {
+			return fmt.Errorf("bad file path %q", p)
+		}
+		if len(c) > MaxSkillFileSize {
+			return fmt.Errorf("%s is larger than %d MB", p, MaxSkillFileSize>>20)
+		}
+		total += len(c)
+	}
+	if total > MaxSkillFilesSize {
+		return fmt.Errorf("a skill's files can be at most %d MB together", MaxSkillFilesSize>>20)
+	}
+	return nil
+}
+
+// Get returns one library by name.
+func (s *LibraryStore) Get(name string) (ManagedLibrary, bool) {
+	ls, _ := s.List()
+	for _, l := range ls {
+		if l.Name == name {
+			return l, true
+		}
+	}
+	return ManagedLibrary{}, false
+}
+
+// Put signs and stores a library with its files (a new version if the
+// name exists).
+func (s *LibraryStore) Put(name, desc, content string, files map[string]string, priv ed25519.PrivateKey, signer string) (ManagedLibrary, error) {
 	name = strings.TrimSpace(name)
 	if !LibraryNameRE.MatchString(name) {
 		return ManagedLibrary{}, errors.New("name must start with a lowercase letter or digit and use lowercase letters, digits, '.', '-' and '_' (max 60)")
@@ -139,13 +217,19 @@ func (s *LibraryStore) Put(name, desc, content string, priv ed25519.PrivateKey, 
 	if strings.TrimSpace(content) == "" {
 		return ManagedLibrary{}, errors.New("the skill is empty")
 	}
+	if err := checkSkillFiles(files); err != nil {
+		return ManagedLibrary{}, err
+	}
+	if len(files) == 0 {
+		files = nil
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	ls, err := s.read()
 	if err != nil {
 		return ManagedLibrary{}, err
 	}
-	m := ManagedLibrary{Name: name, Desc: strings.TrimSpace(desc), Content: content, Version: 1}
+	m := ManagedLibrary{Name: name, Desc: strings.TrimSpace(desc), Content: content, Files: files, Version: 1}
 	idx := -1
 	for i, l := range ls {
 		if l.Name == name {

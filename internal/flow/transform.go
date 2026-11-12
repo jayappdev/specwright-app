@@ -28,6 +28,11 @@ type Data struct {
 	InputFile string `json:"inputFile,omitempty"`
 	Output    string `json:"output"` // an output's content (in actions)
 	Flow      string `json:"flow"`
+	// Files are the saved output files of the steps that ran, by step id
+	// ({{<step>.output_file}}); Names maps tool names and step titles to
+	// step ids, so {{html-report-generator.output_file}} works.
+	Files map[string]string `json:"files,omitempty"`
+	Names map[string]string `json:"names,omitempty"`
 }
 
 // Render fills {{…}} variables in tpl. Unknown variables become empty.
@@ -54,6 +59,9 @@ func lookup(v string, d Data) (string, bool) {
 		if !ok {
 			return "", false
 		}
+		if v, ok := stepField(d, id, path); ok {
+			return v, true
+		}
 		if p, ok := strings.CutPrefix(path, "json"); ok {
 			return jsonAt(s, strings.TrimPrefix(p, "."))
 		}
@@ -77,6 +85,36 @@ func lookup(v string, d Data) (string, bool) {
 		return time.Now().Format("2006-01-02"), true
 	case "now":
 		return time.Now().Format(time.RFC3339), true
+	}
+	// {{<step>.output_file}} / {{<step>.buffer_output}}: <step> is a step
+	// id, its tool's name or its title
+	if IsStepField(rest) {
+		id := head
+		if _, ok := d.Steps[id]; !ok {
+			id = d.Names[head]
+		}
+		if _, ok := d.Steps[id]; ok {
+			return stepField(d, id, rest)
+		}
+	}
+	return "", false
+}
+
+// IsStepField reports whether rest (after "<step>.") names a step's output:
+// output_file, buffer_output or buffer_output.json.<path>.
+func IsStepField(rest string) bool {
+	return rest == "output_file" || rest == "buffer_output" || strings.HasPrefix(rest, "buffer_output.json")
+}
+
+func stepField(d Data, id, rest string) (string, bool) {
+	switch {
+	case rest == "output_file":
+		return d.Files[id], true
+	case rest == "buffer_output":
+		return d.Steps[id], true
+	case strings.HasPrefix(rest, "buffer_output.json"):
+		p := strings.TrimPrefix(strings.TrimPrefix(rest, "buffer_output.json"), ".")
+		return jsonAt(d.Steps[id], p)
 	}
 	return "", false
 }

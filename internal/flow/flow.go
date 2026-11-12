@@ -380,6 +380,7 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 		add("", "error", "%s. Remove one of its connections.", strings.ToUpper(err.Error()[:1])+err.Error()[1:])
 	}
 	// templates may only use inputs, context, skills and upstream steps
+	names, ambiguous := f.StepNames()
 	checkVars := func(n Node, what, tpl string) {
 		anc := f.Ancestors(n.ID)
 		for _, v := range Vars(tpl) {
@@ -399,7 +400,24 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				}
 			case "context", "skills", "input", "input_file", "output", "flow", "date", "now":
 			default:
-				add(n.ID, "warning", "%s uses {{%s}}, which is not a known variable.", what, v)
+				if !IsStepField(rest) {
+					add(n.ID, "warning", "%s uses {{%s}}, which is not a known variable.", what, v)
+					break
+				}
+				sid := head
+				if !ids[sid] {
+					sid = names[head]
+				}
+				switch {
+				case sid == "" && ambiguous[head]:
+					add(n.ID, "error", "%s uses {{%s}}, but more than one step is called %q. Use the step's id instead.", what, v, head)
+				case sid == "":
+					add(n.ID, "error", "%s uses {{%s}}, but no step or tool is called %q.", what, v, head)
+				case sid == n.ID:
+					add(n.ID, "error", "%s uses {{%s}}: a step cannot read its own output.", what, v)
+				case !anc[sid]:
+					add(n.ID, "error", "%s uses {{%s}}, but %q does not run before this step. Connect it first.", what, v, head)
+				}
 			}
 		}
 	}
@@ -484,9 +502,48 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 	return is
 }
 
+// reservedVars cannot be step names in {{<step>.output_file}}.
+var reservedVars = map[string]bool{"inputs": true, "steps": true, "input": true, "input_file": true, "output": true, "context": true, "skills": true, "flow": true, "date": true, "now": true}
+
+// StepNames maps the names a template may use for a step to its id: the
+// tool a step runs and its title (lowercase, words joined by -), when only
+// one step has that name. ambiguous lists names shared by several steps.
+func (f *Flow) StepNames() (names map[string]string, ambiguous map[string]bool) {
+	names, ambiguous = map[string]string{}, map[string]bool{}
+	ids := map[string]bool{}
+	for _, n := range f.Nodes {
+		ids[n.ID] = true
+	}
+	add := func(name, id string) {
+		if name == "" || reservedVars[name] || ids[name] || ambiguous[name] {
+			return
+		}
+		if prev, ok := names[name]; ok && prev != id {
+			delete(names, name)
+			ambiguous[name] = true
+			return
+		}
+		names[name] = id
+	}
+	for _, n := range f.Nodes {
+		if n.Type == "tool" {
+			add(ToolRef(n.Tool), n.ID)
+		}
+		if strings.TrimSpace(n.Title) != "" {
+			add(Slug(n.Title), n.ID)
+		}
+	}
+	return names, ambiguous
+}
+
+// ToolRef is the name a tool step goes by in templates: the tool's name,
+// without the "builtin:" of a built-in tool ({{read_file.buffer_output}}).
+func ToolRef(tool string) string { return strings.TrimPrefix(tool, "builtin:") }
+
 // UsesUpstream reports whether a step's templates read any of the steps
 // connected into it ({{steps.<parent>}}) or {{input}}.
 func UsesUpstream(n Node, f *Flow) bool {
+	names, _ := f.StepNames()
 	texts := []string{n.Prompt, n.Template, n.Source, n.Expr, n.Instruction}
 	for _, v := range n.Args {
 		texts = append(texts, v)
@@ -500,6 +557,9 @@ func UsesUpstream(n Node, f *Flow) bool {
 			head, rest, _ := strings.Cut(v, ".")
 			id, _, _ := strings.Cut(rest, ".")
 			if head == "input" || head == "input_file" || (head == "steps" && parents[id]) || (head == "inputs" && parents["start"]) {
+				return true
+			}
+			if IsStepField(rest) && (parents[head] || parents[names[head]]) {
 				return true
 			}
 		}

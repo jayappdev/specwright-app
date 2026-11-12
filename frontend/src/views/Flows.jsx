@@ -4,6 +4,8 @@
 //   canvas    steps as cards; drag a card to move it, drag from its ● port to another card to connect
 //   inspector the selected step, or the flow (name, context, skills) when nothing is selected
 // Flows are saved to .codegen/flows/<id>.json (autosave). Running them comes with the executor.
+import { ModelPicker } from "../ModelPicker.jsx";
+import { stepRef, toolRef, isBuiltin } from "../flowNames.js";
 import { useEffect, useRef, useState } from "react";
 import { openFlowRunner } from "./FlowRun.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
@@ -141,7 +143,22 @@ function ancestors(flow, id) {
   const seen = new Set(), walk = (n) => parentsOf(flow, n).forEach((p) => { if (!seen.has(p)) { seen.add(p); walk(p); } });
   walk(id); return seen;
 }
-const tools = () => (S.ws?.extensions || []).filter((t) => !t.managed || t.managed.status === "verified");
+const projectTools = () => (S.ws?.extensions || []).filter((t) => !t.managed || t.managed.status === "verified");
+// built-in tools (read files, search, edit, run commands, fetch pages) run directly as steps: "builtin:<name>"
+const builtinTools = () => S.flowBuiltins || [];
+const tools = () => [...projectTools(), ...builtinTools()];
+const BUILTIN_GROUPS = [["read", "Read"], ["search", "Search"], ["edit", "Edit files"], ["execute", "Run"], ["web", "Web"]];
+const toolLabel = (name) => (isBuiltin(name) ? toolRef(name) + " · built-in" : name);
+async function loadBuiltins() {
+  try { S.flowBuiltins = (await backend.FlowBuiltinTools()) || []; } catch { S.flowBuiltins = []; }
+  update();
+}
+// a tool <select>: project tools, then built-in tools by group
+function ToolOptions() {
+  const p = projectTools(), b = builtinTools();
+  return <>{p.length > 0 && <optgroup label="Project tools">{p.map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}</optgroup>}
+    {BUILTIN_GROUPS.map(([g, l]) => { const ts = b.filter((t) => t.lang === g); return ts.length > 0 && <optgroup key={g} label={"Built-in · " + l}>{ts.map((t) => <option key={t.name} value={t.name}>{toolRef(t.name)}</option>)}</optgroup>; })}</>;
+}
 
 function uniqueId(base) {
   const ids = new Set(fl().flow.nodes.map((n) => n.id));
@@ -154,7 +171,7 @@ function uniqueId(base) {
 function addNode(spec, x, y) {
   const f = fl(), flow = f.flow;
   const right = flow.nodes.reduce((m, n) => Math.max(m, n.x), 40);
-  const n = { id: uniqueId(spec.type === "tool" ? spec.tool : spec.type), type: spec.type, title: spec.type === "tool" ? spec.tool : STEP_TYPES.find((t) => t.type === spec.type)?.name, x: snap(x ?? right + NODE_W + 60), y: snap(y ?? 120) };
+  const n = { id: uniqueId(spec.type === "tool" ? toolRef(spec.tool) : spec.type), type: spec.type, title: spec.type === "tool" ? toolRef(spec.tool) : STEP_TYPES.find((t) => t.type === spec.type)?.name, x: snap(x ?? right + NODE_W + 60), y: snap(y ?? 120) };
   if (spec.type === "tool") { n.tool = spec.tool; n.args = {}; const t = tools().find((x) => x.name === spec.tool); (t?.params || []).forEach((p) => { n.args[p.name] = ""; }); }
   if (spec.type === "ai") n.prompt = "";
   if (spec.type === "merge") { n.mode = "concat"; n.separator = "\\n\\n"; }
@@ -174,7 +191,9 @@ function addNode(spec, x, y) {
 const DATA_PARAM = /input|text|data|content|body|json|payload|items|list|query|sql|file|message|value|source|doc/i;
 // fields that expect a file path rather than the text itself
 export const FILE_PARAM = (p) => /file/i.test(p.name) && !/name$/i.test(p.name);
-const feedFor = (p, from) => (FILE_PARAM(p) ? "{{input_file}}" : `{{steps.${from}}}`);
+// a step's result: {{<tool>.output_file}} (path of the saved file) for file
+// fields, {{<tool>.buffer_output}} (the text) for the rest
+const feedFor = (p, from) => { const r = stepRef(fl().flow, from); return FILE_PARAM(p) ? `{{${r}.output_file}}` : `{{${r}.buffer_output}}`; };
 function autoWire(from, n) {
   if (n.type !== "tool" || (n.instruction || "").trim()) return "";
   const t = tools().find((x) => x.name === n.tool), a = nodeOf(from);
@@ -187,6 +206,7 @@ function autoWire(from, n) {
   }
   const pick = empty.find((p) => p.required && DATA_PARAM.test(p.name)) || empty.find((p) => DATA_PARAM.test(p.name)) || empty.find((p) => p.required);
   if (pick) { args[pick.name] = feedFor(pick, from); return FILE_PARAM(pick) ? `“${pick.name}” of ${n.title || n.tool} gets a file with the result of ${a.title || a.id}.` : `Passing the result of ${a.title || a.id} into “${pick.name}” of ${n.title || n.tool}.`; }
+  if (isBuiltin(n.tool)) return `Use the ← ${a.title || a.id} button on a field of ${n.title || toolRef(n.tool)} to pass the result in (built-in tools read their fields only).`;
   return `${n.title || n.tool} gets the result of ${a.title || a.id} automatically (piped in).`;
 }
 
@@ -215,13 +235,14 @@ function removeSelected() {
   f.sel = null; changed();
 }
 
-// rename a step and every {{steps.<id>…}} that refers to it
+// rename a step and every {{steps.<id>…}} / {{<id>.output_file|buffer_output}} that refers to it
 function renameNode(n, id) {
   const flow = fl().flow;
   id = id.replace(/[^A-Za-z0-9_-]/g, "");
   if (!id || !/^[A-Za-z]/.test(id) || flow.nodes.some((x) => x.id === id && x !== n)) return toast("Step ids start with a letter and must be unique.");
   const re = new RegExp("\\{\\{\\s*steps\\." + n.id.replace(/[-]/g, "\\-") + "(?=[.}\\s])", "g"), rep = "{{steps." + id;
-  const fix = (s) => (typeof s === "string" ? s.replace(re, rep) : s);
+  const re2 = new RegExp("\\{\\{(\\s*)" + n.id.replace(/[-]/g, "\\-") + "\\.(output_file|buffer_output)", "g");
+  const fix = (s) => (typeof s === "string" ? s.replace(re, rep).replace(re2, "{{$1" + id + ".$2") : s);
   for (const x of flow.nodes) {
     for (const k of ["prompt", "template", "source", "expr"]) if (x[k]) x[k] = fix(x[k]);
     if (x.args) for (const k in x.args) x.args[k] = fix(x.args[k]);
@@ -250,7 +271,9 @@ function VarChips({ node, extra = [] }) {
   const f = fl(), flow = f.flow;
   const anc = node ? [...ancestors(flow, node.id)].filter((id) => id !== "start") : [];
   const fed = node && parentsOf(flow, node.id).some((p) => p !== "start");
-  const vars = [...flow.inputs.map((i) => ["inputs." + i.name, i.label || i.name]), ...anc.map((id) => ["steps." + id, nodeOf(id)?.title || id]), ...(fed && node.type === "tool" ? [["input_file", "previous result, as a file"]] : []), ["context", "context"], ["skills", "skills"], ...extra.map((v) => [v, v])];
+  const vars = [...flow.inputs.map((i) => ["inputs." + i.name, i.label || i.name]),
+    ...anc.flatMap((id) => { const r = stepRef(flow, id), l = nodeOf(id)?.title || nodeOf(id)?.tool || id; return [[r + ".buffer_output", l + " · text"], [r + ".output_file", l + " · file"]]; }),
+    ...(fed && node.type === "tool" ? [["input_file", "connected steps, as a file"]] : []), ["context", "context"], ["skills", "skills"], ...extra.map((v) => [v, v])];
   return <div className="fl-vars"><span className="muted">Insert:</span>{vars.map(([v, l]) => <button key={v} type="button" className="fl-var" title={`{{${v}}}`} onMouseDown={(e) => e.preventDefault()} onClick={() => insertVar(v)}>{l}</button>)}</div>;
 }
 
@@ -259,7 +282,8 @@ function VarChips({ node, extra = [] }) {
 // that takes it on standard input only.
 function edgeLabel(a, b) {
   if (b.type !== "tool") return "";
-  const re = new RegExp("\\{\\{\\s*" + (a.type === "start" ? "inputs\\." : "(steps\\." + a.id.replace(/[-]/g, "\\-") + "|input_file|input)") + "(?=[.}\\s])");
+  const esc = (x) => x.replace(/[-.*+?^${}()|[\]\\]/g, "\\$&"), r = esc(stepRef(fl().flow, a.id)), id = esc(a.id);
+  const re = new RegExp("\\{\\{\\s*" + (a.type === "start" ? "inputs\\." : "(steps\\." + id + "|input_file|input|(" + r + "|" + id + ")\\.(output_file|buffer_output))") + "(?=[.}\\s])");
   const used = Object.entries(b.args || {}).filter(([, v]) => re.test(v)).map(([k]) => k);
   if (used.length) return "→ " + used.join(", ");
   if ((b.instruction || "").trim()) return "→ AI";
@@ -313,7 +337,7 @@ function Canvas() {
         </svg>
         {flow.nodes.map((n) => {
           const is = issuesFor(n.id), err = is.some((i) => i.level === "error");
-          const sub = n.type === "tool" ? (n.instruction?.trim() ? "✦ " + n.instruction.trim().slice(0, 44) : n.tool) : n.type === "start" ? `${flow.inputs.length} input${flow.inputs.length === 1 ? "" : "s"}` : n.type === "transform" ? (f.ops?.ops?.[n.op]?.name || n.op) : n.type === "merge" ? (MERGE_MODES.find(([m]) => m === n.mode)?.[1] || n.mode) : n.type === "output" ? (n.format || "").toUpperCase() + " · " + (n.actions || []).map((a) => a.type).join(", ") : n.type === "ai" ? (n.prompt || "").slice(0, 40) || "No prompt yet" : "";
+          const sub = n.type === "tool" ? (n.instruction?.trim() ? "✦ " + n.instruction.trim().slice(0, 44) : toolLabel(n.tool)) : n.type === "start" ? `${flow.inputs.length} input${flow.inputs.length === 1 ? "" : "s"}` : n.type === "transform" ? (f.ops?.ops?.[n.op]?.name || n.op) : n.type === "merge" ? (MERGE_MODES.find(([m]) => m === n.mode)?.[1] || n.mode) : n.type === "output" ? (n.format || "").toUpperCase() + " · " + (n.actions || []).map((a) => a.type).join(", ") : n.type === "ai" ? (n.prompt || "").slice(0, 40) || "No prompt yet" : "";
           return (
             <div key={n.id} data-node={n.id} className={"fl-node t-" + n.type + (f.sel === n.id ? " sel" : "") + (err ? " has-err" : is.length ? " has-warn" : "") + (link ? " linking" : "")}
               style={{ left: n.x, top: n.y, width: NODE_W }}
@@ -338,7 +362,8 @@ function Canvas() {
 // --- palette ---------------------------------------------------------------------------
 
 function Palette() {
-  const f = fl(), ts = tools().filter((t) => !f.q || (t.name + " " + t.desc).toLowerCase().includes(f.q.toLowerCase()));
+  const f = fl(), match = (t) => !f.q || (t.name + " " + t.desc).toLowerCase().includes(f.q.toLowerCase());
+  const ts = projectTools().filter(match), bs = builtinTools().filter(match);
   const item = (spec, label, sub, icon) => (
     <div key={label} className="fl-pal-item" draggable title={sub} role="button" tabIndex={0}
       onDragStart={(e) => { e.dataTransfer.setData("application/x-flow-step", JSON.stringify(spec)); e.dataTransfer.effectAllowed = "copy"; }}
@@ -349,10 +374,13 @@ function Palette() {
     <aside className="fl-palette" aria-label="Steps and tools">
       <div className="tree-folder">Steps</div>
       {STEP_TYPES.map((s) => item({ type: s.type }, s.name, s.help, <StepIcon n={{ type: s.type }} tools={[]} size={30} />))}
-      <div className="tree-folder">Tools · {tools().length}</div>
       <input className="fl-search" placeholder="Filter tools" value={f.q} onChange={(e) => { f.q = e.target.value; update(); }} />
+      <div className="tree-folder">Project tools · {projectTools().length}</div>
       {ts.map((t) => item({ type: "tool", tool: t.name }, t.name, t.desc, <ToolIcon t={t} size={30} />))}
-      {!tools().length && <p className="muted" style={{ padding: "0 6px" }}>No tools yet. Create one on the Tools screen.</p>}
+      {!projectTools().length && <p className="muted" style={{ padding: "0 6px" }}>No tools yet. Create one on the Tools screen.</p>}
+      <div className="tree-folder" title="Built into SpecWright: they run directly in the project, without the AI">Built-in tools · {builtinTools().length}</div>
+      {bs.map((t) => item({ type: "tool", tool: t.name }, toolRef(t.name), t.desc.replace(/^[^:]*:\s*/, ""), <ToolIcon t={t} size={30} />))}
+      {!!f.q && !ts.length && !bs.length && <p className="muted" style={{ padding: "0 6px" }}>No tool matches “{f.q}”.</p>}
       <p className="muted fl-pal-hint">Drag onto the canvas, or click to add after the selected step.</p>
     </aside>
   );
@@ -435,10 +463,13 @@ function ArgsEditor({ node, args, toolName, extraVars, aiFills }) {
     {node && feeders.length > 0 && extraVars == null && <div className="fl-receives"><Icon.workflow /> This step gets the result of {feeders.map((x) => <b key={x.id}>{x.title || x.id}</b>).reduce((a, b) => [a, ", ", b])} automatically{aiFills ? ", and the AI uses it when it fills in the fields" : ""}.
       {!aiFills && <> To put that result into a field below, click <b>← {feeders[0].title || feeders[0].id}</b> next to the field.</>}
       <details className="fl-how"><summary>How is it passed?</summary>
-        <ul><li><b>Into a field as text:</b> the field is set to <code className="inline-code" data-nofile>{`{{steps.${feeders[0].id}}}`}</code>.</li>
-          <li><b>Into a field that wants a file</b> (like <code className="inline-code" data-nofile>content_file</code>): the field is set to <code className="inline-code" data-nofile>{"{{input_file}}"}</code>, which becomes the path of a temporary file holding the result. The ← button does this for fields with “file” in their name.</li>
-          <li><b>Without a field:</b> tools that read piped data (like <code className="inline-code" data-nofile>jq</code> or <code className="inline-code" data-nofile>grep</code>) get it as their input, as with <code className="inline-code" data-nofile>a | b</code> in a terminal.</li></ul></details></div>}
-    {t.params.map((p) => <Field key={p.name} label={<>{p.name}{p.required && !aiFills ? " *" : ""} <span className="muted">· {p.type}</span>{extraVars == null && feeders.map((x) => <button key={x.id} type="button" className="fl-use" title={FILE_PARAM(p) ? `Give ${p.name} a file holding the result of ${x.title || x.id}` : `Put the result of ${x.title || x.id} into ${p.name}`} onClick={(e) => { e.preventDefault(); args[p.name] = FILE_PARAM(p) && feeders.length === 1 ? "{{input_file}}" : `{{steps.${x.id}}}`; changed(); }}>← {x.title || x.id}{FILE_PARAM(p) ? " (as a file)" : ""}</button>)}</>} hint={p.desc}>
+        <ul><li><b>Into a field as text:</b> <code className="inline-code" data-nofile>{`{{${stepRef(flow, feeders[0].id)}.buffer_output}}`}</code> is the result itself.</li>
+          <li><b>Into a field that wants a file</b> (like <code className="inline-code" data-nofile>content_file</code>): <code className="inline-code" data-nofile>{`{{${stepRef(flow, feeders[0].id)}.output_file}}`}</code> is the path of the file the result is saved in (in the run's results folder). The ← button picks this for fields with “file” in their name.</li>
+          <li><b>From any earlier step,</b> not only the one connected here: use its tool's name (or its title, or its id), e.g. <code className="inline-code" data-nofile>{"{{html-report-generator.output_file}}"}</code>. The Insert chips below list them.</li>
+          <li><code className="inline-code" data-nofile>{"{{input_file}}"}</code> still works: a file holding the results of every step connected into this one.</li>
+          {!isBuiltin(t.name) && <li><b>Without a field:</b> tools that read piped data (like <code className="inline-code" data-nofile>jq</code> or <code className="inline-code" data-nofile>grep</code>) get it as their input, as with <code className="inline-code" data-nofile>a | b</code> in a terminal.</li>}
+          {isBuiltin(t.name) && <li><b>Built-in tools</b> only read their fields: put the result into one (← button) or name a file from it.</li>}</ul></details></div>}
+    {t.params.map((p) => <Field key={p.name} label={<>{p.name}{p.required && !aiFills ? " *" : ""} <span className="muted">· {p.type}</span>{extraVars == null && feeders.map((x) => <button key={x.id} type="button" className="fl-use" title={FILE_PARAM(p) ? `Give ${p.name} a file holding the result of ${x.title || x.id}` : `Put the result of ${x.title || x.id} into ${p.name}`} onClick={(e) => { e.preventDefault(); args[p.name] = feedFor(p, x.id); changed(); }}>← {x.title || x.id}{FILE_PARAM(p) ? " (as a file)" : ""}</button>)}</>} hint={p.desc}>
     {long(p) ? <textarea rows={3} value={args[p.name] || ""} placeholder={aiFills ? "AI fills this (or type a value to fix it)" : p.required ? "Required" : "Optional"} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => { args[p.name] = e.target.value; changed(); }} />
       : <input value={args[p.name] || ""} placeholder={aiFills ? "AI fills this (or type a value to fix it)" : p.required ? "Required" : "Optional"} {...track} onChange={(e) => { args[p.name] = e.target.value; changed(); }} />}</Field>)}
     <VarChips node={node} extra={extraVars} /></>;
@@ -490,17 +521,18 @@ function StepInspector({ n }) {
   const opGroups = Object.entries(ops).reduce((g, [id, o]) => ((g[o.group] ||= []).push([id, o]), g), {});
   const op = ops[n.op] || {};
   return <>
-    <div className="fl-insp-head"><StepIcon n={n} tools={tools()} size={36} /><div><h3>{n.title || n.id}</h3><small className="muted">{n.type === "tool" ? "Tool" : STEP_TYPES.find((t) => t.type === n.type)?.name || "Inputs"}</small></div>
+    <div className="fl-insp-head"><StepIcon n={n} tools={tools()} size={36} /><div><h3>{n.title || n.id}</h3><small className="muted">{n.type === "tool" ? (isBuiltin(n.tool) ? "Built-in tool" : "Tool") : STEP_TYPES.find((t) => t.type === n.type)?.name || "Inputs"}</small></div>
       {n.type !== "start" && <button className="link" style={{ marginLeft: "auto" }} onClick={removeSelected}>Delete</button>}</div>
     {issues.map((i, k) => <div key={k} className={"banner " + (i.level === "error" ? "error" : "")}>{i.message}</div>)}
     {n.type === "start" ? <InputsEditor /> : <>
       <div className="fl-row">
         <Field label="Title"><input value={n.title || ""} onChange={(e) => set("title", e.target.value)} /></Field>
-        <Field label="Step id" hint="Used as {{steps.id}}"><input defaultValue={n.id} key={n.id} style={{ fontFamily: "var(--font-mono)" }} onBlur={(e) => e.target.value !== n.id && renameNode(n, e.target.value)} /></Field>
+        <Field label="Step id" hint={`Later steps read it as {{${stepRef(fl().flow, n.id)}.buffer_output}} (text) or {{${stepRef(fl().flow, n.id)}.output_file}} (file)`}><input defaultValue={n.id} key={n.id} style={{ fontFamily: "var(--font-mono)" }} onBlur={(e) => e.target.value !== n.id && renameNode(n, e.target.value)} /></Field>
       </div>
       {n.type === "tool" && <>
         <Field label="Tool"><select value={n.tool || ""} onChange={(e) => { n.tool = e.target.value; n.args = {}; const t = tools().find((x) => x.name === n.tool); (t?.params || []).forEach((p) => { n.args[p.name] = ""; }); changed(); }}>
-          <option value="">Choose…</option>{tools().map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}</select></Field>
+          <option value="">Choose…</option><ToolOptions /></select></Field>
+        {isBuiltin(n.tool) && <p className="muted fl-builtin-desc">{(tools().find((x) => x.name === n.tool)?.desc || "").replace(/^[^:]*:\s*/, "")} <span>Built into SpecWright; runs in the project without the AI.</span></p>}
         {n.tool && (() => {
           const describe = n.instruction != null || f.describe?.[n.id];
           const t = tools().find((x) => x.name === n.tool);
@@ -523,7 +555,7 @@ function StepInspector({ n }) {
       {n.type === "ai" && <>
         <Field label="Prompt" hint="The flow's context and skills are added automatically."><textarea rows={8} value={n.prompt || ""} placeholder="e.g. Write a specification for {{inputs.ticket}} from {{steps.jira}}. Follow the skills." {...track} onChange={(e) => set("prompt", e.target.value)} /></Field>
         <VarChips node={n} />
-        <Field label="Model (optional)"><input value={n.model || ""} placeholder="the agent's default" onChange={(e) => set("model", e.target.value)} /></Field>
+        <div className="field fl-field"><span className="muted">Model</span><ModelPicker value={n.model || ""} onChange={(v) => set("model", v)} label="Model" /><small className="muted">Default: the model chosen when the flow runs, else the app's model.</small></div>
       </>}
       {n.type === "merge" && <>
         <Field label="How to merge"><select value={n.mode || "concat"} onChange={(e) => set("mode", e.target.value)}>{MERGE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
@@ -554,7 +586,7 @@ function StepInspector({ n }) {
               <option value="save">Save to a file</option><option value="tool">Call a tool</option><option value="clipboard">Copy to the clipboard</option><option value="show">Show the result</option></select>
               <button className="icon-btn fl-del" title="Remove action" onClick={() => { n.actions.splice(k, 1); changed(); }}><Icon.x /></button></div>
             {a.type === "save" && <Field label="File (in the project)" hint={`e.g. out/{{inputs.ticket}}.${n.format || "md"}`}><input value={a.path || ""} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => { a.path = e.target.value; changed(); }} /></Field>}
-            {a.type === "tool" && <><Field label="Tool"><select value={a.tool || ""} onChange={(e) => { a.tool = e.target.value; a.args = {}; changed(); }}><option value="">Choose…</option>{tools().map((t) => <option key={t.name} value={t.name}>{t.name}</option>)}</select></Field>
+            {a.type === "tool" && <><Field label="Tool"><select value={a.tool || ""} onChange={(e) => { a.tool = e.target.value; a.args = {}; changed(); }}><option value="">Choose…</option><ToolOptions /></select></Field>
               {a.tool && <ArgsEditor node={n} args={(a.args ||= {})} toolName={a.tool} extraVars={["output"]} />}</>}
           </div>))}
         <div className="row-actions">{[["save", "Save"], ["tool", "Call tool"], ["clipboard", "Copy"], ["show", "Show"]].map(([t, l]) => <button key={t} className="btn secondary" onClick={() => { n.actions.push({ type: t, ...(t === "save" ? { path: `out/${flow.id}.${n.format || "md"}` } : {}) }); changed(); }}><Icon.plus /> {l}</button>)}</div>
@@ -585,7 +617,7 @@ function Issues() {
 
 export function Flows() {
   const f = fl(), imp = useRef(null);
-  useEffect(() => { if (S.ws) { loadList(); refreshExtensions(); } }, [S.ws?.root]);
+  useEffect(() => { if (S.ws) { loadList(); refreshExtensions(); loadBuiltins(); } }, [S.ws?.root]);
   useEffect(() => { if (S.ws && f.list?.length && !f.flow && !f.id) openFlow(f.list[0].id); }, [f.list]);
   useEffect(() => () => { if (fl().dirty) save(); }, []);
   if (!S.ws) return <NeedWorkspace what="the flow designer" />;

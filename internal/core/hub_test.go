@@ -2,6 +2,7 @@ package core
 
 import (
 	"bytes"
+	"codegen/internal/speckit"
 	"codegen/internal/workflow"
 	"context"
 	"encoding/json"
@@ -68,6 +69,7 @@ func waitFor(t *testing.T, ch <-chan bus.Event, runID, typ string) bus.Event {
 
 func TestStepGateChangesApprove(t *testing.T) {
 	h, _ := newHub(t)
+	specKitReady(t, h)
 	ch, unsub := h.Bus.Subscribe(4096, nil)
 	defer unsub()
 	if _, err := h.RunStep("specify"); err == nil {
@@ -102,7 +104,8 @@ func TestStepGateChangesApprove(t *testing.T) {
 	evs, _ := h.RunEvents(id)
 	sawFile := false
 	for _, e := range evs {
-		if e.Type == "fs.write" && e.Str("path") == ".specify/memory/constitution.md" {
+		// the template's blank constitution is filled in: an edit (fs.write if it was missing)
+		if (e.Type == "fs.write" || e.Type == "fs.edit") && e.Str("path") == ".specify/memory/constitution.md" {
 			sawFile = true
 		}
 	}
@@ -117,6 +120,7 @@ func TestStepGateChangesApprove(t *testing.T) {
 
 func TestLoopPausesRun(t *testing.T) {
 	h, _ := newHub(t)
+	specKitReady(t, h)
 	ch, unsub := h.Bus.Subscribe(4096, nil)
 	defer unsub()
 	setInput(t, h, "constitution", "[mock:loop]")
@@ -137,6 +141,7 @@ func TestLoopPausesRun(t *testing.T) {
 
 func TestBudgetStopsRun(t *testing.T) {
 	h, _ := newHub(t)
+	specKitReady(t, h)
 	ch, unsub := h.Bus.Subscribe(4096, nil)
 	defer unsub()
 	setInput(t, h, "constitution", "x")
@@ -443,5 +448,24 @@ func TestRulesDocsAndMultilineRules(t *testing.T) {
 	prompt, _ := h.Compose("constitution", "")
 	if !strings.Contains(prompt, "- R-001: Money uses **BigDecimal**:\n  \n  - round half-even") {
 		t.Fatalf("multi-line rule must stay under its bullet:\n%s", prompt)
+	}
+}
+
+// specKitReady sets the test project up with the bundled Spec Kit template.
+func specKitReady(t *testing.T, h *Hub) {
+	t.Helper()
+	seedSpecKit(t, h)
+	if _, err := h.InitSpecKit("", "claude"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// seedSpecKit puts a downloaded Spec Kit in the hub's cache (no network).
+func seedSpecKit(t *testing.T, h *Hub) {
+	t.Helper()
+	for _, in := range speckit.Integrations {
+		if err := speckit.WriteSample(h.skCache().Source("1.4.0", in), in, "1.4.0"); err != nil {
+			t.Fatal(err)
+		}
 	}
 }

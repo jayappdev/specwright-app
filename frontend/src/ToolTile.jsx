@@ -51,8 +51,15 @@ export function toolCategory(t) {
   return DEFAULT;
 }
 
+// built-in tools: by what they do (read, search, edit, run, web)
+const BUILTIN_CAT = { read: "docs", search: "search", edit: "generate", execute: "terminal", web: "api" };
+function categoryOf(t) {
+  if (t.kind === "builtin") return CATEGORIES.find((c) => c.id === BUILTIN_CAT[t.lang]) || DEFAULT;
+  return toolCategory(t);
+}
+
 export function ToolIcon({ t, size = 40 }) {
-  const c = toolCategory(t), lang = t.kind === "npm" ? "npm" : LANG[t.lang] || "";
+  const c = categoryOf(t), lang = t.kind === "npm" ? "npm" : t.kind === "copilot" ? "CP" : t.kind === "builtin" ? "SW" : LANG[t.lang] || "";
   return (
     <span className="tool-icon" style={{ "--tc": `var(${c.color})`, width: size, height: size }} title={c.name}>
       <c.Icon />

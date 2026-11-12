@@ -86,6 +86,7 @@ export function eventGlyph(e) {
     case "run.retry": return "repeat";
     case "prompt.compose": return "doc";
     case "secret.request": case "secret.resolved": return "key";
+    case "permission.request": case "permission.resolved": return "shield";
     case "loop.detected": case "budget.exceeded": case "error": return "warn";
     case "build.start": case "build.line": case "build.end": return "build";
   }

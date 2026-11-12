@@ -21,6 +21,10 @@ func (p *prov) Builtins() []BuiltinInfo { return nil }
 func (p *prov) RunBuiltin(context.Context, string, map[string]any) (string, error) {
 	return "", nil
 }
+func (p *prov) AskPermission(context.Context, PermissionRequest) PermissionAnswer {
+	return PermissionAnswer{Message: "test"}
+}
+
 func (p *prov) ResolveSecrets(context.Context, Extension) (map[string]string, error) {
 	return map[string]string{"GREETING": "hello"}, nil
 }

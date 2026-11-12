@@ -61,6 +61,10 @@ type Run struct {
 // Usage returns a copy of the run's usage so far.
 func (r *Run) Usage() store.Usage { r.mu.Lock(); defer r.mu.Unlock(); return r.usage }
 
+// AddUsage adds usage from outside the agent's own stream, e.g. the AI a
+// tool the agent called used itself.
+func (r *Run) AddUsage(u store.Usage) { r.mu.Lock(); r.usage.Add(u); r.mu.Unlock() }
+
 // Done is closed when the run reaches a terminal state.
 func (r *Run) Done() <-chan struct{} { return r.done }
 
@@ -86,6 +90,10 @@ type StartOptions struct {
 	Title   string
 	Ask     string
 	Parents []string
+	// Dir is the agent's working directory when it is not the workspace
+	// (a Spec Kit project folder inside it); AddDirs are opened to it too.
+	Dir     string
+	AddDirs []string
 }
 
 // NewRunID returns a unique, sortable run id: the local date and time the
@@ -271,7 +279,11 @@ func (rn *Runner) once(parent context.Context, run *Run, drv agent.Driver, o Sta
 	ctx, cancel := context.WithCancelCause(parent)
 	defer cancel(nil)
 	det := loop.New(rn.LoopConfig)
-	req := agent.Request{Purpose: "step", Step: run.Session.Step, Prompt: prompt, Dir: rn.Workspace, Model: o.Model,
+	dir := rn.Workspace
+	if o.Dir != "" {
+		dir = o.Dir
+	}
+	req := agent.Request{Purpose: "step", Step: run.Session.Step, Prompt: prompt, Dir: dir, AddDirs: o.AddDirs, Model: o.Model,
 		AllowTools: []string{"mcp__agentbridge"}} // every agentbridge tool: built-ins + extension_managed
 	if rn.Env != nil {
 		req.Env = rn.Env()

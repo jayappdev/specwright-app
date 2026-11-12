@@ -9,10 +9,12 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strings"
 	"time"
 
 	"codegen/internal/agent"
+	"codegen/internal/aishim"
 	"codegen/internal/bus"
 	"codegen/internal/extension"
 )
@@ -87,12 +89,36 @@ func (h *Hub) Observe(name string, args map[string]any, res extension.RunResult)
 	}
 	e := bus.Event{Type: "ext.result", Summary: fmt.Sprintf("%s → exit %d", name, res.ExitCode),
 		Data: map[string]any{"name": name, "args": args, "ok": res.OK, "exit_code": res.ExitCode, "duration_ms": res.DurationMS, "output": trunc(res.Output, 2000)}}
+	u, ev, used := toolAIUsage(name, res.AI)
 	if a := h.activeRun(); a != nil {
 		e.RunID, e.Step = a.Session.ID, a.Session.Step
 		_ = h.Store.Append(h.Bus.Publish(e))
+		if used { // the AI the tool used itself counts towards the run
+			a.AddUsage(u)
+			ev.RunID, ev.Step = a.Session.ID, a.Session.Step
+			_ = h.Store.Append(h.Bus.Publish(ev))
+		}
 		return
 	}
 	h.Bus.Publish(e)
+	if used {
+		h.Bus.Publish(ev)
+	}
+}
+
+// AllowedNow implements extension.ToolFilter: during a spec workflow step,
+// only the tools chosen on Choose input (when a choice was made).
+func (h *Hub) AllowedNow(name string) bool {
+	a := h.activeRun()
+	if a == nil || a.Session.Step == PlaygroundStep {
+		return true
+	}
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.wf == nil || h.wf.Context.Tools == nil {
+		return true
+	}
+	return slices.Contains(*h.wf.Context.Tools, name)
 }
 
 // Prepare implements extension.Provider: install a saved tool's packages.
@@ -111,7 +137,13 @@ func (h *Hub) Prepare(ctx context.Context, e extension.Extension) error {
 }
 
 // Env implements extension.Provider.
-func (h *Hub) Env() []string { return h.packageSettings().Env(h.Root()) }
+func (h *Hub) Env() []string {
+	env := h.packageSettings().Env(h.Root())
+	if h.aiShimDir != "" {
+		env = append(env, aishim.EnvDir+"="+h.aiShimDir)
+	}
+	return env
+}
 
 func (h *Hub) mcpConfig(extensions bool) (string, func(), error) {
 	p, err := h.Bridge.WriteMCPConfig(filepath.Join(h.Store.Dir(), "tmp"), extensions)
@@ -164,6 +196,9 @@ func (h *Hub) SaveExtension(e extension.Extension) (extension.Extension, error) 
 	if extension.IsManagedScope(e.Scope) || e.Managed != nil || h.isManagedName(e.Name) {
 		return e, managedRefusal(e.Name)
 	}
+	if e.Kind == extension.KindCopilot {
+		return e, errors.New(e.Name + " comes from a Copilot extension: change its files in " + e.Dir + ", then approve it again")
+	}
 	if e.Scope == "global" && (e.LastTest == nil || !e.LastTest.Pass) {
 		return e, errors.New("global tools must pass a test before they can be submitted")
 	}
@@ -187,6 +222,24 @@ func (h *Hub) ApproveExtension(name string) (extension.Extension, error) {
 	}
 	if h.isManagedName(name) {
 		return extension.Extension{}, managedRefusal(name)
+	}
+	if e, err := h.exts.Get(name); err == nil && e.Kind == extension.KindCopilot {
+		// approving one tool of a Copilot extension approves the extension:
+		// its tools are read again from its current files
+		x, err := extension.CopilotExtOf(h.Root(), e)
+		if err != nil {
+			return e, err
+		}
+		tools, err := h.approveCopilotExt(h.Root(), x.Name)
+		if err != nil {
+			return e, err
+		}
+		for _, t := range tools {
+			if t.Tool == e.Tool {
+				return t, nil
+			}
+		}
+		return tools[0], nil
 	}
 	return h.exts.Approve(name)
 }
@@ -453,12 +506,13 @@ func firstJSON(s string) string {
 // available, then checks that it picked the tool, the call succeeded and
 // no secret leaked.
 func (h *Hub) TestExtension(d extension.Extension, question string) (extension.TestResult, error) {
-	return h.TestExtensionWith(d, question, nil)
+	return h.TestExtensionWith(d, question, nil, "")
 }
 
 // TestExtensionWith is TestExtension with files attached to the question
 // (workspace paths returned by SaveAttachment).
-func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []string) (extension.TestResult, error) {
+// model overrides the agent's model for this test ("" = the app's setting).
+func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []string, model string) (extension.TestResult, error) {
 	root, err := h.need()
 	if err != nil {
 		return extension.TestResult{}, err
@@ -472,6 +526,8 @@ func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []
 	var installLog []string
 	tr := extension.TestResult{At: time.Now()}
 	switch {
+	case d.Kind == extension.KindCopilot:
+		// runs from its extension folder; packages are installed there on first use
 	case d.Kind != "npm" && extension.HasDeps(d):
 		// folder layout: write the tool and its manifest, then install its
 		// packages through the workspace's proxy and registries
@@ -515,7 +571,8 @@ func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []
 	calls := make(chan testCall, 8)
 	h.mu.Lock()
 	h.testCalls = calls
-	name, model := h.agentName, h.model
+	name := h.agentName
+	model = firstNonEmpty(model, h.model)
 	h.mu.Unlock()
 	defer func() { h.mu.Lock(); h.testCalls = nil; h.mu.Unlock() }()
 

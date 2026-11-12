@@ -50,6 +50,9 @@ func (c *Claude) Args(req Request) []string {
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
 	}
+	if len(req.AddDirs) > 0 {
+		args = append(args, append([]string{"--add-dir"}, req.AddDirs...)...)
+	}
 	if req.MCPConfig != "" {
 		// SpecWright's run_command replaces Claude's own Bash: in -p mode
 		// Bash can only run pre-approved read-only commands, so builds and
@@ -57,6 +60,9 @@ func (c *Claude) Args(req Request) []string {
 		// run_command runs in the workspace with the proxy/registry
 		// environment and a timeout, and shows up in the run's activity.
 		args = append(args, "--mcp-config", req.MCPConfig, "--disallowedTools", "Bash")
+		// Tools without standing permission would otherwise be denied in
+		// -p mode with nobody asked; the bridge asks the user in the app.
+		args = append(args, "--permission-prompt-tool", "mcp__agentbridge__permission_prompt")
 	}
 	if len(req.AllowTools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(req.AllowTools, " "))

@@ -44,7 +44,7 @@ export function phaseOf(evs = []) {
       case "run.retry": return "Retrying";
       case "run.start": return "Starting";
       case "ext.install": case "ext.install.line": return "Installing packages";
-      case "secret.request": return "Waiting for you";
+      case "secret.request": case "permission.request": return "Waiting for you";
     }
   }
   return "Starting";

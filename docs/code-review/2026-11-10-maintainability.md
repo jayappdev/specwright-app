@@ -44,9 +44,9 @@ A whole-codebase review of SpecWright, recorded as a backlog to work through. Ti
 - **Evidence:** the folder is not a git repository. A stray 12 MB `headless` binary (from a test build) and `.DS_Store` sit in the repo root.
 - **Why it matters:** no history, no undo, no review, no branches; every other change is riskier without it.
 - **Fix:**
-  - [ ] `git init`, first commit.
-  - [ ] Extend `.gitignore`: `/headless`, `.DS_Store`, `frontend/node_modules`, `frontend/.dev`, `frontend/dist` (decide: committed or built in CI), `build/bin`, `design/`.
-  - [ ] Delete the stray `headless` binary.
+  - [x] `git init`, first commit, pushed to github.com/jayappdev/specwright-app (`5e710b8`).
+  - [x] Extend `.gitignore`: binaries, `.DS_Store`, `frontend/node_modules`, `frontend/.dev`, `frontend/dist` (built; a `.gitkeep` keeps `go:embed` compiling), `build/bin`, `design/`, `.claude/`.
+  - [ ] Delete the stray `headless` binary (ignored, so it is not committed).
 
 ### P2. The browser mock duplicates backend logic
 - **Evidence:** `frontend/src/mockBackend.js` reimplements flow validation, transforms, format conversion, the flow executor, the results writer, conversation context, secrets resolution and library scanning (`validateFlow`, `transform`, `convert`, `render`, `jpath`, `startFlowRun`, `writeResults`, `contextFor`, `resolveSecrets`, …).
@@ -142,7 +142,7 @@ A whole-codebase review of SpecWright, recorded as a backlog to work through. Ti
 ## Suggested order
 
 1. **This week**
-   - [ ] P1: `git init`, `.gitignore`, drop the stray binary
+   - [x] P1: `git init`, `.gitignore` (stray binary still to delete locally)
    - [ ] P5: Prettier + ESLint, one formatting pass
    - [ ] Makefile + CI
    - [ ] P7: approval for flow commands from imported flows

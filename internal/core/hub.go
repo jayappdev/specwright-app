@@ -11,15 +11,18 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
 	"time"
 
 	"codegen/internal/agent"
+	"codegen/internal/aishim"
 	"codegen/internal/bus"
 	"codegen/internal/extension"
 	"codegen/internal/session"
+	"codegen/internal/speckit"
 	"codegen/internal/store"
 	"codegen/internal/watch"
 	"codegen/internal/workflow"
@@ -63,20 +66,36 @@ type Hub struct {
 	Clipboard func(string) error
 	// admin mode: the decrypted signing key for this session (nil = locked)
 	// and the app-wide catalog of managed tools (global, not per workspace)
-	adminPriv  ed25519.PrivateKey
-	adminName  string
-	managed    *extension.ManagedStore
-	libs       *extension.LibraryStore // corporate (global) libraries
-	tools      *builtin.Box            // built-in agent tools (read_file, edit_file, …)
+	adminPriv ed25519.PrivateKey
+	adminName string
+	managed   *extension.ManagedStore
+	libs      *extension.LibraryStore // corporate (global) libraries
+	tools     *builtin.Box            // built-in agent tools (read_file, edit_file, …)
+	aiShimDir string                  // claude/copilot launchers put first on tools' PATH ("" = off)
+	// Spec Kit download (see speckit.go)
+	skMu       sync.Mutex
+	skRunning  bool
+	skProgress string
+	skErr      string
+	skDone     chan struct{}
 	askSecrets func(context.Context, SecretRequest) (map[string]string, error)
-	runs       map[string]*workflow.Run
-	testCalls  chan testCall
+	// permission prompts: pending UI questions, "allow for this run"
+	// answers by agent process, and an optional non-UI asker (headless)
+	pendingPerms map[string]chan permAnswer
+	permAllowed  map[string]map[string]bool
+	askPerm      func(context.Context, extension.PermissionRequest) extension.PermissionAnswer
+	runs         map[string]*workflow.Run
+	testCalls    chan testCall
 }
 
 // Options configure New.
 type Options struct {
 	StoreDir string // default store.DefaultDir()
 	Agent    string // default "claude"
+	// AIShimExe is this program's path, for the claude/copilot launchers
+	// that count the AI a tool uses itself (see internal/aishim). Empty
+	// leaves tools' PATH alone.
+	AIShimExe string
 }
 
 // New creates a hub. Call Close when done.
@@ -98,6 +117,12 @@ func New(o Options) (*Hub, error) {
 	h.managed = extension.NewManagedStore(filepath.Join(st.Dir(), "managed-tools.json"))
 	h.libs = extension.NewLibraryStore(filepath.Join(st.Dir(), "managed-libraries.json"))
 	h.tools = h.newToolbox()
+	if o.AIShimExe != "" {
+		dir := filepath.Join(st.Dir(), "aishim")
+		if err := aishim.Install(dir, o.AIShimExe); err == nil {
+			h.aiShimDir = dir
+		}
+	}
 	h.watchRunEnds()
 	h.Bus.SetFilter(func(e *bus.Event) { st.Redactor().Event(e) })
 	br, err := extension.StartBridge(h)
@@ -235,6 +260,7 @@ type WorkspaceState struct {
 	Extensions []extension.Extension `json:"extensions"`
 	FileCount  int                   `json:"fileCount"`
 	SpecKit    bool                  `json:"specKit"` // .specify/ exists
+	SpecKitSet speckit.Info          `json:"speckit"`
 }
 
 // OpenWorkspace makes root the workspace: loads its profile, workflow and
@@ -310,7 +336,7 @@ func (h *Hub) Workspace() (WorkspaceState, error) {
 		return WorkspaceState{}, err
 	}
 	return WorkspaceState{Root: root, Name: filepath.Base(root), Profile: prof, Libraries: h.libsFor(root, prof), Workflow: wf,
-		Extensions: exts, FileCount: len(watch.ListFiles(root, 20000)), SpecKit: workflow.Exists(filepath.Join(root, ".specify"))}, nil
+		Extensions: exts, FileCount: len(watch.ListFiles(root, 20000)), SpecKit: h.SpecKitInfo().Initialized, SpecKitSet: h.SpecKitInfo()}, nil
 }
 
 func (h *Hub) need() (string, error) {
@@ -397,6 +423,9 @@ func (h *Hub) BuildRules(section, mode string) (string, error) {
 			for _, id := range append(append([]string{}, p.Global...), p.Project...) {
 				if id == l.ID {
 					fmt.Fprintf(&b, "- **%s** (%s, %s): %s\n", l.Name, l.Kind, l.Scope, l.Path)
+					for _, f := range l.Files {
+						fmt.Fprintf(&b, "  - %s/%s\n", l.Dir, f)
+					}
 				}
 			}
 		}
@@ -568,9 +597,9 @@ func (h *Hub) SaveWorkflow(in workflow.Workflow) error {
 		d.Gate, d.Retries = s.Gate, max(0, min(s.Retries, 5))
 	}
 	h.wf.Budget = in.Budget
-	if in.Model != "" {
-		h.wf.Model = in.Model
-	}
+	h.wf.Model = strings.TrimSpace(in.Model) // "" = the app-wide model
+	h.wf.Context = in.Context
+
 	return workflow.Save(root, h.wf)
 }
 
@@ -633,7 +662,17 @@ func (h *Hub) Compose(stepID, feedback string) (string, error) {
 	if i < 0 {
 		return "", fmt.Errorf("no step %q", stepID)
 	}
-	return workflow.Compose(h.wf, i, h.profile, h.libsFor(root, h.profile), h.toolRefs(), feedback), nil
+	// Spec Kit steps run the project's installed command and its guide
+	w := *h.wf
+	w.Steps = slices.Clone(h.wf.Steps)
+	project := h.profile.SpecProject
+	dir := root
+	if project != "" {
+		dir = filepath.Join(root, filepath.FromSlash(project))
+	}
+	specKitStep(dir, speckit.Status(dir).Integration, project, &w.Steps[i])
+	libs, prof := rebased(project, h.libsFor(root, h.profile), h.profile)
+	return workflow.Compose(&w, i, prof, libs, h.toolRefs(), feedback), nil
 }
 
 func (h *Hub) toolRefs() []workflow.ToolRef {
@@ -644,6 +683,11 @@ func (h *Hub) toolRefs() []workflow.ToolRef {
 			sec = append(sec, s.Name)
 		}
 		out = append(out, workflow.ToolRef{Name: e.Name, Desc: e.Desc, Secrets: sec})
+	}
+	// built-ins: Compose lists the ones chosen on Choose input
+	for _, t := range h.FlowBuiltinTools() {
+		_, desc, _ := strings.Cut(t.Desc, ": ") // drop the "Title: " the designer shows
+		out = append(out, workflow.ToolRef{Name: t.Name, Desc: desc})
 	}
 	return out
 }
@@ -664,11 +708,22 @@ func (h *Hub) RunStep(stepID string) (string, error) {
 		h.mu.RUnlock()
 		return "", fmt.Errorf("cannot run %s: %s", h.wf.Steps[i].Title, why)
 	}
+	specRun := strings.HasPrefix(h.wf.Steps[i].Cmd, "/speckit")
+	h.mu.RUnlock()
+	dir := h.specDir()
+	if specRun && !speckit.Status(dir).Initialized {
+		return "", errors.New("this project is not set up for Spec Kit yet: use Set up Spec Kit on Choose input first")
+	}
+	h.mu.RLock()
 	st := h.wf.Steps[i]
-	o := workflow.StartOptions{Agent: h.agentName, Model: firstNonEmpty(h.model, h.wf.Model), Budget: h.wf.Budget, Retries: st.Retries, Gate: st.Gate,
+	o := workflow.StartOptions{Agent: h.agentName, Model: firstNonEmpty(h.wf.Model, h.model), Budget: h.wf.Budget, Retries: st.Retries, Gate: st.Gate,
 		Title: st.Title, Ask: strings.TrimSpace(st.Input)}
+	if specRun && dir != h.root { // the agent works in the project folder and may read the workspace
+		o.Dir, o.AddDirs = dir, []string{h.root}
+	}
 	runner := h.runner
 	h.mu.RUnlock()
+	_, _ = h.writeAgentContext() // the agent's instruction file follows Choose input
 	prompt, err := h.Compose(stepID, "")
 	if err != nil {
 		return "", err

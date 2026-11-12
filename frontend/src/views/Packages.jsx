@@ -41,7 +41,13 @@ export function PackagesCard({ index }) {
   const p = S.pkg;
   if (!p) return <Card id="w-packages" index={index} title="Packages & proxy"><p className="muted">Reading this computer's package settings…</p></Card>;
   const s = p.saved, overrides = FIELDS.flatMap(([, f]) => f).filter(([k]) => get(s, k)).length;
-  const save = async () => { try { await backend.SavePackageSettings(s); toast("Package settings saved to .codegen/packages.json."); await loadPackages(); } catch (e) { toast(errMsg(e)); } };
+  const save = async () => {
+    try {
+      await backend.SavePackageSettings(s); await loadPackages();
+      const sk = await backend.SpecKitInfo().catch(() => null);
+      toast("Package settings saved to .codegen/packages.json." + (sk?.downloading ? " Spec Kit is now being downloaded through this proxy." : ""));
+    } catch (e) { toast(errMsg(e)); }
+  };
   const check = async () => { S.pkg.checks = "running"; update(); try { if (p.dirty) { await backend.SavePackageSettings(s); p.dirty = false; } S.pkg.checks = await backend.CheckRegistries(); } catch (e) { S.pkg.checks = null; toast(errMsg(e)); } update(); };
   const missing = Object.entries({ npm: "Node.js", python3: "Python", go: "Go", mvn: "Java (Maven)" }).filter(([b]) => !p.tools?.[b]).map(([, l]) => l);
   return (

@@ -83,6 +83,10 @@ func (h *Hub) SavePackageSettings(s extension.PackageSettings) error {
 	}
 	extension.EnsureGitignore(root)
 	_, err = cur.MavenSettings(root)
+	// proxies set up for the first time: fetch Spec Kit now, through them
+	if h.skCache().Latest() == "" {
+		h.startSpecKitDownload()
+	}
 	return err
 }
 

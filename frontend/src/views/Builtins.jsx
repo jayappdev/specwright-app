@@ -42,6 +42,7 @@ export async function loadBuiltins() {
 }
 
 export function selectBuiltin(name) {
+  if (S.cx) S.cx.sel = "";
   S.bt = { sel: name, args: JSON.stringify(EXAMPLES[name] || {}, null, 2), out: "", running: false };
   S.tb = null;
   S.view = "tools"; update();
