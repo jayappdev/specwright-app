@@ -1,5 +1,6 @@
 import { backend } from "../backend.js";
 import { ModelPicker } from "../ModelPicker.jsx";
+import { ProjectPicker } from "../ProjectPicker.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { Linkify } from "../FileLinks.jsx";
 import { AiProgress } from "../AiProgress.jsx";
@@ -120,6 +121,8 @@ export function Workflow() {
         </div>
 
         <header className="view-head"><h1>{i + 1} · {st.title} <span className="muted" style={{ fontWeight: 400, fontSize: ".7em" }}><code>{st.cmd}</code></span></h1>{statePill(state)}
+          {(S.ws.projects || []).length > 0 && <span className="wf-project" title="Each project has its own workflow progress"><ProjectPicker value={S.ws.speckit?.project || ""} disabled={state === "running" || state === "paused"}
+            onNew={() => { S.sk = { ...(S.sk || {}), newMode: true, name: "", result: null }; S.view = "inputs"; update(); setTimeout(() => document.querySelector(".sk-card")?.scrollIntoView({ block: "start" }), 50); }} /></span>}
           <span className="wf-model"><ModelPicker compact label="Model for workflow steps" value={S.wf.model || ""} disabled={state === "running"}
             onChange={(v) => { S.wf.model = v; update(); saveWorkflow(); }} /></span></header>
         {wf.steps.some((x) => x.id === "implement" && x.status === "done") && <div className="banner ok zip-banner"><Icon.check /> <span><b>Implementation is done.</b> Download the whole project{S.ws.speckit?.project ? <> (<code className="inline-code">{S.ws.speckit.project}/</code> with the skills, rules and diagrams it uses)</> : null} as one zip.</span>
@@ -213,6 +216,7 @@ function ActivityRow({ e, evs }) {
     case "ext.result": return <Act e={e} kind="act-fs">Extension {e.name}: exit {e.exit_code} · {fmtMs(e.duration_ms || 0)}</Act>;
     case "secret.request": return <Act e={e} kind="act-gate">Waiting for credentials: {e.summary}</Act>;
     case "secret.resolved": return <Act e={e} kind="act-quiet">Credentials {e.summary}</Act>;
+    case "flow.loop": return <Act e={e} kind="act-quiet act-loop">↻ {e.summary}</Act>;
     case "flow.step": return e.status === "running" ? null : <Act e={e} kind={e.status === "failed" ? "act-bad" : "act-step"}><b>{e.summary}</b>{e.duration_ms != null && <span className="muted"> · {fmtMs(e.duration_ms)}</span>}</Act>;
     case "flow.review": return <Act e={e} kind="act-gate"><b>{e.summary}</b></Act>;
     case "flow.output": return <Act e={e} kind="act-step">Output: {e.summary}{(e.saved || []).map((p) => <span key={p}> → <Linkify text={p} /></span>)}</Act>;

@@ -37,6 +37,9 @@ func TestFlowInputValues(t *testing.T) {
 		{flow.Input{Name: "b", Type: "boolean"}, "Yes", nil, "true", ""},
 		{flow.Input{Name: "b", Type: "boolean"}, "", nil, "false", ""},
 		{flow.Input{Name: "o", Type: "choice", Options: []string{"devs", "managers"}}, "ceo", nil, "", "must be one of"},
+		{flow.Input{Name: "m", Type: "multichoice", Options: []string{"Java", "Go", "TypeScript"}}, "TypeScript\nJava\n", nil, "Java\nTypeScript", ""},
+		{flow.Input{Name: "m", Type: "multichoice", Options: []string{"Java", "Go"}}, "Rust", nil, "", "not one of"},
+		{flow.Input{Name: "m", Type: "multichoice", Options: []string{"Java", "Go"}, Default: "Go"}, "", nil, "Go", ""},
 		{flow.Input{Name: "d", Type: "clipboard", Default: "fallback", Files: []string{img}}, "", nil, "fallback\n\nAttached files:\n- " + img, ""},
 	}
 	for i, c := range cases {

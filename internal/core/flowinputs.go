@@ -55,6 +55,27 @@ func flowInputValue(root string, in flow.Input, text string, files []string) (st
 			return "false", nil
 		}
 		return "", fmt.Errorf("%s must be yes or no, not %q", label, clipLine(t, 40))
+	case "multichoice": // the picks, one per line, in the options' order
+		picked := map[string]bool{}
+		for _, l := range strings.Split(text, "\n") {
+			if l = strings.TrimSpace(l); l != "" {
+				if len(in.Options) > 0 && !slices.Contains(in.Options, l) {
+					return "", fmt.Errorf("%s: %q is not one of: %s", label, clipLine(l, 40), strings.Join(in.Options, ", "))
+				}
+				picked[l] = true
+			}
+		}
+		var out []string
+		for _, o := range in.Options {
+			if picked[o] {
+				out = append(out, o)
+				delete(picked, o)
+			}
+		}
+		for l := range picked { // no options listed: keep what was given
+			out = append(out, l)
+		}
+		return strings.Join(out, "\n"), nil
 	case "choice":
 		if t != "" && len(in.Options) > 0 && !slices.Contains(in.Options, t) {
 			return "", fmt.Errorf("%s must be one of: %s", label, strings.Join(in.Options, ", "))

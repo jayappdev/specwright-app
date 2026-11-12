@@ -211,12 +211,10 @@ func (h *Hub) InitSpecKit(project, integration string) (SpecKitSetup, error) {
 		if err := os.MkdirAll(filepath.Join(root, project), 0o755); err != nil {
 			return SpecKitSetup{}, err
 		}
-		h.mu.Lock()
-		if h.profile != nil && h.profile.SpecProject != project {
-			h.profile.SpecProject = project
-			_ = workflow.SaveProfile(root, h.profile)
+		// a new project gets its own workflow; the one being left keeps its progress
+		if err := h.selectProject(project); err != nil {
+			return SpecKitSetup{}, err
 		}
-		h.mu.Unlock()
 	}
 	dir := h.specDir()
 	if integration == "" {

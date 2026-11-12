@@ -65,7 +65,7 @@ func run() int {
 		storeDir  = flag.String("store", "", "history directory (default: user config dir)")
 		reset     = flag.Bool("reset", false, "set every step back to pending before running")
 		skInit    = flag.String("init", "", "set the project up with the bundled Spec Kit template first: claude | copilot (like specify init <project> --integration …)")
-		skProject = flag.String("project", "", "with -init: the project folder to create in the workspace (default: the one chosen before, else the workspace itself)")
+		skProject = flag.String("project", "", "the Spec Kit project folder in the workspace to work on (with -init: to create)")
 		inputs    multi
 	)
 	flag.Var(&inputs, "input", "step input as id=text (repeatable)")
@@ -126,6 +126,11 @@ func run() int {
 		}
 		fmt.Fprintf(os.Stderr, "Spec Kit %s for %s: %d files created, %d updated, %d kept; context in %s\n", res.Version, res.Integration,
 			len(res.Created), len(res.Updated), len(res.Kept), strings.Join(res.Context, ", "))
+	}
+	if *skProject != "" && *skInit == "" { // another project of the workspace
+		if _, err := h.SwitchSpecProject(*skProject); err != nil {
+			return fail(err)
+		}
 	}
 	if *prompt != "" {
 		var parents []string

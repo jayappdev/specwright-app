@@ -17,6 +17,7 @@ export const Icon = {
   shield: mk(<><path d="M8 1.8l5 1.8v4.2c0 3.1-2.1 5.5-5 6.5-2.9-1-5-3.4-5-6.5V3.6z" /><path d="M5.8 8l1.6 1.6 2.9-3.2" /></>),
   lock: mk(<><rect x="3.5" y="7" width="9" height="6.5" rx="1.2" /><path d="M5.5 7V5a2.5 2.5 0 015 0v2" /></>, 13),
   check: mk(<path d="M3.5 8.5l3 3 6-7" />, 14),
+  book: mk(<path d="M3 2.5h4.5a1.5 1.5 0 011.5 1.5v9.5a1.5 1.5 0 00-1.5-1.5H3zM13 2.5H9.5A1.5 1.5 0 008 4v9.5a1.5 1.5 0 011.5-1.5H13z" />),
   flow: mk(<><rect x="1.8" y="2.5" width="4.5" height="3.5" rx="1" /><rect x="9.7" y="6.3" width="4.5" height="3.5" rx="1" /><rect x="1.8" y="10" width="4.5" height="3.5" rx="1" /><path d="M6.3 4.2h1.4a1.3 1.3 0 011.3 1.3v1.9h.7M6.3 11.8h1.4A1.3 1.3 0 009 10.5V8.6" /></>),
   run: mk(<path d="M4.5 3l9 5-9 5z" />),
   plus: mk(<path d="M8 3.5v9M3.5 8h9" />, 14),

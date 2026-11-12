@@ -11,7 +11,9 @@ import (
 
 // Multi-step tool chains: a tool that writes a file and prints nothing
 // still gives the next step a real {{input_file}}, and any later step can
-// read an earlier one by tool name: {{tool.output_file}} / {{tool.buffer_output}}.
+// read an earlier one: {{<step id>.output_file}} / {{<step id>.buffer_output}}.
+// The flow is written with tool names, as older flows were; loading moves
+// those references over to step ids.
 func TestFlowToolChainStepOutputs(t *testing.T) {
 	usePolicy(t, "")
 	h, ws := newHub(t)
@@ -91,7 +93,7 @@ func TestFlowStepVariableValidation(t *testing.T) {
 		}
 	}
 	all := strings.Join(msgs, "\n")
-	for _, want := range []string{`more than one step is called "emit"`, `no step or tool is called "nope"`, `"late" does not run before`, "cannot read its own output"} {
+	for _, want := range []string{`no step with the id "emit"`, `no step with the id "nope"`, `"late" does not run before`, "cannot read its own output"} {
 		if !strings.Contains(all, want) {
 			t.Fatalf("missing %q in:\n%s", want, all)
 		}

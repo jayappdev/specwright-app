@@ -161,7 +161,7 @@ func analyzeStep(mk func(id, title, ask, ph, tpl string) Step) Step {
 // addAnalyze adds the Analyze step to a Spec workflow saved before it
 // existed (between Tasks and Implement; already done when Implement is).
 func addAnalyze(w *Workflow) {
-	if w.ID != "speckit" || w.Index("analyze") >= 0 {
+	if !IsSpecKit(w.ID) || w.Index("analyze") >= 0 {
 		return
 	}
 	i := w.Index("implement")
@@ -186,12 +186,63 @@ func Path(root, id string) string {
 	return filepath.Join(root, ".codegen", "workflows", id+".json")
 }
 
+// Each Spec Kit project in a workspace has its own Spec workflow (its
+// steps, inputs, approvals and history): "speckit" for a project in the
+// workspace itself, "speckit@<folder>" for one in a subfolder.
+
+// ProjectID is the Spec workflow id of a project folder ("" = the workspace).
+func ProjectID(project string) string {
+	if project == "" {
+		return "speckit"
+	}
+	return "speckit@" + project
+}
+
+// IsSpecKit reports whether id is a Spec workflow (of any project).
+func IsSpecKit(id string) bool { return id == "speckit" || strings.HasPrefix(id, "speckit@") }
+
+// LoadProject reads project's Spec workflow. A project without one starts
+// from like (when given): the same model, budget, chosen context and step
+// options, with every step pending and no inputs. legacy lets a project
+// take over the workspace's speckit.json, from before projects had their
+// own workflow.
+func LoadProject(root, project string, like *Workflow, legacy bool) (*Workflow, error) {
+	id := ProjectID(project)
+	if _, err := os.Stat(Path(root, id)); err == nil {
+		return Load(root, id)
+	}
+	if legacy && project != "" {
+		if _, err := os.Stat(Path(root, "speckit")); err == nil {
+			w, err := Load(root, "speckit")
+			if err != nil {
+				return nil, err
+			}
+			w.ID = id
+			return w, nil
+		}
+	}
+	w := SpecKit()
+	w.ID = id
+	if like != nil {
+		w.Model, w.Budget, w.Context = like.Model, like.Budget, like.Context
+		for i := range w.Steps {
+			if j := like.Index(w.Steps[i].ID); j >= 0 {
+				o := like.Steps[j]
+				w.Steps[i].Options, w.Steps[i].Gate, w.Steps[i].Retries = o.Options, o.Gate, o.Retries
+			}
+		}
+	}
+	return w, nil
+}
+
 // Load reads workflow id from root, or returns the Spec Kit default.
 func Load(root, id string) (*Workflow, error) {
 	b, err := os.ReadFile(Path(root, id))
 	if errors.Is(err, os.ErrNotExist) {
-		if id == "speckit" {
-			return SpecKit(), nil
+		if IsSpecKit(id) {
+			w := SpecKit()
+			w.ID = id
+			return w, nil
 		}
 		return nil, fmt.Errorf("workflow %q not found", id)
 	}

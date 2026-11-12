@@ -1,7 +1,9 @@
 package core
 
 import (
+	"encoding/json"
 	"errors"
+	"fmt"
 	"sort"
 	"strings"
 
@@ -178,8 +180,7 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 	if sample.Steps == nil {
 		sample.Steps = map[string]string{}
 	}
-	// {{<step>.output_file}} in a preview: where the file will be saved
-	sample.Names, _ = f.StepNames()
+	// {{<step id>.output_file}} in a preview: where the file will be saved
 	if sample.Files == nil {
 		sample.Files = map[string]string{}
 	}
@@ -201,6 +202,60 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 	var out string
 	var err error
 	switch n.Type {
+	case "loop": // the items it would run
+		src := strings.Join(func() []string {
+			var ps []string
+			for _, p := range parents {
+				ps = append(ps, sample.Steps[p])
+			}
+			return ps
+		}(), "\n")
+		if strings.TrimSpace(n.Source) != "" {
+			sample.Input = src
+			src = flow.Render(n.Source, sample)
+		}
+		var items []string
+		if items, err = flow.SplitItems(src, *n); err == nil {
+			b, _ := json.MarshalIndent(items, "", "  ")
+			out = string(b)
+		}
+	case "gather": // three sample items
+		var rs []flow.ItemResult
+		for i, it := range []string{"first", "second", "third"} {
+			rs = append(rs, flow.ItemResult{Item: it, Output: fmt.Sprintf("(result for item %d)", i+1)})
+		}
+		out, err = flow.Gather(*n, rs, sample)
+	case "decision", "filter", "aggregate":
+		if n.Source != "" {
+			in = flow.Render(n.Source, sample)
+		}
+		switch n.Type {
+		case "filter":
+			out, err = flow.FilterRows(*n, in, sample)
+		case "aggregate":
+			out, err = flow.Aggregate(*n, in, sample)
+		default:
+			var bs []string
+			if bs, err = flow.Decide(*n, in, sample); err == nil {
+				var lines []string
+				for _, b := range bs {
+					to := []string{}
+					for _, e := range f.Edges {
+						if e.From == n.ID && e.Branch == b {
+							to = append(to, firstNonEmpty(f.Node(e.To).Title, e.To))
+						}
+					}
+					l := "→ " + flow.BranchLabel(*n, b)
+					if len(to) > 0 {
+						l += " (runs " + strings.Join(to, ", ") + ")"
+					} else {
+						l += " (nothing is connected to it)"
+					}
+					lines = append(lines, l)
+				}
+				out = strings.Join(lines, "\n")
+			}
+		}
 	case "merge":
 		titles := map[string]string{}
 		for _, p := range parents {
@@ -238,5 +293,6 @@ func (h *Hub) FlowOps() map[string]any {
 	for k, v := range flow.Ops {
 		ops[k] = v
 	}
-	return map[string]any{"ops": ops, "mergeModes": flow.MergeModes, "formats": flow.Formats, "inputTypes": flow.InputTypes, "actionTypes": flow.ActionTypes}
+	return map[string]any{"ops": ops, "mergeModes": flow.MergeModes, "formats": flow.Formats, "inputTypes": flow.InputTypes, "actionTypes": flow.ActionTypes,
+		"condOps": flow.CondOps, "condMatches": flow.CondMatches, "aggFns": flow.AggFns, "aggregateModes": flow.AggregateModes, "rowFormats": flow.RowFormats}
 }

@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import { backend } from "../backend.js";
 import { S, update, toast, errMsg, saveProfile, saveWorkflow, downloadProjectZip } from "../store.js";
+import { ProjectPicker } from "../ProjectPicker.jsx";
 import { NeedWorkspace, WorkspaceBar } from "./Wizard.jsx";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { ToolIcon } from "../ToolTile.jsx";
@@ -144,10 +145,12 @@ function SpecKitCard() {
   const def = k.integration || info.integration || (S.setup.provider === "copilot" ? "copilot" : "claude");
   const integ = INTEGRATIONS.find((x) => x[0] === def) || INTEGRATIONS[0];
   const steps = (S.wf?.steps || []).filter((st) => (st.cmd || "").startsWith("/speckit"));
-  const r = k.result, cur = info.project || "";
-  const name = k.name ?? (cur || (info.initialized ? "" : slugName(S.ws.name) + "-app"));
+  const r = k.result, cur = info.project || "", projects = S.ws.projects || [];
+  const creating = k.newMode || !projects.length; // a new project folder
+  const name = creating ? (k.name ?? (projects.length ? "" : slugName(S.ws.name) + "-app")) : cur;
   const nameOk = !name || /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(name);
-  const newFolder = !!name && name !== cur;
+  const taken = creating && projects.some((x) => x.name === name);
+  const newFolder = creating && !!name && name !== cur;
   return (
     <div className="card sk-card">
       <div className="card-head"><h3>Spec Kit</h3>
@@ -158,16 +161,22 @@ function SpecKitCard() {
       <p className="wf-desc">{info.initialized
         ? <>The project is ready for spec-driven development. Each step runs its own Spec Kit command and stays within its scope, in order, with your approval in between.</>
         : <>Create the project in its own folder inside this workspace and set it up with GitHub Spec Kit, like <code className="inline-code">specify init {name || "my-project"} --integration {def}</code>.</>}
-        {info.initialized && !cur && <> It was set up in the top folder; give a folder name to start a new project in a subfolder instead.</>}</p>
+        {projects.length > 1 && <> This workspace has {projects.length} projects. Each has its own workflow progress; the skills, rules and tools are shared.</>}</p>
+      {projects.length > 0 && <div className="sk-row">
+        <label className="field inline"><span>Project</span>
+          <ProjectPicker value={creating ? "+new" : cur} disabled={k.busy} onNew={() => { k.newMode = true; k.name = ""; k.result = null; update(); }} onPick={() => { k.newMode = false; k.name = null; k.result = null; }} /></label>
+        {!creating && <span className="muted sk-where">{cur ? <>in <code className="inline-code">{cur}/</code></> : "in the top folder"}</span>}
+        {creating && <button className="link" onClick={() => { k.newMode = false; k.name = null; update(); }}>Cancel</button>}
+      </div>}
       <div className="sk-row">
-        <label className="field inline"><span>Project folder</span>
-          <input className="sk-name" value={name} placeholder="e.g. orders-service" disabled={k.busy} spellCheck={false} onChange={(e) => { k.name = e.target.value.trim(); update(); }} />
-          <span className="muted">/</span></label>
+        {creating && <label className="field inline"><span>{projects.length ? "New project folder" : "Project folder"}</span>
+          <input className="sk-name" value={name} placeholder="e.g. billing-service" disabled={k.busy} spellCheck={false} autoFocus={projects.length > 0} onChange={(e) => { k.name = e.target.value.trim(); update(); }} />
+          <span className="muted">/</span></label>}
         <label className="field inline"><span>Agent</span>
           <select value={def} disabled={k.busy} onChange={(e) => { k.integration = e.target.value; update(); }}>{INTEGRATIONS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></label>
-        <button className={"btn " + (info.initialized && !newFolder ? "secondary" : "primary")} disabled={k.busy || !nameOk || (!info.initialized && !name)} onClick={() => initSpecKit(name, def)}>
+        <button className={"btn " + (info.initialized && !newFolder ? "secondary" : "primary")} disabled={k.busy || !nameOk || taken || (creating && !name)} onClick={async () => { await initSpecKit(name, def); if (k.result) { k.newMode = false; k.name = null; update(); } }}>
           {k.busy ? (info.downloading || !info.available ? "Downloading Spec Kit…" : "Setting up…") : newFolder ? `Create ${name}/ and set up Spec Kit` : !info.initialized ? "Set up Spec Kit" : (info.integrations || []).includes(def) ? "Refresh Spec Kit files and context" : `Add ${integ[1]}`}</button>
-        {info.initialized && <button className="btn secondary" disabled={S.zipBusy} title="The project folder, with the skills, rules and diagrams it uses" onClick={() => downloadProjectZip(true)}>{S.zipBusy ? "Zipping…" : "Download project (.zip)"}</button>}
+        {info.initialized && !creating && <button className="btn secondary" disabled={S.zipBusy} title="The project folder, with the skills, rules and diagrams it uses" onClick={() => downloadProjectZip(true)}>{S.zipBusy ? "Zipping…" : "Download project (.zip)"}</button>}
       </div>
       <div className={"sk-dl" + (info.error ? " bad" : "")}>
         {info.downloading ? <><span className="spinner" /> {info.progress || "Downloading Spec Kit…"}</>
@@ -176,6 +185,7 @@ function SpecKitCard() {
           : <>SpecWright doesn't ship Spec Kit. It downloads the latest release from <code className="inline-code">github.com/github/spec-kit</code> through the proxy under Development wizard › Packages & proxy, either when you first save the proxy settings or at the first setup. It runs Spec Kit's own CLI with uv, pipx or Python. <button className="link" onClick={() => downloadSpecKit(false)}>Download it now</button></>}
       </div>
       {!nameOk && <p className="err-text sk-err">Use letters, digits, - . and _ (no spaces or slashes), e.g. orders-service.</p>}
+      {taken && <p className="err-text sk-err">{name}/ is already a project here: pick it in Project instead.</p>}
       <details className="sk-what" open={!info.initialized}><summary>What it sets up</summary>
         <ol>
           <li><b>The project folder</b> <code className="inline-code">{(name || cur || "my-project")}/</code> in this workspace: Spec Kit, the specs and the code all go there, and every step runs inside it.</li>
@@ -202,9 +212,9 @@ export function Inputs() {
     <section className="view">
       <header className="view-head"><h1>Choose input</h1><div className="head-controls"><button className="btn primary" onClick={() => { S.view = "workflow"; update(); }}>Next: run spec workflow</button></div></header>
       <p className="wf-desc">Point the agent at the source to read and add diagrams so the spec starts from what the system actually does. Then choose the model, skills, rules and tools every step uses.</p>
-      <div className="card"><div className="card-head"><h3>Project folder</h3></div>
+      <div className="card"><div className="card-head"><h3>Workspace folder</h3></div>
         <WorkspaceBar />
-        <p className="muted" style={{ marginTop: 8 }}>{S.ws.fileCount} files indexed · {p.lang} · {p.build}. Only this folder is visible to the agent.
+        <p className="muted" style={{ marginTop: 8 }}>{S.ws.fileCount} files indexed · {p.lang} · {p.build}. It holds your Spec Kit projects (each in its own folder) and the skills, rules and tools they share in <code className="inline-code">.codegen/</code>. Only this folder is visible to the agent.
 </p>
       </div>
       <SpecKitCard />

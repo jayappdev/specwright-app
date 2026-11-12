@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"sync"
@@ -83,10 +85,18 @@ type FlowStepState struct {
 	Attempts   int         `json:"attempts"`
 	Notes      []string    `json:"notes,omitempty"`
 	Usage      store.Usage `json:"usage"`
+	// in a loop: the item this step is on (1-based) and the item count; for
+	// a Loop step itself, its progress through the list
+	Iteration  int `json:"iteration,omitempty"`
+	Iterations int `json:"iterations,omitempty"`
+	Failed     int `json:"failedItems,omitempty"` // Loop: items that failed (with continue on error)
 	// Args are the arguments a tool step ran with; Why says how the agent
 	// chose them when the step was described in words.
 	Args map[string]any `json:"args,omitempty"`
 	Why  string         `json:"why,omitempty"`
+	// Decision: the paths it took (branch ids) and their names
+	Branches []string `json:"branches,omitempty"`
+	Path     string   `json:"path,omitempty"`
 	// InputFile and OutputFile are the step's saved input and output
 	// (workspace paths in the run's results folder).
 	InputFile  string `json:"inputFile,omitempty"`
@@ -160,6 +170,7 @@ type flowRun struct {
 	seq      int
 	t0       time.Time
 	noReview bool
+	gathered map[string][]flow.ItemResult // a Gather's results, for execStep
 }
 
 // ErrFlowStopped ends a run the user stopped.
@@ -635,22 +646,50 @@ func flowItems(o FlowRunOptions) ([]*string, error) {
 
 func (h *Hub) execPass(ctx context.Context, root string, fr *flowRun, inputs map[string]string, item string) error {
 	f := fr.flow
-	o := fr.st.Options
 	order, err := f.Order()
 	if err != nil {
 		return err
 	}
+	li, _ := f.Loops()
+	d := flow.Data{Inputs: inputs, Steps: map[string]string{}, Context: h.flowContext(f), Skills: h.flowSkills(f), Flow: f.Name,
+		Files: map[string]string{}, Branches: map[string][]string{}}
+	stopped := false
+	return h.runNodes(ctx, root, fr, order, li, &d, map[string]string{}, item, &stopped)
+}
+
+// runNodes runs steps ids (in run order) with data d. A Loop step runs the
+// steps inside it once per item (runLoop); they are skipped here.
+func (h *Hub) runNodes(ctx context.Context, root string, fr *flowRun, ids []string, li flow.LoopInfo, d *flow.Data, status map[string]string, item string, stopped *bool) error {
+	f := fr.flow
+	o := fr.st.Options
 	skip := map[string]bool{}
 	for _, s := range o.Skip {
 		skip[s] = true
 	}
-	names, _ := f.StepNames()
-	d := flow.Data{Inputs: inputs, Steps: map[string]string{}, Context: h.flowContext(f), Skills: h.flowSkills(f), Flow: f.Name,
-		Files: map[string]string{}, Names: names}
-	status := map[string]string{}
+	handled := map[string]bool{}
 	var firstErr error
-	for _, id := range order {
+	for _, id := range ids {
+		if *stopped {
+			break
+		}
+		if handled[id] {
+			continue
+		}
 		n := *f.Node(id) // a copy: retries may change it for this run only
+		// after a Decision: only the steps on the path it took run
+		var live []string
+		if ps := f.Parents(id); len(ps) > 0 {
+			live = f.LiveParents(id, func(p string) bool { return status[p] == "off" }, d.Branches)
+			if len(live) == 0 && !slices.ContainsFunc(ps, func(p string) bool { return status[p] == "failed" }) {
+				fr.update(func(st *FlowRunState) {
+					s := fr.step(id)
+					s.Status, s.Error = "skipped", "not on the path the flow took"
+				})
+				status[id] = "off"
+				h.flowState(fr)
+				continue
+			}
+		}
 		blocked := ""
 		for _, p := range f.Parents(id) {
 			if status[p] == "failed" {
@@ -661,18 +700,47 @@ func (h *Hub) execPass(ctx context.Context, root string, fr *flowRun, inputs map
 			why := firstNonEmpty(blocked, "skipped by you")
 			fr.update(func(st *FlowRunState) { s := fr.step(id); s.Status = "skipped"; s.Error = why })
 			status[id] = "skipped"
-			if blocked != "" {
+			if blocked != "" || n.Type == "loop" {
 				status[id] = "failed" // keep blocking the steps after it
 			}
 			h.flowState(fr)
 			continue
 		}
-		out, err := h.runFlowStep(ctx, root, fr, &n, d, item)
+		if n.Type == "loop" {
+			body, g := li.Body(ids, id), li.Gather[id]
+			for _, b := range body {
+				handled[b] = true
+			}
+			handled[g] = true
+			err := h.runLoop(ctx, root, fr, &n, body, g, li, d, status, item, stopped)
+			if errors.Is(err, errFlowStopped) {
+				return err
+			}
+			if ctx.Err() != nil {
+				return ctx.Err()
+			}
+			if err != nil && firstErr == nil {
+				firstErr = fmt.Errorf("%s failed: %v", firstNonEmpty(n.Title, n.ID), err)
+			}
+			continue
+		}
+		dd := *d
+		dd.Live = live
+		out, err := h.runFlowStep(ctx, root, fr, &n, dd, item)
 		if errors.Is(err, errFlowStopped) {
 			return err
 		}
 		if ctx.Err() != nil {
 			return ctx.Err()
+		}
+		if err == nil && n.Type == "decision" { // the paths it took
+			var bs []string
+			fr.update(func(st *FlowRunState) { bs = fr.step(id).Branches })
+			d.Branches = maps.Clone(d.Branches)
+			if d.Branches == nil {
+				d.Branches = map[string][]string{}
+			}
+			d.Branches[id] = bs
 		}
 		if err != nil {
 			status[id] = "failed"
@@ -682,8 +750,8 @@ func (h *Hub) execPass(ctx context.Context, root string, fr *flowRun, inputs map
 			continue
 		}
 		// review
-		if h.wantsReview(fr, &n) {
-			out, err = h.reviewStep(ctx, root, fr, &n, d, item, out)
+		if h.wantsReview(fr, &n, d.ItemCount > 0) {
+			out, err = h.reviewStep(ctx, root, fr, &n, *d, item, out)
 			if err != nil {
 				return err
 			}
@@ -691,6 +759,9 @@ func (h *Hub) execPass(ctx context.Context, root string, fr *flowRun, inputs map
 		d.Steps[id] = out
 		if p := h.flowOutputFile(fr, id, out); p != "" {
 			d.Files[id] = p // {{<step>.output_file}}
+		}
+		if d.ItemCount > 0 { // each item's result is kept too
+			_, _ = h.writeRunFile(fmt.Sprintf("%s/items/%03d.%s", stepFilesDir(fr.st.ID, id), d.ItemIndex, contentExt(out)), out)
 		}
 		status[id] = "done"
 		if o.StopAfter != "" && o.StopAfter == id {
@@ -703,15 +774,164 @@ func (h *Hub) execPass(ctx context.Context, root string, fr *flowRun, inputs map
 				}
 			})
 			h.flowState(fr)
+			*stopped = true
 			break
 		}
 	}
 	return firstErr
 }
 
-func (h *Hub) wantsReview(fr *flowRun, n *flow.Node) bool {
-	if fr.noReview || n.Type == "start" {
+// runLoop splits the loop's list into items, runs body once per item and
+// gathers the results with the Gather step g.
+func (h *Hub) runLoop(ctx context.Context, root string, fr *flowRun, n *flow.Node, body []string, g string, li flow.LoopInfo, d *flow.Data, status map[string]string, item string, stopped *bool) error {
+	f := fr.flow
+	start := time.Now()
+	title := firstNonEmpty(n.Title, n.ID)
+	setLoop := func(fn func(s *FlowStepState)) {
+		fr.update(func(st *FlowRunState) {
+			if s := fr.step(n.ID); s != nil {
+				fn(s)
+			}
+		})
+		h.flowState(fr)
+	}
+	fail := func(err error) error {
+		err = errors.New(h.Store.Redactor().String(err.Error()))
+		setLoop(func(s *FlowStepState) {
+			s.Status, s.Error, s.Ended, s.DurationMS = "failed", err.Error(), time.Now(), time.Since(start).Milliseconds()
+		})
+		status[n.ID] = "failed"
+		for _, b := range body {
+			if status[b] == "" {
+				status[b] = "failed"
+			}
+		}
+		status[g] = "failed"
+		fr.update(func(st *FlowRunState) {
+			if s := fr.step(g); s != nil && (s.Status == "pending" || s.Status == "") {
+				s.Status, s.Error = "skipped", "the loop "+title+" failed"
+			}
+		})
+		h.flowPublish(fr, "flow.step", title+" failed: "+err.Error(), map[string]any{"_step": n.ID, "node": n.ID, "kind": "loop", "status": "failed"})
+		return err
+	}
+	setLoop(func(s *FlowStepState) {
+		s.Status, s.Started, s.Error, s.Attempts, s.Iteration, s.Failed = "running", start, "", s.Attempts+1, 0, 0
+	})
+	h.flowPublish(fr, "flow.step", "Running "+title, map[string]any{"_step": n.ID, "node": n.ID, "kind": "loop", "status": "running"})
+
+	// the list: the connected steps' output, or the loop's own template
+	var in []string
+	for _, p := range f.LiveParents(n.ID, func(p string) bool { return status[p] == "off" }, d.Branches) {
+		in = append(in, d.Steps[p])
+	}
+	src := strings.Join(in, "\n")
+	if strings.TrimSpace(n.Source) != "" {
+		dd := *d
+		dd.Input = src
+		src = flow.Render(n.Source, dd)
+	}
+	items, err := flow.SplitItems(src, *n)
+	if err != nil {
+		return fail(err)
+	}
+	list, _ := json.MarshalIndent(items, "", "  ")
+	setLoop(func(s *FlowStepState) { s.Iterations = len(items); s.Output, s.Truncated = clip(string(list)) })
+	h.flowPublish(fr, "flow.loop", fmt.Sprintf("%s: %d item%s", title, len(items), map[bool]string{true: "", false: "s"}[len(items) == 1]), map[string]any{"_step": n.ID, "items": len(items)})
+
+	gparents := f.Parents(g)
+	results := make([]flow.ItemResult, 0, len(items))
+	failed := 0
+	for i, it := range items {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		short := it
+		if len(short) > 60 {
+			short = short[:60] + "…"
+		}
+		setLoop(func(s *FlowStepState) { s.Iteration = i + 1 })
+		h.flowPublish(fr, "flow.loop", fmt.Sprintf("%s · item %d of %d: %s", title, i+1, len(items), short), map[string]any{"_step": n.ID, "item": i + 1, "items": len(items)})
+		di := *d
+		di.Steps, di.Files, di.Branches = maps.Clone(d.Steps), maps.Clone(d.Files), maps.Clone(d.Branches)
+		di.Steps[n.ID] = it // the loop's output, for the steps it feeds, is the item
+		di.Item, di.ItemIndex, di.ItemCount = it, i+1, len(items)
+		di.Loops = maps.Clone(d.Loops) // {{<loop>.item}}: outer loops' items stay readable
+		if di.Loops == nil {
+			di.Loops = map[string]flow.LoopItem{}
+		}
+		di.Loops[n.ID] = flow.LoopItem{Item: it, Index: i + 1, Count: len(items)}
+		si := maps.Clone(status)
+		si[n.ID] = "done"
+		err := h.runNodes(ctx, root, fr, body, li, &di, si, item, stopped)
+		if errors.Is(err, errFlowStopped) {
+			return err
+		}
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		r := flow.ItemResult{Item: it}
+		var parts []string
+		for _, p := range gparents {
+			if si[p] == "done" {
+				parts = append(parts, di.Steps[p])
+			}
+		}
+		r.Output = strings.Join(parts, "\n\n")
+		if err != nil {
+			r.Error = h.Store.Redactor().String(err.Error())
+			failed++
+			setLoop(func(s *FlowStepState) { s.Failed = failed })
+			if !n.ContinueOnError {
+				return fail(fmt.Errorf("item %d of %d (%s): %s", i+1, len(items), short, r.Error))
+			}
+		}
+		results = append(results, r)
+		if *stopped {
+			break
+		}
+	}
+	setLoop(func(s *FlowStepState) {
+		s.Status, s.Ended, s.DurationMS = "done", time.Now(), time.Since(start).Milliseconds()
+		if failed > 0 {
+			s.Notes = append(s.Notes, fmt.Sprintf("%d of %d items failed; the loop went on", failed, len(items)))
+		}
+	})
+	h.flowPublish(fr, "flow.step", fmt.Sprintf("%s done: %d item%s", title, len(items), map[bool]string{true: "", false: "s"}[len(items) == 1]),
+		map[string]any{"_step": n.ID, "node": n.ID, "kind": "loop", "status": "done", "duration_ms": time.Since(start).Milliseconds()})
+	status[n.ID] = "done"
+	for _, b := range body {
+		status[b] = "done"
+	}
+	d.Steps[n.ID] = string(list)
+
+	// gather
+	gn := *f.Node(g)
+	fr.mu.Lock()
+	if fr.gathered == nil {
+		fr.gathered = map[string][]flow.ItemResult{}
+	}
+	fr.gathered[g] = results
+	fr.mu.Unlock()
+	out, err := h.runFlowStep(ctx, root, fr, &gn, *d, item)
+	if err != nil {
+		status[g] = "failed"
+		return err
+	}
+	d.Steps[g] = out
+	if p := h.flowOutputFile(fr, g, out); p != "" {
+		d.Files[g] = p
+	}
+	status[g] = "done"
+	return nil
+}
+
+func (h *Hub) wantsReview(fr *flowRun, n *flow.Node, inLoop bool) bool {
+	if fr.noReview || n.Type == "start" || n.Type == "gather" {
 		return false
+	}
+	if inLoop && fr.st.Options.Review != "each" { // once per item would be too many: only marked steps
+		return n.Review && fr.st.Options.Review != "none"
 	}
 	switch fr.st.Options.Review {
 	case "none":
@@ -730,6 +950,9 @@ func (h *Hub) runFlowStep(ctx context.Context, root string, fr *flowRun, n *flow
 	fr.update(func(st *FlowRunState) {
 		s := fr.step(n.ID)
 		s.Status, s.Started, s.Error, s.Attempts = "running", start, "", s.Attempts+1
+		if d.ItemCount > 0 {
+			s.Iteration, s.Iterations = d.ItemIndex, d.ItemCount
+		}
 	})
 	h.flowState(fr)
 	h.flowPublish(fr, "flow.step", "Running "+firstNonEmpty(n.Title, n.ID), map[string]any{"_step": n.ID, "node": n.ID, "kind": n.Type, "status": "running"})
@@ -784,6 +1007,9 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 	defer cancel()
 	f := fr.flow
 	parents := f.Parents(n.ID)
+	if d.Live != nil { // only the steps on the path taken
+		parents = d.Live
+	}
 	in := ""
 	for i, p := range parents {
 		if i > 0 {
@@ -848,6 +1074,14 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 		}
 		prompt += h.aiSuffix(f, d)
 		return h.flowAgent(ctx, root, fr, n.ID, prompt, firstNonEmpty(n.Model, fr.st.Options.Model))
+	case "gather":
+		fr.mu.Lock()
+		res := fr.gathered[n.ID]
+		fr.mu.Unlock()
+		out, err := flow.Gather(*n, res, d)
+		return out, u, err
+	case "loop":
+		return "", u, errors.New("a loop runs through runLoop")
 	case "merge":
 		titles := map[string]string{}
 		for _, p := range parents {
@@ -857,6 +1091,30 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 		}
 		out, err := flow.Merge(*n, parents, d, titles)
 		return out, u, err
+	case "decision", "filter", "aggregate":
+		if n.Source != "" {
+			in = flow.Render(n.Source, d)
+			d.Input = in
+		}
+		switch n.Type {
+		case "filter":
+			out, err := flow.FilterRows(*n, in, d)
+			return out, u, err
+		case "aggregate":
+			out, err := flow.Aggregate(*n, in, d)
+			return out, u, err
+		}
+		bs, err := flow.Decide(*n, in, d)
+		if err != nil {
+			return "", u, err
+		}
+		var labels []string
+		for _, b := range bs {
+			labels = append(labels, flow.BranchLabel(*n, b))
+		}
+		fr.update(func(st *FlowRunState) { s := fr.step(n.ID); s.Branches, s.Path = bs, strings.Join(labels, ", ") })
+		h.flowPublish(fr, "flow.decision", firstNonEmpty(n.Title, n.ID)+" → "+strings.Join(labels, ", "), map[string]any{"_step": n.ID, "branches": bs})
+		return in, u, nil // the data passes on along the path taken
 	case "transform":
 		if n.Source != "" {
 			in = flow.Render(n.Source, d)

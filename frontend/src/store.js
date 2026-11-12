@@ -225,3 +225,15 @@ export async function downloadProjectZip(withContext = true) {
   } catch (e) { toast(errMsg(e)); }
   S.zipBusy = false; update();
 }
+
+// Select another Spec Kit project of the workspace ("" = the top folder):
+// its workflow, progress and history become the current ones.
+export async function switchProject(name) {
+  try {
+    const ws = await backend.SwitchSpecProject(name);
+    S.ws = { ...S.ws, ...ws }; S.wf = ws.workflow; S.sel = currentStep(ws.workflow);
+    toast(`Now working on ${name ? name + "/" : "the top folder"}.`);
+    update();
+    loadStepEvents(S.sel);
+  } catch (e) { toast(errMsg(e)); }
+}

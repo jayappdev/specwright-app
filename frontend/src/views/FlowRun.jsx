@@ -101,6 +101,15 @@ function InputField({ i }) {
     case "multiline": simple = false; field = <DropZone list={list}><textarea rows={5} value={v} onChange={(e) => set(e.target.value)} onPaste={onPasteAttach(list)} /><AttachBar list={list} insertText={append} /></DropZone>; break;
     case "number": field = <input type="number" step="any" value={v} onChange={(e) => set(e.target.value)} />; break;
     case "boolean": field = <label className="check"><input type="checkbox" checked={v === "true"} onChange={(e) => set(e.target.checked ? "true" : "false")} /> Yes</label>; break;
+    case "multichoice": {
+      simple = false;
+      const opts = (i.options || []).filter(Boolean), picked = new Set(v.split("\n").filter(Boolean));
+      const setPicked = (next) => set(opts.filter((o) => next.has(o)).join("\n"));
+      field = <div className="mc-list" role="group" aria-label={i.label || i.name}>
+        {opts.map((o) => <label key={o} className="check"><input type="checkbox" checked={picked.has(o)} onChange={(e) => { const n = new Set(picked); e.target.checked ? n.add(o) : n.delete(o); setPicked(n); }} /> {o}</label>)}
+        {opts.length > 3 && <span className="mc-all"><button type="button" className="link" onClick={() => setPicked(new Set(opts))}>All</button> <button type="button" className="link" onClick={() => setPicked(new Set())}>None</button> <span className="muted">{picked.size} of {opts.length}</span></span>}</div>;
+      break;
+    }
     case "choice": field = <select value={v} onChange={(e) => set(e.target.value)}><option value="">Choose…</option>{(i.options || []).filter(Boolean).map((o) => <option key={o}>{o}</option>)}</select>; break;
     case "file": case "files": {
       simple = false;
@@ -187,7 +196,7 @@ function Setup() {
   </>;
 }
 
-const estimate = (f) => f.minutesSaved || f.nodes.reduce((m, n) => m + ({ tool: 10, ai: 20, merge: 5, transform: 5, output: 5 }[n.type] || 0), 0);
+const estimate = (f) => f.minutesSaved || f.nodes.reduce((m, n) => m + ({ tool: 10, ai: 20, merge: 5, transform: 5, loop: 5, gather: 5, output: 5 }[n.type] || 0), 0);
 
 // --- run view -----------------------------------------------------------------------
 
@@ -256,7 +265,7 @@ function Steps({ st }) {
         return <li key={s.id} className={"fr-step s-" + s.status}>
           <button className="fr-step-head" disabled={!can} onClick={() => setOpen({ ...open, [s.id]: !open[s.id] })} aria-expanded={!!open[s.id]}>
             <StepIcon n={n} tools={S.ws?.extensions || []} size={28} />
-            <span className="fr-step-title"><b>{s.title}</b><small>{s.type === "tool" ? String(s.tool || "").replace(/^builtin:(.*)$/, "$1 · built-in") + (s.why ? " · arguments by AI" : n.instruction ? " · AI builds the arguments" : "") : s.type}{s.attempts > 1 ? ` · ${s.attempts} attempts` : ""}{s.notes?.length ? " · " + s.notes[s.notes.length - 1] : ""}</small></span>
+            <span className="fr-step-title"><b>{s.title}</b><small>{s.type === "tool" ? String(s.tool || "").replace(/^builtin:(.*)$/, "$1 · built-in") + (s.why ? " · arguments by AI" : n.instruction ? " · AI builds the arguments" : "") : s.type}{s.iterations ? (s.type === "loop" ? ` · ${s.status === "running" ? `item ${s.iteration || 0} of ${s.iterations}` : `${s.iterations} item${s.iterations === 1 ? "" : "s"}`}` : ` · ↻ item ${s.iteration}/${s.iterations}`) : s.attempts > 1 ? ` · ${s.attempts} attempts` : ""}{s.failedItems ? ` · ${s.failedItems} failed` : ""}{s.path ? ` · → ${s.path}` : ""}{s.notes?.length ? " · " + s.notes[s.notes.length - 1] : ""}</small></span>
             {s.status === "running" ? <span className="spinner" /> : <Pill s={pill(s.status)} label={STATUS_LABEL[s.status] || s.status} />}
             <span className="muted fr-dur">{s.durationMs ? fmtMs(s.durationMs) : ""}</span>
           </button>
