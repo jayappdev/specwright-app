@@ -17,7 +17,7 @@ const WIZ = [["w-lang", "Language"], ["w-global", "Corporate libraries"], ["w-pr
 export function NeedWorkspace({ what = "this view" }) {
   return (
     <section className="view">
-      <div className="card"><h3>Open a project folder first</h3>
+      <div className="card"><h3>Open a workspace folder first</h3>
         <p className="wf-desc">Choose the folder the agent works in to use {what}. Only that folder is visible to the agent.</p>
         <WorkspaceBar />
       </div>
@@ -30,7 +30,7 @@ export function WorkspaceBar() {
   return (
     <>
       <div className="setup-input">
-        <input aria-label="Project folder" style={{ fontFamily: "var(--font-mono)" }} value={v} placeholder="~/src/my-service" onChange={(e) => { S._wsInput = e.target.value; update(); }} onKeyDown={(e) => e.key === "Enter" && openWorkspace(v)} />
+        <input aria-label="Workspace folder" style={{ fontFamily: "var(--font-mono)" }} value={v} placeholder="~/src/my-workspace" onChange={(e) => { S._wsInput = e.target.value; update(); }} onKeyDown={(e) => e.key === "Enter" && openWorkspace(v)} />
         <button className="btn secondary" onClick={() => openWorkspace(v)}>Open</button>
         {backend.kind === "desktop" && <button className="btn secondary" onClick={() => openWorkspace("", true)}>Browse…</button>}
       </div>

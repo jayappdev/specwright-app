@@ -2,7 +2,8 @@
 // It mirrors the Go API method-for-method and emits events with the same
 // flattened shape as bus.Event, driven by a scripted agent.
 
-import { stepNames, isStepField } from "./flowNames.js";
+import { stepNames, isStepField, isLoopField, useStepIDs } from "./flowNames.js";
+import { COND_OPS, AGG_FNS, condCheck, condTemplates, filterRows, aggregateRows, aggregateCheck, decide, branchLabel, liveParents } from "./flowRows.js";
 import { BUILTINS } from "./builtins.generated.js";
 
 // built-in tools as flow tools ("builtin:<name>"), shaped like project tools (mirrors core.FlowBuiltinTools)
@@ -220,7 +221,30 @@ export function createMockBackend(methods) {
     }
     return [...managedView(), ...list.filter((e) => !isManaged(e.name))];
   };
-  const wsState = () => ({ root: db.root, name: db.root.split("/").pop(), profile: db.profile, libraries: annotated(), workflow: clone(db.wf), extensions: extensions(), fileCount: Object.keys(db.files).length, specKit: !!skInfo().initialized, speckit: skInfo() });
+  const wsState = () => ({ root: db.root, name: db.root.split("/").pop(), profile: db.profile, libraries: annotated(), workflow: clone(db.wf), extensions: extensions(), fileCount: Object.keys(db.files).length, specKit: !!skInfo().initialized, speckit: skInfo(), projects: mockProjects() });
+  // several Spec Kit projects per workspace, each with its own workflow (mirrors core/projects.go)
+  const wfKey = (p) => (p ? "speckit@" + p : "speckit");
+  function mockProjects() {
+    const cur = db.profile.specProject || "", names = new Set();
+    for (const f of Object.keys(db.files)) { const m = f.match(/^(?:([A-Za-z0-9][A-Za-z0-9._-]*)\/)?\.specify\//); if (m) names.add(m[1] || ""); }
+    if (cur) names.add(cur);
+    return [...names].sort((a, b) => (a === "") !== (b === "") ? (a === "" ? -1 : 1) : a.localeCompare(b)).map((n) => {
+      const w = n === cur ? db.wf : (db.wfs || {})[wfKey(n)], done = w ? w.steps.filter((x) => x.status === "done").length : 0;
+      return { name: n, label: n || db.root.split("/").pop() + " (top folder)", current: n === cur, done, steps: w ? w.steps.length : 0, next: w ? (w.steps.find((x) => x.status !== "done")?.title || "") : "" };
+    });
+  }
+  function selectProject(name) {
+    if (live) throw new Error("finish or cancel the running step before switching project");
+    const cur = db.profile.specProject || "";
+    if (cur === name && db.wf.id === wfKey(name)) return;
+    db.wfs ||= {}; db.wfs[wfKey(cur)] = db.wf;
+    let w = db.wfs[wfKey(name)];
+    if (!w) { // a new project: the same choices, every step pending
+      w = specKit(); w.id = wfKey(name); w.model = db.wf.model; w.budget = clone(db.wf.budget); w.context = clone(db.wf.context || {});
+      for (const st of w.steps) { const o = db.wf.steps.find((x) => x.id === st.id); if (o) Object.assign(st, { options: clone(o.options), gate: o.gate, retries: o.retries }); }
+    }
+    db.wf = w; db.profile.specProject = name; persist();
+  }
   // Spec Kit (mirrors internal/speckit): the bundled v1.4.0 template
   const SK_STEPS = ["analyze", "checklist", "clarify", "constitution", "converge", "implement", "plan", "specify", "tasks"];
   const SK_CORE = [".specify/.gitignore", ".specify/memory/.constitution-template.json", ".specify/memory/constitution.md", ...["check-prerequisites", "common", "create-new-feature", "resolve-template", "setup-plan", "setup-tasks"].map((n) => `.specify/scripts/bash/${n}.sh`),
@@ -469,6 +493,7 @@ export function createMockBackend(methods) {
     "split-lines": { name: "Lines → JSON array", group: "Convert" },
     "json-path": { name: "Pick a JSON value", group: "JSON", help: "A path like items[0].name, items[*].id or $.data.total.", expr: "Path" },
     "json-pick": { name: "Keep JSON fields", group: "JSON", help: "Comma-separated field names; works on an object or an array of objects.", expr: "Fields" },
+    "json-template": { name: "JSON → JSON (template)", group: "JSON", help: "Write the JSON to produce. {{this.<path>}} reads the input JSON; a placeholder that is a whole string value (\"{{this.total}}\") keeps its type (number, list, object). For nested lists, an object whose only key is \"{{#each this.lines}}\" repeats its template for each element; inside it {{parent.<path>}} is the level above, {{root.<path>}} the whole input and {{this_index}} the position. Set a list path to apply the whole template to each element and get a JSON array.", expr: "For each element of (optional list path, e.g. items)", exprOptional: true, template: true },
     "json-pretty": { name: "Format JSON", group: "JSON" }, "json-minify": { name: "Minify JSON", group: "JSON" },
     "csv-to-json": { name: "CSV → JSON", group: "Convert" }, "json-to-csv": { name: "JSON → CSV", group: "Convert" },
     "md-to-html": { name: "Markdown → HTML", group: "Convert" }, "html-to-text": { name: "HTML → text", group: "Convert" },
@@ -499,40 +524,94 @@ export function createMockBackend(methods) {
     const tools = [...extensions(), ...flowBuiltins()], inputs = new Set(f.inputs.map((i) => i.name)), ids = new Set(f.nodes.map((n) => n.id));
     if (!f.name?.trim()) add("", "error", "Give the flow a name.");
     if (!f.nodes.some((n) => n.type === "output")) add("", "warning", "Add an output so the flow produces something.");
+    const { names: stepAlias } = stepNames(f), byID = (h) => { const id = stepAlias[h], s = id && f.nodes.find((x) => x.id === id); return s ? ` Steps are referred to by their id: use "${id}" (the id of ${s.title || id}).` : ""; };
     const check = (n, what, tpl) => { const anc = flowAnc(f, n.id); for (const v of flowVars(tpl)) { const [h, r = ""] = [v.split(".")[0], v.split(".").slice(1).join(".")]; const name = r.split(".")[0];
       if (h === "inputs" && !inputs.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but there is no input called "${name}".`);
       if (h === "steps" && !ids.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but there is no step "${name}".`);
       else if (h === "steps" && !anc.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but "${name}" does not run before this step. Connect it first.`);
+      else if (!["inputs", "steps", "context", "skills", "input", "input_file", "output", "flow", "date", "now", "item", "item_index", "item_count"].includes(h) && isLoopField(r)) {
+        const ln = f.nodes.find((x) => x.id === h);
+        if (!ln) add(n.id, "error", `${what} uses {{${v}}}, but there is no step with the id "${h}".${byID(h)}`);
+        else if (ln.type !== "loop") add(n.id, "error", `${what} uses {{${v}}}, but ${ln.title || ln.id} is not a Loop step.`);
+        else if (!(loopStacks(f).stack[n.id] || []).includes(h)) add(n.id, "error", `${what} uses {{${v}}}, but it does not run inside the loop ${ln.title || ln.id} (only the steps between it and its Gather do).`);
+      }
       else if (!["inputs", "steps", "context", "skills", "input", "input_file", "output", "flow", "date", "now"].includes(h) && isStepField(r)) {
-        const { names, ambiguous } = stepNames(f), sid = ids.has(h) ? h : names[h];
-        if (!sid && ambiguous.has(h)) add(n.id, "error", `${what} uses {{${v}}}, but more than one step is called "${h}". Use the step's id instead.`);
-        else if (!sid) add(n.id, "error", `${what} uses {{${v}}}, but no step or tool is called "${h}".`);
+        const sid = h;
+        if (!ids.has(h)) add(n.id, "error", `${what} uses {{${v}}}, but there is no step with the id "${h}".${byID(h)}`);
         else if (sid === n.id) add(n.id, "error", `${what} uses {{${v}}}: a step cannot read its own output.`);
         else if (!anc.has(sid)) add(n.id, "error", `${what} uses {{${v}}}, but "${h}" does not run before this step. Connect it first.`);
       } } };
     for (const n of f.nodes) {
       const label = n.title || n.id;
-      if (n.type !== "start" && !f.edges.some((e) => e.to === n.id)) add(n.id, "warning", `${label} is not connected to anything before it.`);
+      if (n.type !== "start" && !f.edges.some((e) => e.to === n.id) && !(n.type === "loop" && (n.source || "").trim())) add(n.id, "warning", `${label} is not connected to anything before it.`);
+      if (n.type === "loop" && !loopStacks(f).gather[n.id]) add(n.id, "error", `${label} needs a Gather step after the steps it repeats, to collect their results.`);
+      if (n.type === "gather" && !Object.values(loopStacks(f).gather).includes(n.id)) add(n.id, "error", `${label} has no Loop before it: connect it after the steps of a Loop.`);
       if (n.type === "tool") { const t = tools.find((x) => x.name === n.tool); if (!n.tool) add(n.id, "error", `Choose a tool for ${label}.`); else if (!t) add(n.id, "error", `The tool "${n.tool}" is not available in this project.`);
         else if (!(n.instruction || "").trim()) (t.params || []).forEach((p) => { if (p.required && !(n.args?.[p.name] || "").trim()) add(n.id, "error", `${label}: the required parameter "${p.name}" is empty (fill it in, or describe the step and let AI build it).`); });
         for (const k in n.args || {}) check(n, `${label} › ${k}`, n.args[k]);
         const feeders = f.edges.filter((e) => e.to === n.id).map((e) => f.nodes.find((x) => x.id === e.from)).filter((x) => x && x.type !== "start");
-        const { names: nm } = stepNames(f);
-        const uses = Object.values(n.args || {}).some((v) => /\{\{\s*input(_file)?\b/.test(v) || feeders.some((x) => new RegExp("\\{\\{\\s*steps\\." + x.id + "(?=[.}\\s])").test(v)
-          || [...String(v).matchAll(/\{\{\s*([^.{}\s]+)\.(output_file|buffer_output)/g)].some((m) => m[1] === x.id || nm[m[1]] === x.id)));
+        const uses = Object.values(n.args || {}).some((v) => /\{\{\s*input(_file)?\b/.test(v) || (feeders.some((x) => x.type === "loop") && /\{\{\s*item\b/.test(v)) || feeders.some((x) => new RegExp("\\{\\{\\s*steps\\." + x.id + "(?=[.}\\s])").test(v)
+          || [...String(v).matchAll(/\{\{\s*([^.{}\s]+)\.(output_file|buffer_output)/g)].some((m) => m[1] === x.id || false)));
         if (feeders.length && !(n.instruction || "").trim() && !uses) add(n.id, "warning", `None of ${label}'s fields use the result of ${feeders.map((x) => x.title || x.id).join(" and ")}. It is still piped in, which only helps tools that read piped data. To use it in a field, click “← ${feeders[0].title || feeders[0].id}” next to that field, or describe the step and let AI fill the fields.`); }
       if (n.type === "ai") { if (!(n.prompt || "").trim()) add(n.id, "error", `${label} needs a prompt.`); check(n, label, n.prompt); }
       if (n.type === "merge" && f.edges.filter((e) => e.to === n.id).length < 2) add(n.id, "warning", `${label} merges fewer than two steps.`);
-      if (n.type === "transform") { if (!FLOW_OPS[n.op]) add(n.id, "error", `${label}: choose a transformation.`); else if (FLOW_OPS[n.op].expr && !(n.expr || "").trim()) add(n.id, "error", `${label}: fill in the expression.`); check(n, label, (n.source || "") + (n.template || "")); }
+      if (n.type === "transform") { if (!FLOW_OPS[n.op]) add(n.id, "error", `${label}: choose a transformation.`); else if (FLOW_OPS[n.op].expr && !FLOW_OPS[n.op].exprOptional && !(n.expr || "").trim()) add(n.id, "error", `${label}: fill in the expression.`); if (n.op === "json-template") { if (!(n.template || "").trim()) add(n.id, "error", `${label}: write the template`); else try { parseTpl(n.template); } catch (e) { add(n.id, "error", `${label}: ${e.message}`); } } check(n, label, (n.source || "") + (n.template || "")); }
+      if (n.type === "decision") {
+        if (!(n.branches || []).length) add(n.id, "error", `${label}: add a path (a condition and where it leads).`);
+        const bids = new Set(["else"]);
+        for (const b of n.branches || []) { const name = b.label || b.id; if (!b.id || b.id === "else") add(n.id, "error", `${label}: the path "${name}" needs an id other than "else".`); else if (bids.has(b.id)) add(n.id, "error", `${label}: two paths have the id "${b.id}".`); bids.add(b.id); const e = condCheck(b.when); if (e) add(n.id, "error", `${label} › ${name}: ${e}`); condTemplates(b.when).forEach((t) => check(n, label + " › " + name, t)); }
+        const used = new Set(); for (const e of f.edges.filter((x) => x.from === n.id)) { const to = f.nodes.find((x) => x.id === e.to)?.title || e.to; if (!e.branch) add(n.id, "warning", `${label}: the connection to ${to} is not on a path, so it always runs. Click it to choose its path.`); else if (!bids.has(e.branch)) add(n.id, "error", `${label}: the connection to ${to} is on a path that no longer exists (${e.branch}). Click it to choose a path.`); used.add(e.branch); }
+        for (const b of n.branches || []) if (b.id && !used.has(b.id)) add(n.id, "warning", `${label}: nothing is connected to the path "${b.label || b.id}", so nothing runs when it is taken.`);
+      }
+      if (n.type === "filter") { const e = condCheck(n.cond); if (e) add(n.id, "error", `${label}: ${e}`); condTemplates(n.cond).forEach((t) => check(n, label, t)); }
+      if (n.type === "aggregate") { const e = aggregateCheck(n); if (e) add(n.id, "error", `${label}: ${e}`); }
       if (n.type === "output") { check(n, label, n.template); for (const a of n.actions || []) { if (a.type === "save" && (!a.path || a.path.startsWith("/") || a.path.includes(".."))) add(n.id, "error", `${label}: save inside the project (a relative path without ..).`); check(n, label, a.path); } }
     }
     return out;
   };
-  const render = (tpl, d) => String(tpl || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, v) => { const [h, ...r] = v.split("."); if (h === "inputs") return d.inputs?.[r[0]] ?? ""; if (h === "steps") { const s = d.steps?.[r[0]] ?? ""; if (r[1] === "json") { try { return jpath(JSON.parse(s), r.slice(2).join(".")); } catch { return ""; } } return s; } if (h === "input") return d.input ?? ""; if (h === "input_file") return d.inputFile || "/tmp/specwright/flow-input/step.txt";
-    if (isStepField(r.join("."))) { const id = h in (d.steps || {}) ? h : d.names?.[h]; if (id && id in (d.steps || {})) { if (r[0] === "output_file") return d.files?.[id] || ""; if (r[1] === "json") { try { return jtext(jpath(JSON.parse(d.steps[id]), r.slice(2).join("."))); } catch { return ""; } } return d.steps[id]; } return ""; }
+  const render = (tpl, d) => String(tpl || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, v) => { const [h, ...r] = v.split("."); if (h === "inputs") return d.inputs?.[r[0]] ?? ""; if (h === "steps") { const s = d.steps?.[r[0]] ?? ""; if (r[1] === "json") { try { return jpath(JSON.parse(s), r.slice(2).join(".")); } catch { return ""; } } return s; } if (h === "input") return d.input ?? ""; if (h === "item") { if (r[0] === "json") { try { return jpath(JSON.parse(d.item), r.slice(1).join(".")); } catch { return ""; } } return d.item ?? ""; } if (h === "item_index") return d.itemCount ? String(d.itemIndex) : ""; if (h === "item_count") return d.itemCount ? String(d.itemCount) : "";
+    if (isLoopField(r.join("."))) { const l = d.loops?.[h]; if (!l) return ""; if (r[0] === "item_index") return String(l.index); if (r[0] === "item_count") return String(l.count); if (r[1] === "json") { try { return jtext(jpath(JSON.parse(l.item), r.slice(2).join("."))); } catch { return ""; } } return l.item; }
+    if (h === "input_file") return d.inputFile || "/tmp/specwright/flow-input/step.txt";
+    if (isStepField(r.join("."))) { const id = h; if (id && id in (d.steps || {})) { if (r[0] === "output_file") return d.files?.[id] || ""; if (r[1] === "json") { try { return jtext(jpath(JSON.parse(d.steps[id]), r.slice(2).join("."))); } catch { return ""; } } return d.steps[id]; } return ""; }
     return d[h] ?? ""; });
   const jtext = (v) => (typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? JSON.stringify(v, null, 2) : String(v));
-  const jpath = (v, path) => { let cur = [v], wild = false; for (const m of String(path).replace(/^\$\.?/, "").matchAll(/\[(\d+|\*)\]|([^.[\]]+)/g)) { const nx = []; for (const c of cur) { if (m[1] === "*") { wild = true; nx.push(...(Array.isArray(c) ? c : Object.values(c || {}))); } else if (m[1] != null) { if (Array.isArray(c) && +m[1] < c.length) nx.push(c[+m[1]]); } else if (Array.isArray(c)) { wild = true; c.forEach((e) => e && m[2] in e && nx.push(e[m[2]])); } else if (c && typeof c === "object" && m[2] in c) nx.push(c[m[2]]); } cur = nx; if (!cur.length) throw new Error(`nothing at "${m[0]}"`); } return jtext(wild ? cur : cur[0]); };
+  // JSON → JSON (template); mirrors internal/flow/jsontemplate.go
+  const EACH = /^\{\{\s*#each\s+([^{}]+?)\s*\}\}$/, WHOLE = /^\{\{\s*([^{}]+?)\s*\}\}$/;
+  const quoteBare = (tpl) => { let out = "", inStr = false; for (let i = 0; i < tpl.length;) { const c = tpl[i];
+    if (inStr && c === "\\") { out += tpl.slice(i, i + 2); i += 2; continue; }
+    if (c === '"') inStr = !inStr;
+    else if (!inStr && tpl.startsWith("{{", i)) { const m = tpl.slice(i).match(/^\{\{\s*[^{}]+?\s*\}\}/); if (m) { out += JSON.stringify(m[0]); i += m[0].length; continue; } }
+    out += c; i++; } return out; };
+  const parseTpl = (tpl) => { let t; try { t = JSON.parse(quoteBare(tpl || "")); } catch (e) { throw new Error("the template is not valid JSON: " + e.message); }
+    const chk = (v) => { if (Array.isArray(v)) v.forEach(chk); else if (v && typeof v === "object") { const ks = Object.keys(v); for (const k of ks) { if (EACH.test(k) && ks.length > 1) throw new Error(`"${k}" must be the only key of its object: put the other fields inside its template`); if (k.includes("#each") && !EACH.test(k)) throw new Error(`"${k}": write an each block as "{{#each this.<list>}}"`); chk(v[k]); } } };
+    chk(t); return t; };
+  const eachOf = (t) => { if (!t || typeof t !== "object" || Array.isArray(t)) return null; const ks = Object.keys(t); const m = ks.length === 1 && ks[0].match(EACH); return m ? [m[1], t[ks[0]]] : null; };
+  const jsonTemplate = (n, input, d) => {
+    let src; try { src = JSON.parse(input); } catch (e) { throw new Error("the input is not JSON: " + e.message); }
+    const tpl = parseTpl(n.template);
+    const value = (v, sc) => { v = v.trim(); let up = false;
+      for (;;) { if (v === "parent") return sc.parent ? sc.parent.this : null; if (!v.startsWith("parent.")) break; if (!sc.parent) return null; sc = sc.parent; v = v.slice(7); up = true; }
+      if (up && !["this", "root", "this_index"].includes(v.split(".")[0])) v = "this." + v;
+      const [h, ...r] = v.split(".");
+      if (h === "this" || h === "root") { try { return jpathRaw(h === "root" ? sc.root : sc.this, r.join(".")); } catch { return null; } }
+      if (h === "this_index") return sc.index;
+      const s = render("{{" + v + "}}", { ...d, input }); try { return s.trim() ? JSON.parse(s) : s; } catch { return s; } };
+    const text = (s, sc) => String(s).replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, v) => { const x = value(v, sc); return x == null ? "" : typeof x === "string" ? x : JSON.stringify(x); });
+    const each = (path, body, sc) => { const got = value(path, sc); if (got == null) return []; if (!Array.isArray(got)) throw new Error(`{{#each ${path}}}: that is not a list`);
+      return got.map((el, i) => ev(body, { this: el, index: i + 1, parent: sc, root: sc.root })); };
+    const ev = (t, sc) => {
+      if (typeof t === "string") { const m = t.match(WHOLE); return m ? value(m[1], sc) ?? null : text(t, sc); }
+      if (Array.isArray(t)) return t.flatMap((e) => { const b = eachOf(e); return b ? each(b[0], b[1], sc) : [ev(e, sc)]; });
+      if (t && typeof t === "object") { const b = eachOf(t); if (b) return each(b[0], b[1], sc); const o = {}; for (const k of Object.keys(t)) o[text(k, sc)] = ev(t[k], sc); return o; }
+      return t; };
+    const top = { this: src, index: 1, parent: null, root: src };
+    if (!(n.expr || "").trim()) return JSON.stringify(ev(tpl, top), null, 2);
+    let list; try { list = jpathRaw(src, n.expr.trim()); } catch (e) { throw new Error(`nothing at ${n.expr}: ${e.message}`); }
+    if (!Array.isArray(list)) throw new Error(`${n.expr} is not a list`);
+    return JSON.stringify(list.map((el, i) => ev(tpl, { this: el, index: i + 1, parent: top, root: src })), null, 2);
+  };
+  const jpath = (v, path) => jtext(jpathRaw(v, path));
+  const jpathRaw = (v, path) => { let cur = [v], wild = false; for (const m of String(path).replace(/^\$\.?/, "").matchAll(/\[(\d+|\*)\]|([^.[\]]+)/g)) { const nx = []; for (const c of cur) { if (m[1] === "*") { wild = true; nx.push(...(Array.isArray(c) ? c : Object.values(c || {}))); } else if (m[1] != null) { if (Array.isArray(c) && +m[1] < c.length) nx.push(c[+m[1]]); } else if (Array.isArray(c)) { wild = true; c.forEach((e) => e && m[2] in e && nx.push(e[m[2]])); } else if (c && typeof c === "object" && m[2] in c) nx.push(c[m[2]]); } cur = nx; if (!cur.length) throw new Error(`nothing at "${m[0]}"`); } return wild ? cur : cur[0]; };
   const toCsv = (v) => { const rows = (Array.isArray(v) ? v : [v]).map((r) => (r && typeof r === "object" ? r : { value: r })); const head = [...new Set(rows.flatMap((r) => Object.keys(r)))]; const q = (x) => { const s = jtext(x).replace(/\n/g, " "); return /[",]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s; }; return [head.join(","), ...rows.map((r) => head.map((k) => (k in r ? q(r[k]) : "")).join(","))].join("\n") + "\n"; };
   const fromCsv = (t) => { const [h, ...rows] = t.trim().split("\n").map((l) => l.split(",")); return JSON.stringify(rows.map((r) => Object.fromEntries(h.map((k, i) => [k, r[i] ?? ""]))), null, 2); };
   const mdHtml = (md) => md.split(/\n{2,}/).map((b) => /^#{1,6}\s/.test(b) ? `<h${b.match(/^#+/)[0].length}>${b.replace(/^#+\s*/, "")}</h${b.match(/^#+/)[0].length}>` : /^[-*]\s/.test(b) ? `<ul>${b.split("\n").map((l) => `<li>${l.replace(/^[-*]\s+/, "")}</li>`).join("")}</ul>` : `<p>${b.replace(/\*\*(.+?)\*\*/g, "<strong>$1</strong>").replace(/`(.+?)`/g, "<code>$1</code>")}</p>`).join("\n");
@@ -554,6 +633,7 @@ export function createMockBackend(methods) {
       case "split-lines": return JSON.stringify(input.split("\n").filter((l) => l.trim()), null, 2);
       case "json-path": return jpath(JSON.parse(input), n.expr);
       case "json-pick": { const keys = n.expr.split(",").map((k) => k.trim()); const pick = (o) => Object.fromEntries(keys.filter((k) => k in o).map((k) => [k, o[k]])); const v = JSON.parse(input); return JSON.stringify(Array.isArray(v) ? v.map(pick) : pick(v), null, 2); }
+      case "json-template": return jsonTemplate(n, input, d);
       case "json-pretty": return JSON.stringify(JSON.parse(input), null, 2); case "json-minify": return JSON.stringify(JSON.parse(input));
       case "csv-to-json": return fromCsv(input); case "json-to-csv": return toCsv(JSON.parse(input));
       case "md-to-html": return mdHtml(input); case "html-to-text": return input.replace(/<[^>]+>/g, "");
@@ -565,6 +645,38 @@ export function createMockBackend(methods) {
   // --- flow runs (browser preview: simulated executor with the same events and decisions) ---
   const kcStore = {};
   const flowLive = new Map();
+  // loops (mirrors internal/flow/loop.go)
+  const splitItems = (src, n) => {
+    src = String(src || "").trim(); let mode = n.split || "auto", raw = [];
+    if (mode === "auto") { mode = "lines"; if (src.startsWith("[")) { try { JSON.parse(src); mode = "json"; } catch { /* lines */ } } else if (src.startsWith("{")) { try { const o = JSON.parse(src), a = Object.values(o).find(Array.isArray); if (a) { src = JSON.stringify(a); mode = "json"; } } catch { /* lines */ } } }
+    if (mode === "json") raw = JSON.parse(src).map((v) => (typeof v === "string" ? v : JSON.stringify(v)));
+    else if (mode === "csv") { const [h, ...rows] = src.split("\n").filter((l) => l.trim()); const ks = h.split(","); raw = rows.map((r) => JSON.stringify(Object.fromEntries(r.split(",").map((v, i) => [ks[i], v])))); }
+    else if (mode === "regex") { const re = new RegExp(n.expr, "g"); raw = [...src.matchAll(re)].map((m) => m[1] ?? m[0]); }
+    else raw = src.split("\n").map((l) => l.trim()).filter(Boolean);
+    const keep = n.filter ? new RegExp(n.filter) : null, seen = new Set(), out = [];
+    for (const r of raw) { if (keep && !keep.test(r)) continue; if (n.unique && seen.has(r)) continue; seen.add(r); out.push(r); if (out.length >= (n.max || 1000)) break; }
+    return out;
+  };
+  const itemTitle = (it) => { let s = String(it).trim(); if (s.startsWith("{")) { try { const o = JSON.parse(s); for (const k of ["name", "id", "title", "symbol", "key", "path", "file"]) if (k in o) { s = String(o[k]); break; } } catch { /* text */ } } return s.length > 120 ? s.slice(0, 120) + "…" : s; };
+  const asVal = (s) => { try { return JSON.parse(s); } catch { return s; } };
+  const gatherItems = (n, rs, d) => {
+    const ok = (r) => (r.error ? "ERROR: " + r.error : String(r.output).trim()), sep = (n.separator || "").replace(/\\n/g, "\n");
+    switch (n.mode || "concat") {
+      case "sections": return rs.map((r) => `## ${itemTitle(r.item)}\n\n${ok(r)}`).join("\n\n");
+      case "json-array": return JSON.stringify(rs.map((r) => (r.error ? { item: asVal(r.item), error: r.error } : asVal(String(r.output).trim()))), null, 2);
+      case "json-object": return JSON.stringify(Object.fromEntries(rs.map((r) => [itemTitle(r.item), r.error ? { error: r.error } : asVal(String(r.output).trim())])), null, 2);
+      case "template": return rs.map((r, i) => render(n.template, { ...d, item: r.item, itemIndex: i + 1, itemCount: rs.length, input: ok(r) })).join(sep || "\n");
+      default: return rs.map(ok).join(sep || "\n\n");
+    }
+  };
+  const loopStacks = (f) => { // id → loops it runs inside; loop → its gather
+    const memo = {}, par = (id) => f.edges.filter((e) => e.to === id).map((e) => e.from), node = (id) => f.nodes.find((x) => x.id === id);
+    const into = (p) => (node(p)?.type === "loop" ? [...stk(p), p] : stk(p));
+    const stk = (id) => { if (id in memo) return memo[id]; memo[id] = []; const ps = par(id); let s = ps.length ? into(ps[0]) : []; if (node(id)?.type === "gather" && s.length) s = s.slice(0, -1); return (memo[id] = s); };
+    const stack = Object.fromEntries(f.nodes.map((n) => [n.id, stk(n.id)])), gather = {};
+    for (const n of f.nodes) if (n.type === "gather") { const ps = par(n.id), s = ps.length ? into(ps[0]) : []; if (s.length) gather[s[s.length - 1]] = n.id; }
+    return { stack, gather };
+  };
   const flowOrder = (f) => { const indeg = Object.fromEntries(f.nodes.map((n) => [n.id, 0])); f.edges.forEach((e) => indeg[e.to]++); const ready = f.nodes.filter((n) => !indeg[n.id]).sort((a, b) => a.x - b.x || a.y - b.y).map((n) => n.id), out = [];
     while (ready.length) { const n = ready.shift(); out.push(n); f.edges.filter((e) => e.from === n).forEach((e) => { if (!--indeg[e.to]) ready.push(e.to); }); ready.sort((a, b) => { const A = f.nodes.find((x) => x.id === a), B = f.nodes.find((x) => x.id === b); return A.x - B.x || A.y - B.y; }); } return out; };
   const flowMinutes = (f) => f.minutesSaved || f.nodes.reduce((m, n) => m + ({ tool: 10, ai: 20, merge: 5, transform: 5, output: 5 }[n.type] || 0), 0);
@@ -633,7 +745,7 @@ export function createMockBackend(methods) {
       return out;
     };
     const exec = async (n, d) => {
-      const parents = f.edges.filter((e) => e.to === n.id).map((e) => e.from), input = parents.map((p) => d.steps[p] ?? "").join("\n\n");
+      const parents = d.live || f.edges.filter((e) => e.to === n.id).map((e) => e.from), input = parents.map((p) => d.steps[p] ?? "").join("\n\n");
       d.input = input; lr.curInput = input;
       switch (n.type) {
         case "start": return JSON.stringify(d.inputs, null, 2);
@@ -655,7 +767,16 @@ export function createMockBackend(methods) {
           return tool(n.id, n.tool, args);
         }
         case "ai": return ai(n.id, R(n.prompt, d) + (f.context?.text ? "\n\n## Context\n" + f.context.text : ""));
-        case "merge": { const r = await api.PreviewFlowStep(f, n.id, { inputs: d.inputs, steps: d.steps }); if (r.error) throw new Error(r.error); return r.output; }
+        case "gather": return gatherItems(n, gathered[n.id] || [], d);
+        case "merge": { const r = await api.PreviewFlowStep({ ...f, edges: f.edges.filter((e) => e.to !== n.id || parents.includes(e.from)) }, n.id, { inputs: d.inputs, steps: d.steps }); if (r.error) throw new Error(r.error); return r.output; }
+        case "decision": case "filter": case "aggregate": {
+          const src = n.source ? R(n.source, d) : input, rnd = (m) => R(m, d);
+          if (n.type === "filter") return filterRows(n, src, rnd);
+          if (n.type === "aggregate") return aggregateRows(n, src, rnd);
+          const bs = decide(n, src, rnd), path = bs.map((b) => branchLabel(n, b)).join(", ");
+          Object.assign(stepOf(n.id), { branches: bs, path }); pub("flow.decision", `${n.title || n.id} → ${path}`, { step: n.id, branches: bs });
+          return src;
+        }
         case "transform": {
           const src = n.source ? R(n.source, d) : input;
           if (n.op === "ai") return ai(n.id, R(n.template, { ...d, input: src }) + "\n\nData:\n```\n" + src + "\n```");
@@ -678,6 +799,7 @@ export function createMockBackend(methods) {
       return "";
     };
     const stepOf = (nid) => st.steps.find((s) => s.id === nid);
+    const gathered = {}; // a Gather's per-item results
     const runStep = async (n, d) => {
       const s = stepOf(n.id), t = Date.now();
       Object.assign(s, { status: "running", error: "", attempts: s.attempts + 1, started: now() }); state();
@@ -718,8 +840,62 @@ export function createMockBackend(methods) {
           Object.assign(st, { pass, item: i + 1, itemLabel: items[i] != null ? String(items[i]).slice(0, 60) : "", status: "running", steps: stepsFresh() });
           if (st.passes > 1 || items.length > 1) pub("flow.pass", [st.passes > 1 ? `Run ${pass} of ${st.passes}` : "", items.length > 1 ? `item ${i + 1} of ${items.length}` : ""].filter(Boolean).join(" · ") + (st.itemLabel ? ": " + st.itemLabel : ""));
           state();
-          const d = { inputs, steps: {}, files: {}, names: stepNames(f).names, context: f.context?.text || "" }, bad = new Set();
-          for (const nid of flowOrder(f)) {
+          const d = { inputs, steps: {}, files: {}, context: f.context?.text || "", off: new Set(), branches: {} }, bad = new Set();
+          const li = loopStacks(f), order = flowOrder(f);
+          // run steps ids with data d; a Loop runs the steps inside it once per item
+          const runNodes = async (ids, d, bad) => {
+          const handled = new Set();
+          for (const nid of ids) {
+            if (handled.has(nid)) continue;
+            const ln = f.nodes.find((x) => x.id === nid);
+            // after a Decision: only the steps on the path it took run
+            { const ps = f.edges.filter((e) => e.to === nid).map((e) => e.from);
+              d.live = null;
+              if (ps.length) { const live = liveParents(f, nid, (p) => d.off.has(p), d.branches);
+                if (!live.length && !ps.some((p) => bad.has(p))) { const os = stepOf(nid); if (os) Object.assign(os, { status: "skipped", error: "not on the path the flow took" }); d.off.add(nid); state(); continue; }
+                d.live = live; } }
+            if (ln?.type === "loop" && !f.edges.some((e) => e.to === nid && bad.has(e.from))) {
+              const body = ids.filter((x) => x !== nid && (li.stack[x] || []).includes(nid)), g = li.gather[nid], ls = stepOf(nid), t = Date.now();
+              body.forEach((x) => handled.add(x)); handled.add(g);
+              Object.assign(ls, { status: "running", started: now(), attempts: ls.attempts + 1, iteration: 0, failedItems: 0 }); state();
+              const src = (ln.source || "").trim() ? R(ln.source, d) : f.edges.filter((e) => e.to === nid).map((e) => d.steps[e.from] ?? "").join("\n");
+              let items; try { items = splitItems(src, ln); } catch (e) { Object.assign(ls, { status: "failed", error: e.message }); bad.add(nid); body.forEach((x) => bad.add(x)); bad.add(g); failed = true; reason = `${ls.title} failed: ${e.message}`; state(); continue; }
+              Object.assign(ls, { iterations: items.length, output: JSON.stringify(items, null, 2) }); pub("flow.loop", `${ls.title}: ${items.length} items`, { step: nid, items: items.length }); state();
+              const results = [], gp = f.edges.filter((e) => e.to === g).map((e) => e.from); let stopErr = "";
+              for (let k = 0; k < items.length; k++) {
+                ls.iteration = k + 1; state(); pub("flow.loop", `${ls.title} · item ${k + 1} of ${items.length}: ${String(items[k]).slice(0, 60)}`, { step: nid, item: k + 1, items: items.length });
+                const di = { ...d, steps: { ...d.steps, [nid]: items[k] }, files: { ...d.files }, item: items[k], itemIndex: k + 1, itemCount: items.length, loops: { ...(d.loops || {}), [nid]: { item: items[k], index: k + 1, count: items.length } }, off: new Set(d.off), branches: { ...d.branches } }, bi = new Set(bad);
+                const errs = await runNodes(body, di, bi);
+                const r = { item: items[k], output: gp.filter((p) => !bi.has(p)).map((p) => di.steps[p] ?? "").join("\n\n") };
+                if (errs) { r.error = errs; ls.failedItems++; if (!ln.continueOnError) { stopErr = `item ${k + 1} of ${items.length}: ${errs}`; break; } }
+                results.push(r);
+              }
+              if (stopErr) { Object.assign(ls, { status: "failed", error: stopErr }); bad.add(nid); bad.add(g); const gs = stepOf(g); if (gs) Object.assign(gs, { status: "skipped", error: "the loop " + ls.title + " failed" }); failed = true; reason = `${ls.title} failed: ${stopErr}`; state(); continue; }
+              Object.assign(ls, { status: "done", durationMs: Date.now() - t, ended: now(), notes: ls.failedItems ? [`${ls.failedItems} of ${items.length} items failed; the loop went on`] : [] }); state();
+              d.steps[nid] = JSON.stringify(items, null, 2);
+              gathered[g] = results;
+              const gn = f.nodes.find((x) => x.id === g);
+              try { d.steps[g] = await runStep(gn, d); } catch (e) { if (e.stopped) throw e; bad.add(g); failed = true; reason = `${stepOf(g).title} failed: ${e.message}`; }
+              continue;
+            }
+            if (lr.stop) throw Object.assign(new Error("stopped by you"), { stopped: true });
+            const n = ln, s = stepOf(nid);
+            const blocked = f.edges.some((e) => e.to === nid && bad.has(e.from));
+            if ((o.skip || []).includes(nid) || blocked) { s.status = "skipped"; s.error = blocked ? "a step before it failed" : "skipped by you"; if (blocked) bad.add(nid); d.steps[nid] = ""; state(); continue; }
+            if (d.itemCount) Object.assign(s, { iteration: d.itemIndex, iterations: d.itemCount });
+            let out;
+            try { out = await runStep(n, d); } catch (e) { if (e.stopped) throw e; bad.add(nid); if (!d.itemCount) { failed = true; reason = `${s.title} failed: ${e.message}`; } if (d.itemCount) return e.message; continue; }
+            if (wants(n) && (!d.itemCount || n.review)) out = await review(n, d, out);
+            if (n.type === "decision") d.branches[nid] = stepOf(nid).branches || [];
+            d.steps[nid] = out;
+            { const ext = /^\s*</.test(out) ? "html" : /^[[{]/.test(String(out).trim()) ? "json" : "txt", rel = resultsDir(id) + "/steps/" + nid + (d.itemCount ? "/items/" + String(d.itemIndex).padStart(3, "0") : "/output") + "." + ext;
+              db.files[rel] = out; d.files[nid] = db.root + "/" + rel; const ss = st.steps.find((x) => x.id === nid); if (ss && !d.itemCount) ss.outputFile = rel; }
+            if (o.stopAfter === nid) { st.steps.filter((x) => x.status === "pending").forEach((x) => { x.status = "skipped"; x.error = "the run stops after " + s.title; }); state(); break; }
+          }
+          return "";
+          };
+          await runNodes(order, d, bad);
+          if (false) for (const nid of flowOrder(f)) {
             if (lr.stop) throw Object.assign(new Error("stopped by you"), { stopped: true });
             const n = f.nodes.find((x) => x.id === nid), s = stepOf(nid);
             const blocked = f.edges.some((e) => e.to === nid && bad.has(e.from));
@@ -756,6 +932,7 @@ export function createMockBackend(methods) {
     const t = text.trim();
     if (i.type === "number") { if (t && isNaN(Number(t))) throw new Error(`${label} must be a number, not "${t}"`); return t; }
     if (i.type === "boolean") return /^(true|yes|y|1|on)$/i.test(t) ? "true" : "false";
+    if (i.type === "multichoice") { const ls = text.split("\n").map((x) => x.trim()).filter(Boolean); for (const l of ls) if ((i.options || []).length && !i.options.includes(l)) throw new Error(`${label}: "${l}" is not one of: ${i.options.join(", ")}`); return (i.options || []).filter((o) => ls.includes(o)).join("\n"); }
     if (i.type === "choice") { if (t && (i.options || []).length && !i.options.includes(t)) throw new Error(`${label} must be one of: ${i.options.join(", ")}`); return t; }
     if (i.type === "file" || i.type === "files") { const ps = files.length ? files : t.split("\n").map((x) => x.trim()).filter(Boolean); if (i.type === "file" && ps.length > 1) throw new Error(`${label} takes one file; ${ps.length} were given`); return ps.join("\n"); }
     if (!files.length) return text;
@@ -790,13 +967,19 @@ export function createMockBackend(methods) {
     async PickFolder() { return wsState(); },
     async Workspace() { return wsState(); },
     async SpecKitInfo() { return skInfo(); },
+    async SpecProjects() { return mockProjects(); },
+    async SwitchSpecProject(name) {
+      name = (name || "").trim();
+      if (!Object.keys(db.files).some((f) => f.startsWith((name ? name + "/" : "") + ".specify/"))) throw new Error(`${name || "the top folder"} has no Spec Kit project yet: set it up on Choose input`);
+      selectProject(name); return wsState();
+    },
     async DownloadSpecKit(force) { if (force || !db.speckitAvailable) skDownload(); return skInfo(); },
     async InitSpecKit(project, integration) {
       if (!db.speckitAvailable) await skDownload();
       await wait(400);
       integration ||= "claude"; project = (project || "").trim().replace(/^\/+|\/+$/g, "") || db.profile.specProject || "";
       if (project && (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(project))) throw new Error(`"${project}" is not a good project folder name: use letters, digits, - . _ (e.g. orders-service)`);
-      db.profile.specProject = project; const P = pd();
+      selectProject(project); const P = pd();
       const res = { version: "1.4.0", integration, created: [], updated: [], kept: [] };
       for (const f0 of [...SK_CORE, ...SK_STEPS.map((s) => `${skDir(integration)}/speckit-${s}/SKILL.md`)]) {
         const f = P + f0;
@@ -1054,9 +1237,9 @@ export function createMockBackend(methods) {
       }
       return { ...makeDraft(r.prompt, lang, r.connects || []), kind: "script", status: "untested", revision: 1, prompt: r.prompt };
     },
-    async FlowOps() { return { ops: FLOW_OPS, mergeModes: ["concat", "json-object", "json-array", "template"], formats: ["md", "txt", "html", "csv", "json"] }; },
+    async FlowOps() { return { ops: FLOW_OPS, mergeModes: ["concat", "json-object", "json-array", "template"], formats: ["md", "txt", "html", "csv", "json"], condOps: COND_OPS, condMatches: ["all", "any", "none"], aggFns: AGG_FNS, aggregateModes: ["group", "window"], rowFormats: ["auto", "json", "csv", "lines"] }; },
     async Flows() { return Object.values(db.flows).map(flowSummary).sort((a, b) => String(b.updated).localeCompare(String(a.updated))); },
-    async LoadFlow(id) { if (!db.flows[id]) throw new Error(`no flow "${id}"`); return clone(db.flows[id]); },
+    async LoadFlow(id) { if (!db.flows[id]) throw new Error(`no flow "${id}"`); return useStepIDs(clone(db.flows[id])); },
     async NewFlow(name) { const id = uniqueFlowId(slug(name)); db.flows[id] = { version: 1, id, name: name || "New flow", inputs: [], context: { text: "", files: [] }, skills: [], nodes: [{ id: "start", type: "start", title: "Inputs", x: 40, y: 120 }], edges: [], updated: new Date().toISOString() }; persist(); return clone(db.flows[id]); },
     async SaveFlow(f) { await wait(60); f = clone(f); if (!f.id) f.id = uniqueFlowId(slug(f.name)); f.updated = new Date().toISOString(); db.flows[f.id] = f; persist(); return { flow: clone(f), issues: validateFlow(f) }; },
     async DeleteFlow(id) { delete db.flows[id]; persist(); },
@@ -1074,7 +1257,15 @@ export function createMockBackend(methods) {
           if (n.mode === "template") return { output: render(n.template, d) };
           return { output: parents.map((p) => d.steps[p] ?? "").join((n.separator || "\\n\\n").replace(/\\n/g, "\n")) };
         }
+        if (n.type === "loop") return { output: JSON.stringify(splitItems(n.source ? render(n.source, { ...d, input: parents.map((p) => d.steps?.[p] ?? "").join("\n") }) : parents.map((p) => d.steps?.[p] ?? "").join("\n"), n), null, 2) };
+        if (n.type === "gather") return { output: gatherItems(n, ["first", "second", "third"].map((it, i) => ({ item: it, output: `(result for item ${i + 1})` })), d) };
         if (n.type === "transform") return { output: transform(n, n.source ? render(n.source, d) : input, d) };
+        if (n.type === "filter" || n.type === "aggregate" || n.type === "decision") {
+          const src = n.source ? render(n.source, d) : input, rnd = (m) => render(m, d);
+          if (n.type === "filter") return { output: filterRows(n, src, rnd) };
+          if (n.type === "aggregate") return { output: aggregateRows(n, src, rnd) };
+          return { output: decide(n, src, rnd).map((b) => { const to = f.edges.filter((e) => e.from === n.id && e.branch === b).map((e) => f.nodes.find((x) => x.id === e.to)?.title || e.to); return "→ " + branchLabel(n, b) + (to.length ? " (runs " + to.join(", ") + ")" : " (nothing is connected to it)"); }).join("\n") };
+        }
         if (n.type === "output") return { output: convert(n.template ? render(n.template, d) : input, n.format) };
         return { error: "tools and AI steps run when the flow runs; enter sample output for this step instead" };
       } catch (e) { return { error: e.message }; }

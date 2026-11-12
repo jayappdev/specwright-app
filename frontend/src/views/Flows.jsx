@@ -5,7 +5,7 @@
 //   inspector the selected step, or the flow (name, context, skills) when nothing is selected
 // Flows are saved to .codegen/flows/<id>.json (autosave). Running them comes with the executor.
 import { ModelPicker } from "../ModelPicker.jsx";
-import { stepRef, toolRef, isBuiltin } from "../flowNames.js";
+import { stepRef, toolRef, isBuiltin, loopInfo, uniqueTitle } from "../flowNames.js";
 import { useEffect, useRef, useState } from "react";
 import { openFlowRunner } from "./FlowRun.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
@@ -16,6 +16,7 @@ import { NeedWorkspace } from "./Wizard.jsx";
 import { ToolIcon } from "../ToolTile.jsx";
 import { AttachBar, AttachmentChips, onPasteAttach } from "../Attachments.jsx";
 import { FileLink } from "../FileLinks.jsx";
+import { openFlowGuide, GUIDE_TYPES } from "./FlowGuide.jsx";
 
 const NODE_W = 216, PORT_Y = 30, GRID = 10;
 const snap = (v) => Math.round(v / GRID) * GRID;
@@ -25,10 +26,19 @@ const STEP_TYPES = [
   { type: "ai", name: "AI prompt", help: "Ask the agent; uses the flow's context and skills" },
   { type: "merge", name: "Merge", help: "Combine several steps' outputs" },
   { type: "transform", name: "Transform", help: "Reshape data: JSON, CSV, text, Markdown → HTML, AI" },
+  { type: "loop", name: "Loop (for each)", help: "Split a list into items; the steps after it run once per item, until a Gather" },
+  { type: "gather", name: "Gather", help: "Ends a loop: collects every item's result as text, sections or JSON" },
+  { type: "decision", name: "Decision", help: "Sends the flow down one path (or several), chosen by conditions on the data" },
+  { type: "filter", name: "Filter", help: "Keeps or drops the rows that match conditions" },
+  { type: "aggregate", name: "Aggregate", help: "Groups rows: count, sum, min, max, distinct count, windows (rank, running sum)" },
   { type: "output", name: "Output", help: "md, txt, html, csv or json, then save, call a tool, copy or show" },
 ];
 const FORMATS = [["md", "Markdown"], ["txt", "Text"], ["html", "HTML"], ["csv", "CSV"], ["json", "JSON"]];
-const INPUT_TYPES = [["text", "Text"], ["multiline", "Long text"], ["number", "Number"], ["boolean", "Yes / no"], ["choice", "Choice"], ["file", "File"], ["files", "Files"], ["clipboard", "Clipboard"]];
+const INPUT_TYPES = [["text", "Text"], ["multiline", "Long text"], ["number", "Number"], ["boolean", "Yes / no"], ["choice", "Choice"], ["multichoice", "Multiple choice"], ["file", "File"], ["files", "Files"], ["clipboard", "Clipboard"]];
+const SPLIT_MODES = [["auto", "Detect (JSON array, else one per line)"], ["lines", "One item per line"], ["json", "JSON array"], ["csv", "CSV rows (each a JSON object)"], ["regex", "Matches of a pattern"]];
+const GATHER_MODES = [["concat", "Join as text"], ["sections", "Sections (## item, then its result)"], ["json-array", "JSON array"], ["json-object", "JSON object (item → result)"], ["template", "Template per item"]];
+const ROW_FORMATS = [["auto", "Detect (JSON, CSV or one row per line)"], ["json", "JSON array"], ["csv", "CSV with a header line"], ["lines", "One row per line"]];
+const MATCHES = [["all", "all of"], ["any", "any of"], ["none", "none of"]];
 const MERGE_MODES = [["concat", "Join as text"], ["json-object", "JSON object (one key per step)"], ["json-array", "JSON array"], ["template", "Template"]];
 
 const fl = () => (S.fl ||= { list: null, id: "", flow: null, issues: [], sel: null, selEdge: null, dirty: false, saving: false, zoom: 1, ops: null, samples: {}, preview: {}, q: "" });
@@ -42,6 +52,11 @@ const TYPE_ICON = {
   merge: { color: "--ansi-magenta", Icon: sv(<><path d="M5 4v4c0 3 7 4 7 8v4M19 4v4c0 3-7 4-7 8" /></>) },
   transform: { color: "--ansi-cyan", Icon: sv(<><path d="M4 7h11l-3-3M20 17H9l3 3" /></>) },
   output: { color: "--warn", Icon: sv(<><path d="M12 3v12M7 10l5 5 5-5" /><path d="M4 17v3h16v-3" /></>) },
+  loop: { color: "--ansi-green", Icon: sv(<><path d="M17 2l3 3-3 3" /><path d="M4 11V9a4 4 0 014-4h12" /><path d="M7 22l-3-3 3-3" /><path d="M20 13v2a4 4 0 01-4 4H4" /></>) },
+  gather: { color: "--ansi-yellow", Icon: sv(<><path d="M4 4l6 6M20 4l-6 6M12 4v6" /><path d="M5 14h14l-2 6H7z" /></>) },
+  decision: { color: "--ansi-magenta", Icon: sv(<><path d="M12 3l8 9-8 9-8-9z" /><path d="M12 8v5M12 16v.5" /></>) },
+  filter: { color: "--ansi-cyan", Icon: sv(<><path d="M4 5h16l-6 7.5V18l-4 2v-7.5z" /></>) },
+  aggregate: { color: "--ok", Icon: sv(<><path d="M18 5H7l6 7-6 7h11" /></>) },
 };
 
 export function StepIcon({ n, tools, size = 34 }) {
@@ -63,7 +78,7 @@ async function loadList() {
 }
 
 // Open a flow in the designer from another screen.
-export function openFlowInDesigner(id) { fl().id = ""; fl().flow = null; S.view = "flows"; openFlow(id); }
+export function openFlowInDesigner(id, sel) { fl().id = ""; fl().flow = null; S.view = "flows"; openFlow(id).then(() => { if (sel && nodeOf(sel)) { fl().sel = sel; update(); } }); }
 
 async function openFlow(id) {
   const f = fl();
@@ -171,16 +186,22 @@ function uniqueId(base) {
 function addNode(spec, x, y) {
   const f = fl(), flow = f.flow;
   const right = flow.nodes.reduce((m, n) => Math.max(m, n.x), 40);
-  const n = { id: uniqueId(spec.type === "tool" ? toolRef(spec.tool) : spec.type), type: spec.type, title: spec.type === "tool" ? toolRef(spec.tool) : STEP_TYPES.find((t) => t.type === spec.type)?.name, x: snap(x ?? right + NODE_W + 60), y: snap(y ?? 120) };
+  const id = uniqueId(spec.type === "tool" ? toolRef(spec.tool) : spec.type);
+  const n = { id, type: spec.type, title: uniqueTitle(flow, spec.type === "tool" ? toolRef(spec.tool) : (STEP_TYPES.find((t) => t.type === spec.type)?.name || "").replace(/\s*\(.*\)$/, ""), id), x: snap(x ?? right + NODE_W + 60), y: snap(y ?? 120) };
   if (spec.type === "tool") { n.tool = spec.tool; n.args = {}; const t = tools().find((x) => x.name === spec.tool); (t?.params || []).forEach((p) => { n.args[p.name] = ""; }); }
   if (spec.type === "ai") n.prompt = "";
   if (spec.type === "merge") { n.mode = "concat"; n.separator = "\\n\\n"; }
   if (spec.type === "transform") n.op = "json-path";
   if (spec.type === "output") { n.format = "md"; n.actions = [{ type: "show" }]; }
+  if (spec.type === "loop") { n.split = "auto"; n.max = 100; }
+  if (spec.type === "gather") { n.mode = "sections"; }
+  if (spec.type === "decision") { n.mode = "first"; n.branches = [{ id: "path1", label: "Path 1", when: newCond() }]; }
+  if (spec.type === "filter") { n.mode = "keep"; n.cond = newCond(); }
+  if (spec.type === "aggregate") { n.mode = "group"; n.groupBy = []; n.measures = [{ fn: "count", as: "count" }]; }
   // connect from the selected step (or the inputs) so the new step is wired up
   const from = f.sel && nodeOf(f.sel)?.type !== "output" ? f.sel : x == null ? "start" : null;
   flow.nodes.push(n);
-  if (from) { flow.edges.push({ from, to: n.id }); const note = autoWire(from, n); if (note && from !== "start") toast(note); }
+  if (from) { const e = { from, to: n.id }, fa = nodeOf(from); if (fa?.type === "decision") e.branch = nextBranch(fa); flow.edges.push(e); const note = fa?.type === "decision" ? `Connected on the path “${branchName(fa, e.branch)}”. Click the connection to change it.` : autoWire(from, n); if (note && from !== "start") toast(note); }
   f.sel = n.id; f.selEdge = null;
   changed();
 }
@@ -204,6 +225,12 @@ function autoWire(from, n) {
     for (const p of empty) { const i = fl().flow.inputs.find((x) => x.name.toLowerCase() === p.name.toLowerCase()); if (i) { args[p.name] = `{{inputs.${i.name}}}`; done.push(p.name); } }
     return done.length ? `Passing the inputs into ${done.join(", ")} of ${n.title || n.tool}.` : "";
   }
+  if (a.type === "loop") { // a loop's output is the current item
+    const p = empty.find((x) => x.required) || empty[0];
+    // nested in another loop: name the loop, so the items cannot be mixed up
+    const v = (loopInfo(fl().flow).stack[from] || []).length ? `{{${stepRef(fl().flow, from)}.item}}` : "{{item}}";
+    if (p) { args[p.name] = v; return `“${p.name}” of ${n.title || toolRef(n.tool)} gets each item of ${a.title || a.id} (${v}).`; }
+  }
   const pick = empty.find((p) => p.required && DATA_PARAM.test(p.name)) || empty.find((p) => DATA_PARAM.test(p.name)) || empty.find((p) => p.required);
   if (pick) { args[pick.name] = feedFor(pick, from); return FILE_PARAM(pick) ? `“${pick.name}” of ${n.title || n.tool} gets a file with the result of ${a.title || a.id}.` : `Passing the result of ${a.title || a.id} into “${pick.name}” of ${n.title || n.tool}.`; }
   if (isBuiltin(n.tool)) return `Use the ← ${a.title || a.id} button on a field of ${n.title || toolRef(n.tool)} to pass the result in (built-in tools read their fields only).`;
@@ -219,7 +246,12 @@ function connect(from, to) {
   if (a.type === "output") return toast("An output is the end of a path.");
   if (flow.edges.some((e) => e.from === from && e.to === to)) return;
   if (ancestors(flow, from).has(to)) return toast("That would make a loop.");
-  flow.edges.push({ from, to });
+  const e = { from, to };
+  if (a.type === "decision") {
+    e.branch = nextBranch(a);
+    toast(`Connected on the path “${branchName(a, e.branch)}”. Click the connection to change it.`);
+  }
+  flow.edges.push(e);
   const note = autoWire(from, b);
   if (note) toast(note);
   changed();
@@ -241,10 +273,10 @@ function renameNode(n, id) {
   id = id.replace(/[^A-Za-z0-9_-]/g, "");
   if (!id || !/^[A-Za-z]/.test(id) || flow.nodes.some((x) => x.id === id && x !== n)) return toast("Step ids start with a letter and must be unique.");
   const re = new RegExp("\\{\\{\\s*steps\\." + n.id.replace(/[-]/g, "\\-") + "(?=[.}\\s])", "g"), rep = "{{steps." + id;
-  const re2 = new RegExp("\\{\\{(\\s*)" + n.id.replace(/[-]/g, "\\-") + "\\.(output_file|buffer_output)", "g");
+  const re2 = new RegExp("\\{\\{(\\s*)" + n.id.replace(/[-]/g, "\\-") + "\\.(output_file|buffer_output|item_index|item_count|item)(?=[.}\\s])", "g");
   const fix = (s) => (typeof s === "string" ? s.replace(re, rep).replace(re2, "{{$1" + id + ".$2") : s);
   for (const x of flow.nodes) {
-    for (const k of ["prompt", "template", "source", "expr"]) if (x[k]) x[k] = fix(x[k]);
+    for (const k of ["prompt", "template", "source", "expr", "instruction"]) if (x[k]) x[k] = fix(x[k]);
     if (x.args) for (const k in x.args) x.args[k] = fix(x.args[k]);
     for (const a of x.actions || []) { a.path = fix(a.path); if (a.args) for (const k in a.args) a.args[k] = fix(a.args[k]); }
   }
@@ -273,14 +305,19 @@ function VarChips({ node, extra = [] }) {
   const fed = node && parentsOf(flow, node.id).some((p) => p !== "start");
   const vars = [...flow.inputs.map((i) => ["inputs." + i.name, i.label || i.name]),
     ...anc.flatMap((id) => { const r = stepRef(flow, id), l = nodeOf(id)?.title || nodeOf(id)?.tool || id; return [[r + ".buffer_output", l + " · text"], [r + ".output_file", l + " · file"]]; }),
-    ...(fed && node.type === "tool" ? [["input_file", "connected steps, as a file"]] : []), ["context", "context"], ["skills", "skills"], ...extra.map((v) => [v, v])];
+    ...(fed && node.type === "tool" ? [["input_file", "connected steps, as a file"]] : []),
+    ...(node && (loopInfo(flow).stack[node.id] || []).length ? [["item", "↻ item"], ["item_index", "↻ item no."], ["item_count", "↻ item count"]] : []),
+    // nested loops: each loop's item by the loop's name
+    ...(node && (loopInfo(flow).stack[node.id] || []).length > 1 ? loopInfo(flow).stack[node.id].flatMap((l) => { const r = stepRef(flow, l), t = nodeOf(l)?.title || l; return [[r + ".item", "↻ " + t + " · item"], [r + ".item_index", "↻ " + t + " · no."]]; }) : []),
+    ["context", "context"], ["skills", "skills"], ...extra.map((v) => [v, v])];
   return <div className="fl-vars"><span className="muted">Insert:</span>{vars.map(([v, l]) => <button key={v} type="button" className="fl-var" title={`{{${v}}}`} onMouseDown={(e) => e.preventDefault()} onClick={() => insertVar(v)}>{l}</button>)}</div>;
 }
 
 // What an edge carries, shown on the connection: the arguments of the
 // target that read the source, "AI" for a described step, "stdin" for a tool
 // that takes it on standard input only.
-function edgeLabel(a, b) {
+function edgeLabel(a, b, e) {
+  if (a.type === "decision") return e?.branch ? "◆ " + branchName(a, e.branch) : "◆ always";
   if (b.type !== "tool") return "";
   const esc = (x) => x.replace(/[-.*+?^${}()|[\]\\]/g, "\\$&"), r = esc(stepRef(fl().flow, a.id)), id = esc(a.id);
   const re = new RegExp("\\{\\{\\s*" + (a.type === "start" ? "inputs\\." : "(steps\\." + id + "|input_file|input|(" + r + "|" + id + ")\\.(output_file|buffer_output))") + "(?=[.}\\s])");
@@ -324,6 +361,9 @@ function Canvas() {
   const W = Math.max(1400, ...flow.nodes.map((n) => n.x + NODE_W + 400)), H = Math.max(800, ...flow.nodes.map((n) => n.y + 400));
   const port = (n, out) => ({ x: n.x + (out ? NODE_W : 0), y: n.y + PORT_Y });
   const path = (a, b) => { const dx = Math.max(40, Math.abs(b.x - a.x) / 2); return `M${a.x},${a.y} C${a.x + dx},${a.y} ${b.x - dx},${b.y} ${b.x},${b.y}`; };
+  const loops = loopInfo(flow);
+  // a Gather loops back to its Loop: a dashed path under the region, "next item"
+  const back = Object.entries(loops.gather).map(([l, g]) => { const a = nodeOf(g), b = nodeOf(l); if (!a || !b) return null; const region = flow.nodes.filter((x) => (loops.stack[x.id] || []).includes(l) || x.id === l || x.id === g); const low = Math.max(...region.map((x) => x.y)) + 92; const ax = a.x + NODE_W / 2, bx = b.x + NODE_W / 2; return { k: l, d: `M${ax},${a.y + 64} C${ax},${low} ${bx},${low} ${bx},${b.y + 64}`, x: (ax + bx) / 2, y: low - 12 }; }).filter(Boolean);
   return (
     <div className="fl-canvas" ref={box} onWheel={wheel}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes("application/x-flow-step")) e.preventDefault(); }}
@@ -331,20 +371,28 @@ function Canvas() {
       onMouseDown={(e) => { if (e.target === box.current || e.target.classList.contains("fl-plane")) { f.sel = null; f.selEdge = null; update(); } }}>
       <div className="fl-plane" style={{ width: W, height: H, transform: `scale(${z})` }}>
         <svg className="fl-edges" width={W} height={H}>
-          {flow.edges.map((e, k) => { const a = nodeOf(e.from), b = nodeOf(e.to); if (!a || !b) return null; const d = path(port(a, true), port(b, false)); return <g key={k} className={"fl-edge" + (f.selEdge === k ? " sel" : "")} onMouseDown={(ev) => { ev.stopPropagation(); f.selEdge = k; f.sel = null; update(); }}><path d={d} className="hit" /><path d={d} className="line" markerEnd="url(#fl-arrow)" />{(() => { const lab = edgeLabel(a, b); if (!lab) return null; const p1 = port(a, true), p2 = port(b, false); return <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 6} className="fl-edge-label" textAnchor="middle">{lab}</text>; })()}</g>; })}
+          {flow.edges.map((e, k) => { const a = nodeOf(e.from), b = nodeOf(e.to); if (!a || !b) return null; const d = path(port(a, true), port(b, false)); return <g key={k} className={"fl-edge" + (f.selEdge === k ? " sel" : "")} onMouseDown={(ev) => { ev.stopPropagation(); f.selEdge = k; f.sel = null; update(); }}><path d={d} className="hit" /><path d={d} className="line" markerEnd="url(#fl-arrow)" />{(() => { const lab = edgeLabel(a, b, e); if (!lab) return null; const p1 = port(a, true), p2 = port(b, false); return <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 6} className="fl-edge-label" textAnchor="middle">{lab}</text>; })()}</g>; })}
+          {back.map((b) => <g key={"loop-" + b.k} className="fl-loopback"><path d={b.d} markerEnd="url(#fl-arrow)" /><text x={b.x} y={b.y} textAnchor="middle">next item ↺</text></g>)}
           {link && (() => { const a = nodeOf(link.from); return a && link.x != null ? <path d={path(port(a, true), { x: link.x, y: link.y })} className="fl-linking" /> : null; })()}
           <defs><marker id="fl-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" /></marker></defs>
         </svg>
         {flow.nodes.map((n) => {
           const is = issuesFor(n.id), err = is.some((i) => i.level === "error");
-          const sub = n.type === "tool" ? (n.instruction?.trim() ? "✦ " + n.instruction.trim().slice(0, 44) : toolLabel(n.tool)) : n.type === "start" ? `${flow.inputs.length} input${flow.inputs.length === 1 ? "" : "s"}` : n.type === "transform" ? (f.ops?.ops?.[n.op]?.name || n.op) : n.type === "merge" ? (MERGE_MODES.find(([m]) => m === n.mode)?.[1] || n.mode) : n.type === "output" ? (n.format || "").toUpperCase() + " · " + (n.actions || []).map((a) => a.type).join(", ") : n.type === "ai" ? (n.prompt || "").slice(0, 40) || "No prompt yet" : "";
+          const sub = n.type === "tool" ? (n.instruction?.trim() ? "✦ " + n.instruction.trim().slice(0, 44) : toolLabel(n.tool)) : n.type === "start" ? `${flow.inputs.length} input${flow.inputs.length === 1 ? "" : "s"}` : n.type === "transform" ? (f.ops?.ops?.[n.op]?.name || n.op) : n.type === "merge" ? (MERGE_MODES.find(([m]) => m === n.mode)?.[1] || n.mode) : n.type === "output" ? (n.format || "").toUpperCase() + " · " + (n.actions || []).map((a) => a.type).join(", ") : n.type === "ai" ? (n.prompt || "").slice(0, 40) || "No prompt yet"
+            : n.type === "loop" ? (SPLIT_MODES.find(([m]) => m === (n.split || "auto"))?.[1] || n.split) + (loops.gather[n.id] ? " → " + (nodeOf(loops.gather[n.id])?.title || loops.gather[n.id]) : " · no Gather yet")
+            : n.type === "gather" ? GATHER_MODES.find(([m]) => m === (n.mode || "concat"))?.[1] || n.mode
+            : n.type === "decision" ? `${(n.branches || []).length} path${(n.branches || []).length === 1 ? "" : "s"} + otherwise` + (n.mode === "all" ? " · every match" : "")
+            : n.type === "filter" ? (n.mode === "drop" ? "Drop" : "Keep") + ` rows · ${condCount(n.cond)} condition${condCount(n.cond) === 1 ? "" : "s"}`
+            : n.type === "aggregate" ? (n.mode === "window" ? "Window" : "Group") + ((n.groupBy || []).length ? " by " + n.groupBy.join(", ") : " · all rows") : "";
+          const inLoop = loops.stack[n.id] || [], loopName = inLoop.length ? nodeOf(inLoop[inLoop.length - 1])?.title || inLoop[inLoop.length - 1] : "";
           return (
-            <div key={n.id} data-node={n.id} className={"fl-node t-" + n.type + (f.sel === n.id ? " sel" : "") + (err ? " has-err" : is.length ? " has-warn" : "") + (link ? " linking" : "")}
+            <div key={n.id} data-node={n.id} className={"fl-node t-" + n.type + (f.sel === n.id ? " sel" : "") + (err ? " has-err" : is.length ? " has-warn" : "") + (link ? " linking" : "") + (inLoop.length ? " in-loop" : "")}
               style={{ left: n.x, top: n.y, width: NODE_W }}
               onMouseDown={(e) => { if (e.button !== 0 || e.target.closest(".fl-port")) return; const p = toLocal(e); f.sel = n.id; f.selEdge = null; update(); setDrag({ id: n.id, dx: p.x - n.x, dy: p.y - n.y }); }}>
               {n.type !== "start" && <span className="fl-port in" title="Input" />}
               <div className="fl-node-head"><StepIcon n={n} tools={ts} /><div className="fl-node-text"><b>{n.title || n.id}</b><small>{sub}</small></div>
                 {is.length > 0 && <span className={"fl-badge " + (err ? "err" : "warn")} title={is.map((i) => i.message).join("\n")}>{is.length}</span>}</div>
+              {inLoop.length > 0 && <div className="fl-loop-chip" title={`Runs once per item of ${loopName}${inLoop.length > 1 ? ` (nested ${inLoop.length} deep)` : ""}`}>↻ {inLoop.length > 1 ? "×" + inLoop.length + " " : ""}per item of {loopName}</div>}
               {n.type === "start" && flow.inputs.length > 0 && <div className="fl-node-body">{flow.inputs.slice(0, 5).map((i) => <code key={i.name}>{i.name}</code>)}{flow.inputs.length > 5 && <span className="muted">+{flow.inputs.length - 5}</span>}</div>}
               {n.type !== "output" && <span className="fl-port out" title="Drag to connect" onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setLink({ from: n.id, ...toLocal(e) }); }} />}
             </div>
@@ -372,7 +420,7 @@ function Palette() {
   );
   return (
     <aside className="fl-palette" aria-label="Steps and tools">
-      <div className="tree-folder">Steps</div>
+      <div className="tree-folder fl-pal-head">Steps <button className="link" title="How each step works, with examples" onClick={() => openFlowGuide("")}>How to use them ↗</button></div>
       {STEP_TYPES.map((s) => item({ type: s.type }, s.name, s.help, <StepIcon n={{ type: s.type }} tools={[]} size={30} />))}
       <input className="fl-search" placeholder="Filter tools" value={f.q} onChange={(e) => { f.q = e.target.value; update(); }} />
       <div className="tree-folder">Project tools · {projectTools().length}</div>
@@ -439,9 +487,11 @@ function InputsEditor() {
             <button className="icon-btn fl-del" title="Remove input" onClick={() => { flow.inputs.splice(k, 1); changed(); }}><Icon.x /></button>
           </div>
           <Field label="Label"><input value={i.label || ""} onChange={(e) => { i.label = e.target.value; changed(); }} /></Field>
-          {i.type === "choice" && <Field label="Options (one per line)"><textarea rows={3} value={(i.options || []).join("\n")} onChange={(e) => { i.options = e.target.value.split("\n"); changed(); }} /></Field>}
+          {["choice", "multichoice"].includes(i.type) && <Field label="Options (one per line)" hint={i.type === "multichoice" ? "People tick any number of them; the flow gets the ticked ones, one per line (a Loop can go through them)" : undefined}><textarea rows={3} value={(i.options || []).join("\n")} onChange={(e) => { i.options = e.target.value.split("\n"); changed(); }} /></Field>}
           {["file", "files"].includes(i.type) && <Field label="Accepted files" hint="e.g. .pdf,.md,image/*"><input value={i.accept || ""} onChange={(e) => { i.accept = e.target.value; changed(); }} /></Field>}
           {["text", "multiline", "number", "clipboard", "choice"].includes(i.type) && <Field label="Default value">{i.type === "multiline" || i.type === "clipboard" ? <textarea rows={3} value={i.default || ""} onChange={(e) => { i.default = e.target.value; changed(); }} onPaste={onPasteAttach(fl_)} /> : <input value={i.default || ""} onChange={(e) => { i.default = e.target.value; changed(); }} />}</Field>}
+          {i.type === "multichoice" && (i.options || []).filter(Boolean).length > 0 && <div className="field"><span className="muted">Ticked by default</span><div className="mc-list">
+            {(i.options || []).filter(Boolean).map((o) => { const on = (i.default || "").split("\n").includes(o); return <label key={o} className="check"><input type="checkbox" checked={on} onChange={(e) => { const cur = (i.default || "").split("\n").filter(Boolean).filter((x) => x !== o); i.default = (e.target.checked ? [...cur, o] : cur).sort((a, b) => i.options.indexOf(a) - i.options.indexOf(b)).join("\n"); changed(); }} /> {o}</label>; })}</div></div>}
           {i.type === "boolean" && <label className="check"><input type="checkbox" checked={i.default === "true"} onChange={(e) => { i.default = e.target.checked ? "true" : "false"; changed(); }} /> Yes by default</label>}
           {["file", "files", "clipboard", "multiline"].includes(i.type) && <><div className="muted fl-help">Default {i.type === "clipboard" ? "content" : "files"} (paste, drop or pick):</div><AttachBar list={fl_} insertText={(t) => { i.default = (i.default ? i.default + "\n" : "") + t; changed(); }} /></>}
           <div className="fl-row"><label className="check"><input type="checkbox" checked={!!i.required} onChange={(e) => { i.required = e.target.checked; changed(); }} /> Required</label>
@@ -522,7 +572,8 @@ function StepInspector({ n }) {
   const op = ops[n.op] || {};
   return <>
     <div className="fl-insp-head"><StepIcon n={n} tools={tools()} size={36} /><div><h3>{n.title || n.id}</h3><small className="muted">{n.type === "tool" ? (isBuiltin(n.tool) ? "Built-in tool" : "Tool") : STEP_TYPES.find((t) => t.type === n.type)?.name || "Inputs"}</small></div>
-      {n.type !== "start" && <button className="link" style={{ marginLeft: "auto" }} onClick={removeSelected}>Delete</button>}</div>
+      <span style={{ marginLeft: "auto", display: "flex", gap: 10 }}>{GUIDE_TYPES.has(n.type) && <button className="link" title="How this step works, with examples" onClick={() => openFlowGuide(n.type)}>How to use ↗</button>}
+        {n.type !== "start" && <button className="link" onClick={removeSelected}>Delete</button>}</span></div>
     {issues.map((i, k) => <div key={k} className={"banner " + (i.level === "error" ? "error" : "")}>{i.message}</div>)}
     {n.type === "start" ? <InputsEditor /> : <>
       <div className="fl-row">
@@ -557,11 +608,38 @@ function StepInspector({ n }) {
         <VarChips node={n} />
         <div className="field fl-field"><span className="muted">Model</span><ModelPicker value={n.model || ""} onChange={(v) => set("model", v)} label="Model" /><small className="muted">Default: the model chosen when the flow runs, else the app's model.</small></div>
       </>}
+      {n.type === "decision" && <DecisionInspector n={n} set={set} />}
+      {n.type === "filter" && <FilterInspector n={n} set={set} />}
+      {n.type === "aggregate" && <AggregateInspector n={n} set={set} />}
       {n.type === "merge" && <>
         <Field label="How to merge"><select value={n.mode || "concat"} onChange={(e) => set("mode", e.target.value)}>{MERGE_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
         {n.mode === "concat" && <Field label="Separator" hint="\n is a new line"><input value={n.separator ?? ""} onChange={(e) => set("separator", e.target.value)} /></Field>}
         {n.mode === "template" && <><Field label="Template"><textarea rows={6} value={n.template || ""} {...track} onChange={(e) => set("template", e.target.value)} /></Field><VarChips node={n} /></>}
         <p className="muted fl-help">Merges, in this order: {parents.map((p) => nodeOf(p)?.title || p).join(" → ") || "nothing yet; connect steps to it"}.</p>
+        <Preview node={n} />
+      </>}
+      {n.type === "loop" && (() => {
+        const g = loopInfo(fl().flow).gather[n.id];
+        return <>
+          <p className="muted fl-help">Every step connected after this one runs once per item, up to {g ? <b>{nodeOf(g)?.title || g}</b> : <>a <b>Gather</b> step (add one after the steps to repeat)</>}, which collects the results. In those steps use <code className="inline-code" data-nofile>{"{{item}}"}</code> (and <code className="inline-code" data-nofile>{"{{item.json.name}}"}</code> for JSON items), <code className="inline-code" data-nofile>{"{{item_index}}"}</code> and <code className="inline-code" data-nofile>{"{{item_count}}"}</code>. A tool or AI prompt connected after the loop gets the current item. With loops inside loops, use the loop's step id: <code className="inline-code" data-nofile>{`{{${stepRef(fl().flow, n.id)}.item}}`}</code>, <code className="inline-code" data-nofile>{`{{${stepRef(fl().flow, n.id)}.item.json.name}}`}</code>, <code className="inline-code" data-nofile>{`{{${stepRef(fl().flow, n.id)}.item_index}}`}</code>.</p>
+          <Field label="Split the list into items"><select value={n.split || "auto"} onChange={(e) => set("split", e.target.value)}>{SPLIT_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+          {n.split === "regex" && <Field label="Pattern" hint="Each match is an item (its first group, if it has one), e.g. class (\w+)"><input value={n.expr || ""} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => set("expr", e.target.value)} /></Field>}
+          <div className="fl-row">
+            <Field label="Keep only items matching" hint="A regular expression; empty keeps all"><input value={n.filter || ""} style={{ fontFamily: "var(--font-mono)" }} placeholder="e.g. ^[A-Z]" onChange={(e) => set("filter", e.target.value)} /></Field>
+            <Field label="At most" hint="items (up to 1000)"><input type="number" min={1} max={1000} value={n.max || ""} placeholder="1000" onChange={(e) => set("max", Math.max(0, Math.min(1000, +e.target.value || 0)))} /></Field>
+          </div>
+          <label className="check"><input type="checkbox" checked={!!n.unique} onChange={(e) => set("unique", e.target.checked)} /> Skip repeated items</label>
+          <label className="check"><input type="checkbox" checked={!!n.continueOnError} onChange={(e) => set("continueOnError", e.target.checked)} /> Keep going when an item fails (its error is gathered)</label>
+          <details><summary className="muted">The list (default: the output of the step before)</summary>
+            <Field label="Use instead" hint="A template, e.g. {{steps.symbols.json.items}} or one name per line"><textarea rows={3} value={n.source || ""} placeholder="{{steps.…}}" {...track} onChange={(e) => set("source", e.target.value)} /></Field><VarChips node={n} /></details>
+          <Preview node={n} />
+        </>;
+      })()}
+      {n.type === "gather" && <>
+        <p className="muted fl-help">Ends the loop {(() => { const li = loopInfo(fl().flow), l = Object.keys(li.gather).find((k) => li.gather[k] === n.id); return l ? <b>{nodeOf(l)?.title || l}</b> : <i>(connect it after a loop's steps)</i>; })()}: for each item it takes the result of the steps connected into it, then gathers them all. The steps after it run once, with everything.</p>
+        <Field label="Gather as"><select value={n.mode || "concat"} onChange={(e) => set("mode", e.target.value)}>{GATHER_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+        {(n.mode || "concat") === "concat" && <Field label="Separator" hint="\n is a new line (default: a blank line)"><input value={n.separator ?? ""} onChange={(e) => set("separator", e.target.value)} /></Field>}
+        {n.mode === "template" && <><Field label="Template for each item" hint="{{input}} is the item's result; joined with new lines"><textarea rows={4} value={n.template || ""} placeholder="- **{{item}}**: {{input}}" {...track} onChange={(e) => set("template", e.target.value)} /></Field><VarChips node={n} extra={["input", "item", "item_index", "item_count"]} /></>}
         <Preview node={n} />
       </>}
       {n.type === "transform" && <>
@@ -570,7 +648,7 @@ function StepInspector({ n }) {
         {op.help && <p className="muted fl-help">{op.help}</p>}
         {op.expr && <Field label={op.expr}><input value={n.expr || ""} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => set("expr", e.target.value)} /></Field>}
         {op.replace && <Field label="Replace with"><input value={n.replace || ""} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => set("replace", e.target.value)} /></Field>}
-        {op.template && <><Field label={op.ai ? "Instruction for the AI" : "Template"}><textarea rows={5} value={n.template || ""} placeholder={op.ai ? "e.g. Turn {{input}} into a bulleted list of acceptance criteria." : "{{input}}"} {...track} onChange={(e) => set("template", e.target.value)} /></Field><VarChips node={n} extra={["input"]} /></>}
+        {op.template && <><Field label={op.ai ? "Instruction for the AI" : "Template"}><textarea value={n.template || ""} placeholder={op.ai ? "e.g. Turn {{input}} into a bulleted list of acceptance criteria." : n.op === "json-template" ? '{\n  "customer": "{{this.customer.name}}",\n  "orders": { "{{#each this.orders}}": {\n    "id": "{{this.id}}",\n    "lines": { "{{#each this.lines}}": {\n      "sku": "{{this.sku}}",\n      "order": "{{parent.id}}",\n      "n": "{{this_index}}"\n    } }\n  } }\n}' : "{{input}}"} style={n.op === "json-template" ? { fontFamily: "var(--font-mono)" } : undefined} rows={n.op === "json-template" ? 12 : 5} {...track} onChange={(e) => set("template", e.target.value)} /></Field><VarChips node={n} extra={n.op === "json-template" ? ["this", "this_index", "parent", "root"] : ["input"]} /></>}
         <details><summary className="muted">Input (default: the output of the step before)</summary>
           <Field label="Use instead"><input value={n.source || ""} placeholder="{{steps.…}}" {...track} onChange={(e) => set("source", e.target.value)} /></Field></details>
         {!op.ai && <Preview node={n} />}
@@ -599,8 +677,146 @@ function StepInspector({ n }) {
 }
 
 function Inspector() {
-  const f = fl(), n = f.sel ? nodeOf(f.sel) : null;
-  return <aside className="fl-inspector" aria-label="Inspector">{n ? <StepInspector key={n.id} n={n} /> : <FlowSettings key={f.flow.id} />}</aside>;
+  const f = fl(), n = f.sel ? nodeOf(f.sel) : null, e = !n && f.selEdge != null ? f.flow.edges[f.selEdge] : null;
+  return <aside className="fl-inspector" aria-label="Inspector">{n ? <StepInspector key={n.id} n={n} /> : e ? <EdgeInspector key={f.selEdge} e={e} /> : <FlowSettings key={f.flow.id} />}</aside>;
+}
+
+// --- decisions, filters, aggregates ---------------------------------------------------
+
+const newRule = () => ({ field: "", op: "eq", value: "" });
+const newCond = () => ({ match: "all", rules: [newRule()] });
+const condCount = (c) => (c?.rules || []).reduce((k, r) => k + (r.group ? condCount(r.group) : 1), 0);
+// the next path of a decision that leads nowhere yet
+function nextBranch(a) {
+  const used = new Set(fl().flow.edges.filter((x) => x.from === a.id).map((x) => x.branch));
+  return [...(a.branches || []).map((x) => x.id), "else"].find((id) => !used.has(id)) || a.branches?.[0]?.id || "else";
+}
+function branchName(n, id) { return id === "else" ? "Otherwise" : (n?.branches || []).find((b) => b.id === id)?.label || id; }
+
+// A connection: which path of a Decision it is on.
+function EdgeInspector({ e }) {
+  const f = fl(), a = nodeOf(e.from), b = nodeOf(e.to);
+  if (!a || !b) return null;
+  const set = (v) => { e.branch = v; changed(); };
+  return <>
+    <div className="fl-insp-head"><div><h3>{a.title || a.id} → {b.title || b.id}</h3><small className="muted">Connection</small></div>
+      <button className="link" style={{ marginLeft: "auto" }} onClick={removeSelected}>Delete</button></div>
+    {a.type === "decision" ? <>
+      <Field label="Path" hint="The steps after this connection run only when the decision takes this path."><select value={e.branch || ""} onChange={(ev) => set(ev.target.value)}>
+        <option value="">Always (not on a path)</option>
+        {(a.branches || []).map((x) => <option key={x.id} value={x.id}>{x.label || x.id}</option>)}
+        <option value="else">Otherwise (no path matched)</option></select></Field>
+    </> : <p className="muted fl-help">{b.title || b.id} gets the output of {a.title || a.id}. Press Delete to remove the connection.</p>}
+  </>;
+}
+
+// A condition: rules joined by all / any / none; a rule can be a group of its own.
+function CondEditor({ cond, onChange, depth = 0, what = "the data" }) {
+  const ops = fl().ops?.condOps || [];
+  const c = cond || newCond();
+  const put = () => onChange({ ...c });
+  const setRule = (i, k, v) => { c.rules[i] = { ...c.rules[i], [k]: v }; put(); };
+  return <div className={"fl-cond" + (depth ? " nested" : "")}>
+    <div className="fl-cond-head"><select aria-label="Match" value={c.match || "all"} onChange={(e) => { c.match = e.target.value; put(); }}>{MATCHES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select>
+      <span className="muted">{depth ? "these:" : "these conditions:"}</span>
+      {depth > 0 && <button className="link" onClick={() => onChange(null)}>Remove group</button>}</div>
+    {(c.rules || []).map((r, i) => r.group
+      ? <CondEditor key={i} cond={r.group} depth={depth + 1} what={what} onChange={(g) => { if (g) c.rules[i] = { group: g }; else c.rules.splice(i, 1); put(); }} />
+      : <div key={i} className="fl-rule">
+        <input className="fl-rule-field" aria-label="Field" placeholder="field, e.g. customer.tier (empty: the whole value)" value={r.field || ""} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => setRule(i, "field", e.target.value)} />
+        <button className="link" aria-label="Remove condition" title="Remove" onClick={() => { c.rules.splice(i, 1); put(); }}>✕</button>
+        <select aria-label="Comparison" value={r.op || "eq"} onChange={(e) => setRule(i, "op", e.target.value)}>{ops.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>
+        {!ops.find((o) => o.id === r.op)?.unary && <input className="fl-rule-value" aria-label="Value" placeholder={r.op === "between" ? "low, high" : r.op === "in" || r.op === "not_in" ? "a, b, c" : "value or {{…}}"} value={r.value || ""} {...track} onChange={(e) => setRule(i, "value", e.target.value)} />}
+        <div className="fl-rule-opts">
+          <label className="check"><input type="checkbox" checked={!!r.ignoreCase} onChange={(e) => setRule(i, "ignoreCase", e.target.checked)} /> ignore case</label>
+          {/\[\*\]|\./.test(r.field || "") && <label className="check" title="When the field is a list (items[*].qty), every element must match, not just one"><input type="checkbox" checked={!!r.every} onChange={(e) => setRule(i, "every", e.target.checked)} /> every element of a list</label>}
+        </div>
+      </div>)}
+    <div className="row-actions"><button className="btn secondary small" onClick={() => { (c.rules ||= []).push(newRule()); put(); }}>+ Condition</button>
+      {depth < 4 && <button className="btn secondary small" onClick={() => { (c.rules ||= []).push({ group: { match: "any", rules: [newRule()] } }); put(); }}>+ Group</button>}</div>
+    {depth === 0 && <p className="muted fl-help">A field is a path into {what}: <code className="inline-code" data-nofile>status</code>, <code className="inline-code" data-nofile>customer.address.city</code>, <code className="inline-code" data-nofile>items[0].sku</code>, <code className="inline-code" data-nofile>items[*].qty</code> (any element; tick “every element” for all). Leave it empty for the whole value. Values can use variables, and <code className="inline-code" data-nofile>{"{{this.<field>}}"}</code> compares two fields. Numbers compare as numbers, dates (2026-11-12) as text.</p>}
+  </div>;
+}
+
+function RowsInput({ n, set }) {
+  return <>
+    <Field label="Rows" hint="JSON comes out as a JSON array; one row per line comes out the same way."><select value={n.split || "auto"} onChange={(e) => set("split", e.target.value)}>{ROW_FORMATS.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
+    <details><summary className="muted">Input (default: the output of the step before)</summary>
+      <Field label="Use instead"><input value={n.source || ""} placeholder="{{steps.…}}" {...track} onChange={(e) => set("source", e.target.value)} /></Field></details>
+  </>;
+}
+
+const listText = (a) => (a || []).join(", ");
+const textList = (s) => String(s || "").split(",").map((x) => x.trim()).filter(Boolean);
+
+function DecisionInspector({ n, set }) {
+  const f = fl(), flow = f.flow;
+  const targets = (id) => flow.edges.filter((e) => e.from === n.id && e.branch === id).map((e) => nodeOf(e.to)?.title || e.to);
+  const put = () => set("branches", [...n.branches]);
+  const nextId = () => { let k = (n.branches || []).length + 1; while ((n.branches || []).some((b) => b.id === "path" + k)) k++; return "path" + k; };
+  return <>
+    <p className="muted fl-help">Checks the data from the step before and sends the flow down a path: the steps connected on that path run, the others are skipped. The data passes on unchanged. Paths are checked in order; <b>Otherwise</b> runs when none matches.</p>
+    <Field label="When several paths match"><select value={n.mode || "first"} onChange={(e) => set("mode", e.target.value)}><option value="first">Take the first one</option><option value="all">Take every one that matches</option></select></Field>
+    {(n.branches || []).map((b, i) => <div key={b.id} className="fl-branch">
+      <div className="fl-branch-head"><span className="fl-branch-n">{i + 1}</span>
+        <input aria-label="Path name" value={b.label || ""} placeholder={b.id} onChange={(e) => { n.branches[i] = { ...b, label: e.target.value }; put(); }} />
+        <button className="link" disabled={i === 0} title="Check earlier" onClick={() => { const x = n.branches.splice(i, 1)[0]; n.branches.splice(i - 1, 0, x); put(); }}>↑</button>
+        <button className="link" aria-label="Remove path" title="Remove path" onClick={() => { n.branches.splice(i, 1); flow.edges.forEach((e) => { if (e.from === n.id && e.branch === b.id) e.branch = ""; }); put(); }}>✕</button></div>
+      <CondEditor cond={b.when} what="the data" onChange={(c) => { n.branches[i] = { ...b, when: c || newCond() }; put(); }} />
+      <small className="muted">Leads to: {targets(b.id).join(", ") || "nothing yet: connect a step from this decision and choose this path on the connection"}</small>
+    </div>)}
+    <button className="btn secondary" onClick={() => { const id = nextId(); (n.branches ||= []).push({ id, label: "Path " + id.replace("path", ""), when: newCond() }); put(); }}>+ Path</button>
+    <div className="fl-branch"><div className="fl-branch-head"><span className="fl-branch-n">∗</span><b>Otherwise</b></div>
+      <small className="muted">Leads to: {targets("else").join(", ") || "nothing (the flow ends here when no path matches)"}</small></div>
+    <details><summary className="muted">Input (default: the output of the step before)</summary>
+      <Field label="Use instead"><input value={n.source || ""} placeholder="{{steps.…}}" {...track} onChange={(e) => set("source", e.target.value)} /></Field></details>
+    <Preview node={n} />
+  </>;
+}
+
+function FilterInspector({ n, set }) {
+  return <>
+    <Field label="Rows that match"><div className="seg">{[["keep", "Keep"], ["drop", "Drop"]].map(([v, l]) => <button key={v} type="button" aria-pressed={(n.mode || "keep") === v} onClick={() => set("mode", v)}>{l}</button>)}</div></Field>
+    <CondEditor cond={n.cond} what="each row" onChange={(c) => set("cond", c || newCond())} />
+    <div className="fl-row">
+      <Field label="Sort by" hint="Fields; -total sorts high to low"><input value={listText(n.orderBy)} placeholder="e.g. -total, id" onChange={(e) => set("orderBy", textList(e.target.value))} /></Field>
+      <Field label="At most" hint="rows (empty: all)"><input type="number" min="0" value={n.max || ""} onChange={(e) => set("max", +e.target.value || 0)} /></Field>
+    </div>
+    <label className="check"><input type="checkbox" checked={!!n.unique} onChange={(e) => set("unique", e.target.checked)} /> Drop repeated rows</label>
+    <RowsInput n={n} set={set} />
+    <Preview node={n} />
+  </>;
+}
+
+function AggregateInspector({ n, set }) {
+  const fns = fl().ops?.aggFns || [], win = n.mode === "window";
+  const ms = n.measures || [];
+  const put = () => set("measures", [...ms]);
+  return <>
+    <Field label="Result"><div className="seg">{[["group", "One row per group"], ["window", "Every row, with its group's values"]].map(([v, l]) => <button key={v} type="button" aria-pressed={(n.mode || "group") === v} onClick={() => set("mode", v)}>{l}</button>)}</div></Field>
+    <p className="muted fl-help">{win ? "Like SQL's OVER (PARTITION BY … ORDER BY …): every row is kept, with values over its group added: totals, ranks, running sums, the previous or next row's value." : "Like SQL's GROUP BY: one row per distinct combination of the group fields, with the values calculated over its rows. With no group fields, one row of totals."}</p>
+    <Field label={win ? "Partition by" : "Group by"} hint="Fields, comma-separated: region, customer.tier"><input value={listText(n.groupBy)} placeholder="e.g. region, customer.tier" onChange={(e) => set("groupBy", textList(e.target.value))} /></Field>
+    <div className="fl-measures">
+      <div className="muted">Values to calculate</div>
+      {ms.map((m, i) => { const fn = fns.find((x) => x.id === m.fn) || {}; return <div key={i} className="fl-measure">
+        <select aria-label="Function" value={m.fn} onChange={(e) => { ms[i] = { ...m, fn: e.target.value }; put(); }}>
+          <optgroup label="Over the group">{fns.filter((x) => !x.window).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</optgroup>
+          {win && <optgroup label="Window (per row)">{fns.filter((x) => x.window).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</optgroup>}</select>
+        {!fn.noField || m.fn === "count" ? <input aria-label="Field" placeholder={m.fn === "count" ? "field (empty: rows)" : "field, e.g. total"} value={m.field || ""} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => { ms[i] = { ...m, field: e.target.value }; put(); }} /> : <span />}
+        <input aria-label="Name" placeholder="name in the result" value={m.as || ""} onChange={(e) => { ms[i] = { ...m, as: e.target.value }; put(); }} />
+        <button className="link" aria-label="Remove value" onClick={() => { ms.splice(i, 1); put(); }}>✕</button>
+        {fn.arg && <input className="fl-measure-arg" aria-label={fn.arg} placeholder={fn.arg} value={m.arg || ""} onChange={(e) => { ms[i] = { ...m, arg: e.target.value }; put(); }} />}
+      </div>; })}
+      <button className="btn secondary small" onClick={() => { ms.push({ fn: "sum", field: "", as: "" }); put(); }}>+ Value</button>
+    </div>
+    <div className="fl-row">
+      <Field label={win ? "Order within the group" : "Sort the result by"} hint="Fields; -total for high to low"><input value={listText(n.orderBy)} placeholder="e.g. -total" onChange={(e) => set("orderBy", textList(e.target.value))} /></Field>
+      <Field label="At most" hint="rows (empty: all)"><input type="number" min="0" value={n.max || ""} onChange={(e) => set("max", +e.target.value || 0)} /></Field>
+    </div>
+    <p className="muted fl-help">Fields are paths into each row (<code className="inline-code" data-nofile>customer.tier</code>); a list path like <code className="inline-code" data-nofile>items[*].qty</code> counts every element, so you can sum nested values.</p>
+    <RowsInput n={n} set={set} />
+    <Preview node={n} />
+  </>;
 }
 
 function Issues() {
@@ -649,6 +865,7 @@ export function Flows() {
         <div className="fl-work"><Palette /><Canvas /><Inspector /></div>
       </div> : <section className="view"><div className="card"><h3>Design a flow</h3>
         <p className="wf-desc">Drag tools onto a canvas and connect them. Give the flow inputs (text, files, clipboard), a custom context and skills; merge and transform data between steps; and produce outputs as Markdown, text, HTML, CSV or JSON that are saved, passed to a tool, copied or shown.</p>
+        <p className="wf-desc">New to flows? The <button className="link" onClick={() => openFlowGuide("")}>Flow step guide</button> explains every step with examples you can open here.</p>
         <div className="row-actions"><button className="btn primary" onClick={newFlow}>Create a flow</button><button className="btn secondary" onClick={() => imp.current?.click()}>Import a flow…</button></div></div></section>}
     </div>
   );

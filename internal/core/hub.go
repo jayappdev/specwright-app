@@ -261,6 +261,7 @@ type WorkspaceState struct {
 	FileCount  int                   `json:"fileCount"`
 	SpecKit    bool                  `json:"specKit"` // .specify/ exists
 	SpecKitSet speckit.Info          `json:"speckit"`
+	Projects   []SpecProject         `json:"projects"` // the workspace's Spec Kit projects
 }
 
 // OpenWorkspace makes root the workspace: loads its profile, workflow and
@@ -286,16 +287,13 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	if err != nil {
 		return WorkspaceState{}, fmt.Errorf("profile: %w", err)
 	}
-	wf, err := workflow.Load(abs, "speckit")
+	// the selected Spec Kit project's workflow (each project has its own)
+	wf, err := workflow.LoadProject(abs, prof.SpecProject, nil, true)
 	if err != nil {
 		return WorkspaceState{}, fmt.Errorf("workflow: %w", err)
 	}
 	// a step left running or paused by a previous app session cannot resume
-	for i := range wf.Steps {
-		if s := wf.Steps[i].Status; s == "running" || s == "paused" {
-			wf.Steps[i].Status = "interrupted"
-		}
-	}
+	interrupt(wf)
 	h.mu.Lock()
 	if h.stopWatch != nil {
 		h.stopWatch()
@@ -336,7 +334,7 @@ func (h *Hub) Workspace() (WorkspaceState, error) {
 		return WorkspaceState{}, err
 	}
 	return WorkspaceState{Root: root, Name: filepath.Base(root), Profile: prof, Libraries: h.libsFor(root, prof), Workflow: wf,
-		Extensions: exts, FileCount: len(watch.ListFiles(root, 20000)), SpecKit: h.SpecKitInfo().Initialized, SpecKitSet: h.SpecKitInfo()}, nil
+		Extensions: exts, FileCount: len(watch.ListFiles(root, 20000)), SpecKit: h.SpecKitInfo().Initialized, SpecKitSet: h.SpecKitInfo(), Projects: h.projectsOrNil()}, nil
 }
 
 func (h *Hub) need() (string, error) {

@@ -29,10 +29,29 @@ type Data struct {
 	Output    string `json:"output"` // an output's content (in actions)
 	Flow      string `json:"flow"`
 	// Files are the saved output files of the steps that ran, by step id
-	// ({{<step>.output_file}}); Names maps tool names and step titles to
-	// step ids, so {{html-report-generator.output_file}} works.
+	// ({{<step id>.output_file}}).
 	Files map[string]string `json:"files,omitempty"`
-	Names map[string]string `json:"names,omitempty"`
+	// inside a loop: the current item, its position (1-based) and the count
+	Item      string `json:"item,omitempty"`
+	ItemIndex int    `json:"itemIndex,omitempty"`
+	ItemCount int    `json:"itemCount,omitempty"`
+	// Loops holds the current item of every loop a step runs inside, by
+	// the loop step's id, so nested loops can be told apart:
+	// {{<loop id>.item}}, {{<loop id>.item.json.<path>}},
+	// {{<loop id>.item_index}} and {{<loop id>.item_count}}.
+	Loops map[string]LoopItem `json:"loops,omitempty"`
+	// set by the runner: the paths each Decision step took (step id →
+	// branch ids), and the connected steps whose output reaches the current
+	// step (those on the paths taken)
+	Branches map[string][]string `json:"-"`
+	Live     []string            `json:"-"`
+}
+
+// LoopItem is one loop's current item.
+type LoopItem struct {
+	Item  string `json:"item"`
+	Index int    `json:"index"`
+	Count int    `json:"count"`
 }
 
 // Render fills {{…}} variables in tpl. Unknown variables become empty.
@@ -73,6 +92,15 @@ func lookup(v string, d Data) (string, bool) {
 		return d.Input, true
 	case "input_file":
 		return d.InputFile, true
+	case "item":
+		if p, ok := strings.CutPrefix(rest, "json"); ok {
+			return jsonAt(d.Item, strings.TrimPrefix(p, "."))
+		}
+		return d.Item, d.ItemCount > 0
+	case "item_index":
+		return strconv.Itoa(d.ItemIndex), d.ItemCount > 0
+	case "item_count":
+		return strconv.Itoa(d.ItemCount), d.ItemCount > 0
 	case "output":
 		return d.Output, true
 	case "context":
@@ -86,15 +114,17 @@ func lookup(v string, d Data) (string, bool) {
 	case "now":
 		return time.Now().Format(time.RFC3339), true
 	}
-	// {{<step>.output_file}} / {{<step>.buffer_output}}: <step> is a step
-	// id, its tool's name or its title
-	if IsStepField(rest) {
-		id := head
-		if _, ok := d.Steps[id]; !ok {
-			id = d.Names[head]
+	// {{<loop id>.item}} …
+	if IsLoopField(rest) {
+		if l, ok := d.Loops[head]; ok {
+			return loopField(l, rest)
 		}
-		if _, ok := d.Steps[id]; ok {
-			return stepField(d, id, rest)
+		return "", false
+	}
+	// {{<step id>.output_file}} / {{<step id>.buffer_output}}
+	if IsStepField(rest) {
+		if _, ok := d.Steps[head]; ok {
+			return stepField(d, head, rest)
 		}
 	}
 	return "", false
@@ -104,6 +134,26 @@ func lookup(v string, d Data) (string, bool) {
 // output_file, buffer_output or buffer_output.json.<path>.
 func IsStepField(rest string) bool {
 	return rest == "output_file" || rest == "buffer_output" || strings.HasPrefix(rest, "buffer_output.json")
+}
+
+// IsLoopField reports whether rest (after "<loop>.") names a loop's
+// current item: item, item.json.<path>, item_index or item_count.
+func IsLoopField(rest string) bool {
+	return rest == "item" || rest == "item_index" || rest == "item_count" || strings.HasPrefix(rest, "item.json")
+}
+
+func loopField(l LoopItem, rest string) (string, bool) {
+	switch {
+	case rest == "item":
+		return l.Item, true
+	case rest == "item_index":
+		return strconv.Itoa(l.Index), true
+	case rest == "item_count":
+		return strconv.Itoa(l.Count), true
+	case strings.HasPrefix(rest, "item.json"):
+		return jsonAt(l.Item, strings.TrimPrefix(strings.TrimPrefix(rest, "item.json"), "."))
+	}
+	return "", false
 }
 
 func stepField(d Data, id, rest string) (string, bool) {
@@ -170,6 +220,10 @@ func walkPath(v any, path string) (any, error) {
 					for _, k := range sortedKeys(x) {
 						next = append(next, x[k])
 					}
+				case *Obj:
+					for _, k := range x.Keys {
+						next = append(next, x.Vals[k])
+					}
 				}
 			case m[1] != "":
 				i, _ := strconv.Atoi(m[1])
@@ -183,11 +237,19 @@ func walkPath(v any, path string) (any, error) {
 					if val, ok := x[key]; ok {
 						next = append(next, val)
 					}
+				case *Obj:
+					if val, ok := x.Vals[key]; ok {
+						next = append(next, val)
+					}
 				case []any: // a key on an array maps over it: items.name
 					wild = true
 					for _, e := range x {
 						if o, ok := e.(map[string]any); ok {
 							if val, ok := o[key]; ok {
+								next = append(next, val)
+							}
+						} else if o, ok := e.(*Obj); ok {
+							if val, ok := o.Vals[key]; ok {
 								next = append(next, val)
 							}
 						}
@@ -294,6 +356,7 @@ var Ops = map[string]Op{
 	"split-lines":   {Name: "Lines → JSON array", Group: "Convert", apply: splitLines},
 	"json-path":     {Name: "Pick a JSON value", Group: "JSON", Help: "A path like items[0].name, items[*].id or $.data.total.", Expr: "Path", check: needExpr, apply: jsonPath},
 	"json-pick":     {Name: "Keep JSON fields", Group: "JSON", Help: "Comma-separated field names; works on an object or an array of objects.", Expr: "Fields", check: needExpr, apply: jsonPick},
+	"json-template": {Name: "JSON → JSON (template)", Group: "JSON", Help: "Write the JSON to produce. {{this.<path>}} reads the input JSON; a placeholder that is a whole string value (\"{{this.total}}\") keeps its type (number, list, object). For nested lists, an object whose only key is \"{{#each this.lines}}\" repeats its template for each element; inside it {{parent.<path>}} is the level above, {{root.<path>}} the whole input and {{this_index}} the position. Set a list path to apply the whole template to each element and get a JSON array.", Expr: "For each element of (optional list path, e.g. items)", Tpl: true, check: checkJSONTemplate, apply: jsonTemplate},
 	"json-pretty":   {Name: "Format JSON", Group: "JSON", apply: jsonPretty},
 	"json-minify":   {Name: "Minify JSON", Group: "JSON", apply: jsonMinify},
 	"csv-to-json":   {Name: "CSV → JSON", Group: "Convert", apply: csvToJSON},

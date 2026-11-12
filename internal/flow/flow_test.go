@@ -22,7 +22,7 @@ func sample() *Flow {
 		Node{ID: "md", Type: "output", Title: "Spec (md)", X: 1160, Y: 80, Format: "md", Template: "{{steps.spec}}", Actions: []Action{{Type: "save", Path: "specs/{{inputs.ticket}}.md"}}},
 		Node{ID: "html", Type: "output", Title: "Spec (html)", X: 1160, Y: 220, Format: "html", Actions: []Action{{Type: "show"}}},
 	)
-	f.Edges = []Edge{{"start", "jira"}, {"start", "todos"}, {"jira", "merge"}, {"todos", "merge"}, {"merge", "pick"}, {"pick", "spec"}, {"spec", "md"}, {"spec", "html"}}
+	f.Edges = []Edge{{From: "start", To: "jira"}, {From: "start", To: "todos"}, {From: "jira", To: "merge"}, {From: "todos", To: "merge"}, {From: "merge", To: "pick"}, {From: "pick", To: "spec"}, {From: "spec", To: "md"}, {From: "spec", To: "html"}}
 	return f
 }
 
@@ -54,7 +54,7 @@ func TestValidate(t *testing.T) {
 	bad.Node("pick").Op = "regex-extract"
 	bad.Node("pick").Expr = "(["
 	bad.Node("md").Actions[0].Path = "../outside.md"
-	bad.Edges = append(bad.Edges, Edge{"spec", "jira"})
+	bad.Edges = append(bad.Edges, Edge{From: "spec", To: "jira"})
 	bad.Nodes = append(bad.Nodes, Node{ID: "x", Type: "tool", Tool: "missing-tool"})
 	errs := strings.Join(errorsOf(Validate(bad, tools)), "\n")
 	for _, want := range []string{"required parameter \"key\"", "does not run before this step", "no input called \"nope\"", "pattern is not valid", "inside the project", "loop", "\"missing-tool\" is not available"} {

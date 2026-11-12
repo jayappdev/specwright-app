@@ -330,6 +330,14 @@ func (a *App) FlowBuiltinTools() []extension.Extension { return val(a.hub.FlowBu
 // SpecKitInfo describes the open project's Spec Kit setup.
 func (a *App) SpecKitInfo() speckit.Info { return val(a.hub.SpecKitInfo()) }
 
+// SpecProjects lists the workspace's Spec Kit projects.
+func (a *App) SpecProjects() ([]core.SpecProject, error) { return ok(a.hub.SpecProjects()) }
+
+// SwitchSpecProject selects another Spec Kit project of the workspace.
+func (a *App) SwitchSpecProject(project string) (core.WorkspaceState, error) {
+	return ok(a.hub.SwitchSpecProject(project))
+}
+
 // DownloadSpecKit fetches Spec Kit through the configured proxy (force:
 // again, for a newer release).
 func (a *App) DownloadSpecKit(force bool) speckit.Info { return val(a.hub.DownloadSpecKit(force)) }

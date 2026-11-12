@@ -57,7 +57,7 @@ func (f *Flow) EstimatedMinutes() int {
 			m += 10
 		case "ai":
 			m += 20
-		case "merge", "transform":
+		case "merge", "transform", "loop", "gather":
 			m += 5
 		case "output":
 			m += 5
@@ -70,11 +70,11 @@ func (f *Flow) EstimatedMinutes() int {
 type Input struct {
 	Name        string   `json:"name"`  // used as {{inputs.name}}
 	Label       string   `json:"label"` // shown to the user
-	Type        string   `json:"type"`  // text | multiline | number | boolean | choice | file | files | clipboard
+	Type        string   `json:"type"`  // text | multiline | number | boolean | choice | multichoice | file | files | clipboard
 	Required    bool     `json:"required,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Files       []string `json:"files,omitempty"`   // default files (workspace paths)
-	Options     []string `json:"options,omitempty"` // for choice
+	Options     []string `json:"options,omitempty"` // for choice and multichoice
 	Accept      string   `json:"accept,omitempty"`  // for file inputs, e.g. ".pdf,image/*"
 	Description string   `json:"description,omitempty"`
 }
@@ -95,7 +95,7 @@ type Skill struct {
 // Node is one step on the canvas.
 type Node struct {
 	ID    string  `json:"id"`
-	Type  string  `json:"type"` // start | tool | ai | merge | transform | output
+	Type  string  `json:"type"` // start | tool | ai | merge | transform | loop | gather | decision | filter | aggregate | output
 	Title string  `json:"title,omitempty"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
@@ -127,6 +127,24 @@ type Node struct {
 	Replace string `json:"replace,omitempty"` // regex-replace
 	Source  string `json:"source,omitempty"`  // template for the input (default: the upstream output)
 
+	// loop (Source and Expr are shared with transform; see loop.go)
+	Split           string `json:"split,omitempty"`  // auto | lines | json | csv | regex
+	Filter          string `json:"filter,omitempty"` // keep items matching this pattern
+	Max             int    `json:"max,omitempty"`    // at most this many items (0 = MaxLoopItems)
+	Unique          bool   `json:"unique,omitempty"` // drop repeated items
+	ContinueOnError bool   `json:"continueOnError,omitempty"`
+	// gather uses Mode (GatherModes), Separator and Template
+
+	// decision: the paths out of it (Mode: first | all); see rows.go
+	Branches []Branch `json:"branches,omitempty"`
+	// filter: the rows to keep (Mode: keep | drop; Unique, Max, OrderBy);
+	// filter and aggregate read their rows as Split (RowFormats)
+	Cond *Cond `json:"cond,omitempty"`
+	// aggregate (Mode: group | window; Max)
+	GroupBy  []string  `json:"groupBy,omitempty"`
+	Measures []Measure `json:"measures,omitempty"`
+	OrderBy  []string  `json:"orderBy,omitempty"` // "field" or "-field" (descending)
+
 	// output
 	Format  string   `json:"format,omitempty"` // md | txt | html | csv | json
 	Actions []Action `json:"actions,omitempty"`
@@ -144,14 +162,18 @@ type Action struct {
 type Edge struct {
 	From string `json:"from"`
 	To   string `json:"to"`
+	// Branch is, for a connection out of a Decision step, the branch it
+	// belongs to (a Branch id, or "else"): it is followed only when the
+	// decision takes that branch.
+	Branch string `json:"branch,omitempty"`
 }
 
 // NodeTypes, transform operations, merge modes and output formats.
 var (
-	NodeTypes   = []string{"start", "tool", "ai", "merge", "transform", "output"}
+	NodeTypes   = []string{"start", "tool", "ai", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
 	MergeModes  = []string{"concat", "json-object", "json-array", "template"}
 	Formats     = []string{"md", "txt", "html", "csv", "json"}
-	InputTypes  = []string{"text", "multiline", "number", "boolean", "choice", "file", "files", "clipboard"}
+	InputTypes  = []string{"text", "multiline", "number", "boolean", "choice", "multichoice", "file", "files", "clipboard"}
 	ActionTypes = []string{"save", "tool", "clipboard", "show"}
 )
 
@@ -328,7 +350,7 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 		if !contains(InputTypes, in.Type) {
 			add("start", "error", "Input %q has an unknown type %q.", in.Name, in.Type)
 		}
-		if in.Type == "choice" && len(in.Options) == 0 {
+		if (in.Type == "choice" || in.Type == "multichoice") && len(in.Options) == 0 {
 			add("start", "error", "Input %q is a choice but has no options.", in.Name)
 		}
 	}
@@ -379,12 +401,25 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 	if _, err := f.Order(); err != nil {
 		add("", "error", "%s. Remove one of its connections.", strings.ToUpper(err.Error()[:1])+err.Error()[1:])
 	}
+	loopInfo, loopIssues := f.Loops()
+	is = append(is, loopIssues...)
 	// templates may only use inputs, context, skills and upstream steps
-	names, ambiguous := f.StepNames()
+	names, _ := f.StepNames()
+	// steps are referred to by id; say which id a title or tool name means
+	byID := func(head string) string {
+		if id := names[head]; id != "" {
+			return fmt.Sprintf(" Steps are referred to by their id: use %q (the id of %s).", id, label(*f.Node(id)))
+		}
+		return ""
+	}
 	checkVars := func(n Node, what, tpl string) {
 		anc := f.Ancestors(n.ID)
 		for _, v := range Vars(tpl) {
 			head, rest, _ := strings.Cut(v, ".")
+			if e, ok := strings.CutPrefix(v, "#each "); ok { // {{#each this.lines}}: check its list
+				v = strings.TrimSpace(e)
+				head, rest, _ = strings.Cut(v, ".")
+			}
 			switch head {
 			case "inputs":
 				name, _, _ := strings.Cut(rest, ".")
@@ -399,23 +434,40 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 					add(n.ID, "error", "%s uses {{%s}}, but %q does not run before this step. Connect it first.", what, v, sid)
 				}
 			case "context", "skills", "input", "input_file", "output", "flow", "date", "now":
+			case "this", "this_index", "parent", "root":
+				if head == "this" && (n.Type == "decision" || n.Type == "filter" || n.Type == "aggregate") {
+					break // {{this.<path>}}: the data being compared
+				}
+				if n.Type != "transform" || n.Op != "json-template" {
+					add(n.ID, "warning", "%s uses {{%s}}, which only means something in a JSON → JSON (template) step.", what, v)
+				}
+			case "item", "item_index", "item_count":
+				if len(loopInfo.Stack[n.ID]) == 0 && n.Type != "loop" && n.Type != "gather" {
+					add(n.ID, "warning", "%s uses {{%s}}, but it is not inside a loop.", what, v)
+				}
 			default:
+				if IsLoopField(rest) { // {{<loop id>.item}}: a loop this step runs inside
+					ln := f.Node(head)
+					switch {
+					case ln == nil:
+						add(n.ID, "error", "%s uses {{%s}}, but there is no step with the id %q.%s", what, v, head, byID(head))
+					case ln.Type != "loop":
+						add(n.ID, "error", "%s uses {{%s}}, but %s is not a Loop step.", what, v, label(*ln))
+					case !contains(loopInfo.Stack[n.ID], head):
+						add(n.ID, "error", "%s uses {{%s}}, but it does not run inside the loop %s (only the steps between it and its Gather do).", what, v, label(*ln))
+					}
+					break
+				}
 				if !IsStepField(rest) {
 					add(n.ID, "warning", "%s uses {{%s}}, which is not a known variable.", what, v)
 					break
 				}
-				sid := head
-				if !ids[sid] {
-					sid = names[head]
-				}
 				switch {
-				case sid == "" && ambiguous[head]:
-					add(n.ID, "error", "%s uses {{%s}}, but more than one step is called %q. Use the step's id instead.", what, v, head)
-				case sid == "":
-					add(n.ID, "error", "%s uses {{%s}}, but no step or tool is called %q.", what, v, head)
-				case sid == n.ID:
+				case !ids[head]:
+					add(n.ID, "error", "%s uses {{%s}}, but there is no step with the id %q.%s", what, v, head, byID(head))
+				case head == n.ID:
 					add(n.ID, "error", "%s uses {{%s}}: a step cannot read its own output.", what, v)
-				case !anc[sid]:
+				case !anc[head]:
 					add(n.ID, "error", "%s uses {{%s}}, but %q does not run before this step. Connect it first.", what, v, head)
 				}
 			}
@@ -471,6 +523,103 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				add(n.ID, "error", "%s: %v", label(n), err)
 			}
 			checkVars(n, label(n), n.Source+" "+n.Template+" "+n.Expr)
+		case "loop":
+			if !contains(SplitModes, firstNonEmptyStr(n.Split, "auto")) {
+				add(n.ID, "error", "%s: choose how to split the list.", label(n))
+			}
+			if n.Split == "regex" {
+				if _, err := regexp.Compile(n.Expr); err != nil || n.Expr == "" {
+					add(n.ID, "error", "%s: the pattern is not a valid regular expression.", label(n))
+				}
+			}
+			if n.Filter != "" {
+				if _, err := regexp.Compile(n.Filter); err != nil {
+					add(n.ID, "error", "%s: the filter is not a valid regular expression.", label(n))
+				}
+			}
+			if len(parents) == 0 && strings.TrimSpace(n.Source) == "" {
+				add(n.ID, "error", "%s: connect the step whose output is the list, or set the list.", label(n))
+			}
+			checkVars(n, label(n), n.Source)
+		case "gather":
+			if !contains(GatherModes, firstNonEmptyStr(n.Mode, "concat")) {
+				add(n.ID, "error", "%s: choose how to gather.", label(n))
+			}
+			if n.Mode == "template" && strings.TrimSpace(n.Template) == "" {
+				add(n.ID, "error", "%s: write the template for each item.", label(n))
+			}
+			checkVars(n, label(n), n.Template)
+		case "decision":
+			if !contains(DecisionModes, firstNonEmptyStr(n.Mode, "first")) {
+				add(n.ID, "error", "%s: choose whether to take the first matching path or every one.", label(n))
+			}
+			if len(n.Branches) == 0 {
+				add(n.ID, "error", "%s: add a path (a condition and where it leads).", label(n))
+			}
+			bids := map[string]bool{ElseBranch: true}
+			for _, b := range n.Branches {
+				name := firstNonEmptyStr(b.Label, b.ID)
+				switch {
+				case b.ID == "" || b.ID == ElseBranch:
+					add(n.ID, "error", "%s: the path %q needs an id other than %q.", label(n), name, ElseBranch)
+				case bids[b.ID]:
+					add(n.ID, "error", "%s: two paths have the id %q.", label(n), b.ID)
+				}
+				bids[b.ID] = true
+				if err := b.When.Check(); err != nil {
+					add(n.ID, "error", "%s › %s: %v", label(n), name, err)
+				}
+				for _, t := range b.When.Templates() {
+					checkVars(n, label(n)+" › "+name, t)
+				}
+			}
+			used := map[string]bool{}
+			for _, e := range f.Edges {
+				if e.From != n.ID {
+					continue
+				}
+				switch {
+				case e.Branch == "":
+					add(n.ID, "warning", "%s: the connection to %s is not on a path, so it always runs. Click it to choose its path.", label(n), titles(f, []string{e.To})[0])
+				case !bids[e.Branch]:
+					add(n.ID, "error", "%s: the connection to %s is on a path that no longer exists (%s). Click it to choose a path.", label(n), titles(f, []string{e.To})[0], e.Branch)
+				}
+				used[e.Branch] = true
+			}
+			for _, b := range n.Branches {
+				if b.ID != "" && !used[b.ID] {
+					add(n.ID, "warning", "%s: nothing is connected to the path %q, so nothing runs when it is taken.", label(n), firstNonEmptyStr(b.Label, b.ID))
+				}
+			}
+			checkVars(n, label(n), n.Source)
+		case "filter":
+			if !contains(FilterModes, firstNonEmptyStr(n.Mode, "keep")) {
+				add(n.ID, "error", "%s: choose whether to keep or drop the matching rows.", label(n))
+			}
+			if !contains(RowFormats, firstNonEmptyStr(n.Split, "auto")) {
+				add(n.ID, "error", "%s: unknown row format %q.", label(n), n.Split)
+			}
+			if err := n.Cond.Check(); err != nil {
+				add(n.ID, "error", "%s: %v", label(n), err)
+			}
+			for _, t := range append(n.Cond.Templates(), n.Source) {
+				checkVars(n, label(n), t)
+			}
+		case "aggregate":
+			if err := CheckAggregate(n); err != nil {
+				add(n.ID, "error", "%s: %v", label(n), err)
+			}
+			if !contains(RowFormats, firstNonEmptyStr(n.Split, "auto")) {
+				add(n.ID, "error", "%s: unknown row format %q.", label(n), n.Split)
+			}
+			if n.Mode == "window" {
+				for _, m := range n.Measures {
+					if (m.Fn == "rank" || m.Fn == "dense_rank" || m.Fn == "lag" || m.Fn == "lead" || strings.HasPrefix(m.Fn, "running_")) && len(n.OrderBy) == 0 {
+						add(n.ID, "warning", "%s: %s follows the rows' order; set “Order by” to choose it.", label(n), measureName(m))
+					}
+				}
+			}
+			checkVars(n, label(n), n.Source)
 		case "output":
 			if !contains(Formats, n.Format) {
 				add(n.ID, "error", "%s: choose a format (md, txt, html, csv or json).", label(n))
@@ -503,11 +652,14 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 }
 
 // reservedVars cannot be step names in {{<step>.output_file}}.
-var reservedVars = map[string]bool{"inputs": true, "steps": true, "input": true, "input_file": true, "output": true, "context": true, "skills": true, "flow": true, "date": true, "now": true}
+var reservedVars = map[string]bool{"inputs": true, "steps": true, "input": true, "input_file": true, "output": true, "context": true, "skills": true, "flow": true, "date": true, "now": true,
+	"item": true, "item_index": true, "item_count": true, "this": true, "this_index": true, "parent": true, "root": true}
 
-// StepNames maps the names a template may use for a step to its id: the
-// tool a step runs and its title (lowercase, words joined by -), when only
-// one step has that name. ambiguous lists names shared by several steps.
+// StepNames maps the other names a step goes by to its id: the tool it
+// runs and its title (lowercase, words joined by -), when only one step has
+// that name; ambiguous lists names shared by several steps. Templates refer
+// to steps by id only: these names are for moving older flows over to ids
+// (useStepIDs) and for hints.
 func (f *Flow) StepNames() (names map[string]string, ambiguous map[string]bool) {
 	names, ambiguous = map[string]string{}, map[string]bool{}
 	ids := map[string]bool{}
@@ -543,7 +695,6 @@ func ToolRef(tool string) string { return strings.TrimPrefix(tool, "builtin:") }
 // UsesUpstream reports whether a step's templates read any of the steps
 // connected into it ({{steps.<parent>}}) or {{input}}.
 func UsesUpstream(n Node, f *Flow) bool {
-	names, _ := f.StepNames()
 	texts := []string{n.Prompt, n.Template, n.Source, n.Expr, n.Instruction}
 	for _, v := range n.Args {
 		texts = append(texts, v)
@@ -556,10 +707,20 @@ func UsesUpstream(n Node, f *Flow) bool {
 		for _, v := range Vars(t) {
 			head, rest, _ := strings.Cut(v, ".")
 			id, _, _ := strings.Cut(rest, ".")
+			if head == "item" && func() bool { // a loop's output is its item
+				for p := range parents {
+					if pn := f.Node(p); pn != nil && pn.Type == "loop" {
+						return true
+					}
+				}
+				return false
+			}() {
+				return true
+			}
 			if head == "input" || head == "input_file" || (head == "steps" && parents[id]) || (head == "inputs" && parents["start"]) {
 				return true
 			}
-			if IsStepField(rest) && (parents[head] || parents[names[head]]) {
+			if (IsStepField(rest) || IsLoopField(rest)) && parents[head] {
 				return true
 			}
 		}
@@ -684,6 +845,48 @@ func (f *Flow) normalize() {
 	}
 	if !hasStart {
 		f.Nodes = append([]Node{{ID: "start", Type: "start", Title: "Inputs", X: 40, Y: 120}}, f.Nodes...)
+	}
+	f.useStepIDs()
+}
+
+// useStepIDs rewrites references made by a step's title or tool name
+// ({{find-todos.output_file}}, from flows saved before steps were referred
+// to by id only) to the step's id ({{todos.output_file}}).
+func (f *Flow) useStepIDs() {
+	names, _ := f.StepNames()
+	if len(names) == 0 {
+		return
+	}
+	ids := map[string]bool{}
+	for _, n := range f.Nodes {
+		ids[n.ID] = true
+	}
+	fix := func(s string) string {
+		if !strings.Contains(s, "{{") {
+			return s
+		}
+		return varRE.ReplaceAllStringFunc(s, func(m string) string {
+			v := strings.TrimSpace(m[2 : len(m)-2])
+			head, rest, _ := strings.Cut(v, ".")
+			if id := names[head]; id != "" && !ids[head] && (IsStepField(rest) || IsLoopField(rest)) {
+				return "{{" + id + "." + rest + "}}"
+			}
+			return m
+		})
+	}
+	for i := range f.Nodes {
+		n := &f.Nodes[i]
+		n.Prompt, n.Template, n.Source, n.Expr, n.Instruction = fix(n.Prompt), fix(n.Template), fix(n.Source), fix(n.Expr), fix(n.Instruction)
+		for k, v := range n.Args {
+			n.Args[k] = fix(v)
+		}
+		for j := range n.Actions {
+			a := &n.Actions[j]
+			a.Path = fix(a.Path)
+			for k, v := range a.Args {
+				a.Args[k] = fix(v)
+			}
+		}
 	}
 }
 

@@ -20,6 +20,7 @@ import { Admin } from "./views/Admin.jsx";
 import { Appearance } from "./views/Appearance.jsx";
 import { Flows } from "./views/Flows.jsx";
 import { FlowRun } from "./views/FlowRun.jsx";
+import { FlowGuide } from "./views/FlowGuide.jsx";
 import { FilePreview } from "./FilePreview.jsx";
 import { LibraryEditor } from "./views/LibraryEditor.jsx";
 import { DialogHost } from "./Dialog.jsx";
@@ -38,6 +39,7 @@ const GROUPS = [
     { id: "playground", label: "Prompt playground", icon: Icon.playground, C: Playground },
     { id: "flows", label: "Flow designer", icon: Icon.flow, C: Flows },
     { id: "flowrun", label: "Run flows", icon: Icon.run, C: FlowRun },
+    { id: "flowguide", label: "Flow step guide", icon: Icon.book, C: FlowGuide, hidden: true }, // opened from the Flow designer
   ] },
   { id: "utils", label: "Utils", title: "Utilities", views: [
     { id: "files", label: "Project files", icon: Icon.files, C: Files },
@@ -86,7 +88,7 @@ export function App() {
           {GROUPS.map((g) => (
           <div key={g.id} className={"activity-group" + (g.bottom ? " activity-bottom" : "")} role="group" aria-label={g.title}>
             <span className="activity-label" title={g.title}>{g.label}</span>
-            {g.views.map((v) => (
+            {g.views.filter((v) => !v.hidden).map((v) => (
             <button key={v.id} className={"activity-btn" + (S.view === v.id ? " active" : "")} title={`${v.label} · ${g.title}`} aria-label={v.label} aria-current={S.view === v.id ? "page" : undefined} onClick={() => { S.view = v.id; update(); }}>
               <v.icon />{v.id === "workflow" && gate && <span className="activity-dot" aria-label="needs approval" />}</button>))}
           </div>))}</nav>
