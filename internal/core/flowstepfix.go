@@ -22,10 +22,11 @@ import (
 
 // StepFixRequest asks the AI to fix or improve one step of a run.
 type StepFixRequest struct {
-	RunID  string `json:"runId"`
-	StepID string `json:"stepId"`
-	Prompt string `json:"prompt,omitempty"` // what is wrong or should be better
-	Model  string `json:"model,omitempty"`
+	RunID    string `json:"runId"`
+	StepID   string `json:"stepId"`
+	Prompt   string `json:"prompt,omitempty"`   // what is wrong or should be better
+	Expected string `json:"expected,omitempty"` // what the step should give instead (an example)
+	Model    string `json:"model,omitempty"`
 }
 
 // StepFix is a suggested change to one step.
@@ -123,7 +124,7 @@ func (h *Hub) FixFlowStep(r StepFixRequest) (StepFix, error) {
 	}
 	tools := h.designTools()
 	fix := StepFix{RunID: r.RunID, FlowID: f.ID, StepID: n.ID, Before: *n}
-	prompt := stepFixPrompt(f, n, steps, root, h, r.Prompt, tools)
+	prompt := stepFixPrompt(f, n, steps, root, h, r, tools)
 	h.designProgress("Reading the step and what happened in the run")
 	text, u, err := h.designAgent(root, prompt, r.Model)
 	fix.Usage.Add(u)
@@ -256,7 +257,8 @@ func nodeChanges(a, b flow.Node) []string {
 	return out
 }
 
-func stepFixPrompt(f *flow.Flow, n *flow.Node, steps map[string]FlowStepState, root string, h *Hub, request string, tools []designTool) string {
+func stepFixPrompt(f *flow.Flow, n *flow.Node, steps map[string]FlowStepState, root string, h *Hub, r StepFixRequest, tools []designTool) string {
+	request := r.Prompt
 	var ops []string
 	for k := range flow.Ops {
 		ops = append(ops, k)
@@ -286,16 +288,48 @@ func stepFixPrompt(f *flow.Flow, n *flow.Node, steps map[string]FlowStepState, r
 	b.Write(ij)
 	nj, _ := json.MarshalIndent(n, "", "  ")
 	fmt.Fprintf(&b, "\n\nTHE STEP NOW:\n%s\n", nj)
-	clipTo := func(s string, k int) string {
-		if len(s) > k {
-			return s[:k] + "\n…(shortened)"
+	// what reached it, what it gave or its error: enough of each to see the
+	// data (the start and the end of long ones) and, for JSON, its shape
+	runID := ""
+	for _, st := range steps {
+		if st.OutputFile != "" {
+			if p := strings.Index(st.OutputFile, "/steps/"); p > 0 {
+				runID = filepath.Base(st.OutputFile[:p])
+			}
+			break
 		}
-		return s
 	}
-	// what reached it and what it did
+	show := func(label, out string, k int) {
+		shape := ""
+		if sh := flow.SchemaOfText(out); sh.Type == "object" || sh.Type == "array" {
+			shape = "\nIts shape: " + sh.Compact()
+		}
+		fmt.Fprintf(&b, "\n%s (%d characters):\n```\n%s\n```%s\n", label, len(out), excerpt(out, k), shape)
+	}
+	items := func(id string) []string { // a step inside a loop: its per-item results
+		if runID == "" {
+			return nil
+		}
+		dir := filepath.Join(root, filepath.FromSlash(stepFilesDir(runID, id)), "items")
+		ents, _ := os.ReadDir(dir)
+		var out []string
+		for _, e := range ents {
+			if len(out) == 2 {
+				break
+			}
+			if b, err := os.ReadFile(filepath.Join(dir, e.Name())); err == nil {
+				out = append(out, string(b))
+			}
+		}
+		return out
+	}
 	for _, p := range f.Parents(n.ID) {
 		if out, ok := h.stepOutput(root, steps[p]); ok {
-			fmt.Fprintf(&b, "\nWHAT REACHED IT from %s in the last run:\n```\n%s\n```\n", p, clipTo(out, 3000))
+			show("WHAT REACHED IT from "+p+" (the previous step's output) in the last run", out, 8000)
+		} else if its := items(p); len(its) > 0 {
+			for k, it := range its {
+				show(fmt.Sprintf("WHAT REACHED IT from %s for loop item %d", p, k+1), it, 4000)
+			}
 		}
 	}
 	if s, ok := steps[n.ID]; ok {
@@ -303,14 +337,21 @@ func stepFixPrompt(f *flow.Flow, n *flow.Node, steps map[string]FlowStepState, r
 		if s.Error != "" {
 			fmt.Fprintf(&b, " — error: %s", s.Error)
 		}
-		if out, ok := h.stepOutput(root, s); ok && strings.TrimSpace(out) != "" {
-			fmt.Fprintf(&b, "\nIts output:\n```\n%s\n```", clipTo(out, 2000))
-		}
 		if len(s.Args) > 0 {
 			aj, _ := json.Marshal(s.Args)
 			fmt.Fprintf(&b, "\nIt ran with the arguments: %s", aj)
 		}
 		b.WriteString("\n")
+		if out, ok := h.stepOutput(root, s); ok && strings.TrimSpace(out) != "" {
+			show("ITS OUTPUT (what it gave; the user finds it wrong or not good enough)", out, 6000)
+		} else if its := items(n.ID); len(its) > 0 {
+			for k, it := range its {
+				show(fmt.Sprintf("ITS OUTPUT for loop item %d", k+1), it, 3000)
+			}
+		}
+	}
+	if e := strings.TrimSpace(r.Expected); e != "" {
+		fmt.Fprintf(&b, "\nWHAT IT SHOULD GIVE INSTEAD (from the user):\n```\n%s\n```\n", excerpt(e, 4000))
 	}
 	// how the steps after it use it
 	var uses []string
@@ -513,4 +554,13 @@ func (h *Hub) ApplyStepFix(runID string) (FlowState, error) {
 		h.flowState(fr)
 	}
 	return res, nil
+}
+
+// excerpt is s, or for a long s its start and its end.
+func excerpt(s string, k int) string {
+	if len(s) <= k {
+		return s
+	}
+	head, tail := k*2/3, k/3
+	return s[:head] + fmt.Sprintf("\n…(%d characters left out)…\n", len(s)-head-tail) + s[len(s)-tail:]
 }

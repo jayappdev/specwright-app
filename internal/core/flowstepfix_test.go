@@ -24,12 +24,12 @@ func TestFixStepTryAndApply(t *testing.T) {
 		t.Fatalf("%s %+v", st.Status, steps["bad"])
 	}
 	s.replies = []string{"```json\n" + `{"node": {"id": "renamed", "type": "transform", "title": "Shout", "op": "template", "template": "OK {{up.buffer_output}}"}, "why": "The input is text, not JSON."}` + "\n```"}
-	fix, err := h.FixFlowStep(StepFixRequest{RunID: st.ID, StepID: "bad", Prompt: "it fails"})
+	fix, err := h.FixFlowStep(StepFixRequest{RunID: st.ID, StepID: "bad", Prompt: "it fails", Expected: "OK FIXED 1.2"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	p := s.prompts[len(s.prompts)-1]
-	for _, want := range []string{`Change only the definition of the step "bad"`, "WHAT REACHED IT from up in the last run:\n```\nFIXED 1.2", "WHAT IT DID in the last run: failed", "md reads {{bad.buffer_output}}", "WHAT TO DO:\nit fails"} {
+	for _, want := range []string{`Change only the definition of the step "bad"`, "WHAT REACHED IT from up (the previous step's output) in the last run (9 characters):\n```\nFIXED 1.2", "WHAT IT SHOULD GIVE INSTEAD (from the user):\n```\nOK FIXED 1.2", "WHAT IT DID in the last run: failed", "md reads {{bad.buffer_output}}", "WHAT TO DO:\nit fails"} {
 		if !strings.Contains(p, want) {
 			t.Errorf("prompt is missing %q", want)
 		}
@@ -67,5 +67,31 @@ func TestFixStepTryAndApply(t *testing.T) {
 	}
 	if _, err := h.ApplyStepFix(st.ID); err == nil {
 		t.Fatal("only a trial can be applied")
+	}
+}
+
+// Improving a finished step: the AI gets its output (and its shape), and
+// long outputs are shown by their start and end.
+func TestImprovePromptShowsOutputs(t *testing.T) {
+	h, s := designHub(t)
+	f := flow.New("rows", "Rows")
+	f.Nodes = append(f.Nodes,
+		flow.Node{ID: "data", Type: "transform", Op: "template", Template: `[{"sym": "AMZN", "px": 265.5}, {"sym": "MSFT", "px": 401.1}]`},
+		flow.Node{ID: "table", Type: "transform", Op: "template", Template: "{{data.buffer_output}}"},
+		flow.Node{ID: "o", Type: "output", Format: "md", Actions: []flow.Action{{Type: "show"}}})
+	f.Edges = []flow.Edge{{From: "start", To: "data"}, {From: "data", To: "table"}, {From: "table", To: "o"}}
+	st, _ := runFlowTest(t, h, f, nil)
+	s.replies = []string{`{"node": {"id": "table", "type": "transform", "op": "template", "template": "| {{data.buffer_output.json[0].sym}} |"}, "why": "A table"}`}
+	if _, err := h.FixFlowStep(StepFixRequest{RunID: st.ID, StepID: "table", Prompt: "make it a Markdown table"}); err != nil {
+		t.Fatal(err)
+	}
+	p := s.prompts[len(s.prompts)-1]
+	for _, want := range []string{"WHAT IT DID in the last run: done", "ITS OUTPUT (what it gave; the user finds it wrong or not good enough)", "Its shape: {sym: string, px: number}[]", `"sym": "MSFT"`} {
+		if !strings.Contains(p, want) {
+			t.Errorf("prompt is missing %q", want)
+		}
+	}
+	if e := excerpt(strings.Repeat("a", 50)+strings.Repeat("b", 50), 30); !strings.HasPrefix(e, strings.Repeat("a", 20)) || !strings.HasSuffix(e, strings.Repeat("b", 10)) || !strings.Contains(e, "70 characters left out") {
+		t.Fatal(e)
 	}
 }

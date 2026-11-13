@@ -293,7 +293,7 @@ func Merge(n Node, parents []string, d Data, titles map[string]string) (string, 
 		for _, p := range parents {
 			parts = append(parts, d.Steps[p])
 		}
-		return strings.Join(parts, sep), nil
+		return JoinText(parts, sep), nil
 	case "json-object":
 		obj := map[string]any{}
 		for _, p := range parents {
@@ -931,7 +931,13 @@ func MarkdownToHTML(md string) string {
 				b.WriteString("<th>" + inline(c) + "</th>")
 			}
 			b.WriteString("</tr></thead><tbody>\n")
-			for i += 2; i < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i]), "|"); i++ {
+			for i += 2; i < len(lines); i++ {
+				if strings.TrimSpace(lines[i]) == "" && i+1 < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i+1]), "|") && !regexp.MustCompile(`^\|?\s*:?-{3,}`).MatchString(strings.TrimSpace(lines[i+1])) {
+					continue // a blank line between rows (tables joined from parts): the table goes on
+				}
+				if !strings.HasPrefix(strings.TrimSpace(lines[i]), "|") {
+					break
+				}
 				b.WriteString("<tr>")
 				for _, c := range cells(lines[i]) {
 					b.WriteString("<td>" + inline(c) + "</td>")

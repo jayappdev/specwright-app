@@ -109,7 +109,12 @@ function blocks(lines) {
       const head = splitRow(l), align = splitRow(lines[i + 1]).map((c) => (/^:-+:$/.test(c) ? "center" : /-+:$/.test(c) ? "right" : /^:-+/.test(c) ? "left" : ""));
       const cell = (tag, c, k) => `<${tag}${align[k] ? ` style="text-align:${align[k]}"` : ""}>${mdInline(c)}</${tag}>`;
       const rows = [];
-      for (i += 2; i < lines.length && lines[i].trim() && lines[i].includes("|") && !startsBlock(lines, i); i++) rows.push(splitRow(lines[i]));
+      for (i += 2; i < lines.length; i++) {
+        // a blank line between rows (a table joined from parts): the table goes on
+        if (!lines[i].trim() && i + 1 < lines.length && /^\s*\|/.test(lines[i + 1]) && !DELIM.test(lines[i + 1]) && splitRow(lines[i + 1]).length === head.length) continue;
+        if (!lines[i].trim() || !lines[i].includes("|") || startsBlock(lines, i)) break;
+        rows.push(splitRow(lines[i]));
+      }
       out.push(`<div class="md-table"><table><thead><tr>${head.map((c, k) => cell("th", c, k)).join("")}</tr></thead><tbody>${rows.map((r) => `<tr>${head.map((_, k) => cell("td", r[k] ?? "", k)).join("")}</tr>`).join("")}</tbody></table></div>`);
       continue;
     }

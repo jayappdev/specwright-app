@@ -1260,3 +1260,4 @@ pre .file-link, .tool-result .file-link { text-decoration-style: solid; }
 .fl-multi li { display: flex; gap: 6px; align-items: center; font-size: .9em; }
 .fl-multi li .link { margin-left: auto; }
 .fl-hint span + span { margin-top: 4px; }
+.fr-fix-expect textarea { margin-top: 4px; width: 100%; }

@@ -540,7 +540,7 @@ export function createMockBackend(methods) {
           if (n.mode === "json-object") return [JSON.stringify(Object.fromEntries(live.map((p, i) => [label(node(p)), js(vals[i])])), null, 2), false];
           if (n.mode === "json-array") return [JSON.stringify(vals.map(js), null, 2), false];
           if (n.mode === "template") return [render(n.template, dd), false];
-          return [vals.join((n.separator || "\\n\\n").replace(/\\n/g, "\n")), false]; }
+          return [joinText(vals, (n.separator || "\\n\\n").replace(/\\n/g, "\n")), false]; }
         case "filter": return [filterRows(n, n.source ? render(n.source, dd) : input, rnd), false];
         case "aggregate": return [aggregateRows(n, n.source ? render(n.source, dd) : input, rnd), false];
         case "decision": { const src = n.source ? render(n.source, dd) : input; decide(n, src, rnd); return [src, false]; }
@@ -868,14 +868,27 @@ export function createMockBackend(methods) {
   };
   const itemTitle = (it) => { let s = String(it).trim(); if (s.startsWith("{")) { try { const o = JSON.parse(s); for (const k of ["name", "id", "title", "symbol", "key", "path", "file"]) if (k in o) { s = String(o[k]); break; } } catch { /* text */ } } return s.length > 120 ? s.slice(0, 120) + "…" : s; };
   const asVal = (s) => { try { return JSON.parse(s); } catch { return s; } };
+  // joinText (flow.JoinText): a blank line between parts, but one line break
+  // between table rows or list items, so Markdown tables and lists stay whole
+  const joinText = (parts, sep) => {
+    if (sep.replace(/^[ \t]+|[ \t]+$/g, "") !== "\n\n" && sep !== "\n") return parts.join(sep);
+    const row = /^\s*\|.*\|\s*$/, li = /^\s*([-*+]|\d+[.)])\s+\S/;
+    let out = "", prev = "";
+    parts.forEach((p, i) => {
+      p = String(p); if (sep === "\n\n") p = p.replace(/\n+$/, "");
+      if (i > 0) { const last = prev.replace(/[\n ]+$/, "").split("\n").pop(), first = p.replace(/^\n+/, "").split("\n")[0]; out += (row.test(last) && row.test(first)) || (li.test(last) && li.test(first)) ? "\n" : sep; }
+      out += p; if (p.trim()) prev = p;
+    });
+    return out;
+  };
   const gatherItems = (n, rs, d) => {
     const ok = (r) => (r.error ? "ERROR: " + r.error : String(r.output).trim()), sep = (n.separator || "").replace(/\\n/g, "\n");
     switch (n.mode || "concat") {
       case "sections": return rs.map((r) => `## ${itemTitle(r.item)}\n\n${ok(r)}`).join("\n\n");
       case "json-array": return JSON.stringify(rs.map((r) => (r.error ? { item: asVal(r.item), error: r.error } : asVal(String(r.output).trim()))), null, 2);
       case "json-object": return JSON.stringify(Object.fromEntries(rs.map((r) => [itemTitle(r.item), r.error ? { error: r.error } : asVal(String(r.output).trim())])), null, 2);
-      case "template": return rs.map((r, i) => render(n.template, { ...d, item: r.item, itemIndex: i + 1, itemCount: rs.length, input: ok(r) })).join(sep || "\n");
-      default: return rs.map(ok).join(sep || "\n\n");
+      case "template": return joinText(rs.map((r, i) => render(n.template, { ...d, item: r.item, itemIndex: i + 1, itemCount: rs.length, input: ok(r) })), sep || "\n");
+      default: return joinText(rs.map(ok), sep || "\n\n");
     }
   };
   const loopStacks = (f) => { // id → loops it runs inside; loop → its gather
@@ -1517,7 +1530,7 @@ export function createMockBackend(methods) {
           if (n.mode === "json-object") return { output: JSON.stringify(Object.fromEntries(parents.map((p) => { const t = f.nodes.find((x) => x.id === p)?.title || p; let v = d.steps[p] ?? ""; try { v = JSON.parse(v); } catch { /* text */ } return [t, v]; })), null, 2) };
           if (n.mode === "json-array") return { output: JSON.stringify(parents.map((p) => { let v = d.steps[p] ?? ""; try { v = JSON.parse(v); } catch { /* text */ } return v; }), null, 2) };
           if (n.mode === "template") return { output: render(n.template, d) };
-          return { output: parents.map((p) => d.steps[p] ?? "").join((n.separator || "\\n\\n").replace(/\\n/g, "\n")) };
+          return { output: joinText(parents.map((p) => d.steps[p] ?? ""), (n.separator || "\\n\\n").replace(/\\n/g, "\n")) };
         }
         if (n.type === "loop") return { output: JSON.stringify(splitItems(n.source ? render(n.source, { ...d, input: parents.map((p) => d.steps?.[p] ?? "").join("\n") }) : parents.map((p) => d.steps?.[p] ?? "").join("\n"), n), null, 2) };
         if (n.type === "gather") return { output: gatherItems(n, ["first", "second", "third"].map((it, i) => ({ item: it, output: `(result for item ${i + 1})` })), d) };
