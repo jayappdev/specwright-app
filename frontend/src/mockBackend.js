@@ -743,11 +743,19 @@ export function createMockBackend(methods) {
   };
   // what every step gets and gives (flow.Shapes): declared tool shapes, derived steps, samples
   const shapesOf = (f, samples) => { let order; try { order = flowOrder(f); } catch { return {}; } const all = [...extensions(), ...adm.managed, ...flowBuiltins()], tools = Object.fromEntries(all.filter((e) => e.output).map((e) => [e.name, e.output])), toolsBy = Object.fromEntries(all.filter((e) => e.outputBy).map((e) => [e.name, e.outputBy])); return flowShapes(f, order, { tools, toolsBy, samples: samples || {} }); };
-  const render = (tpl, d) => String(tpl || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, v) => { const [h, ...r] = v.split("."); if (h === "inputs") return d.inputs?.[r[0]] ?? ""; if (h === "steps") { const s = d.steps?.[r[0]] ?? ""; if (r[1] === "json") { try { return jpath(JSON.parse(s), r.slice(2).join(".")); } catch { return ""; } } return s; } if (h === "input") return d.input ?? ""; if (h === "item") { if (r[0] === "json") { try { return jpath(JSON.parse(d.item), r.slice(1).join(".")); } catch { return ""; } } return d.item ?? ""; } if (h === "item_index") return d.itemCount ? String(d.itemIndex) : ""; if (h === "item_count") return d.itemCount ? String(d.itemCount) : "";
+  const renderRaw = (tpl, d) => String(tpl || "").replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (_, v) => { const [h, ...r] = v.split("."); if (h === "inputs") return d.inputs?.[r[0]] ?? ""; if (h === "steps") { const s = d.steps?.[r[0]] ?? ""; if (r[1] === "json") { try { return jpath(JSON.parse(s), r.slice(2).join(".")); } catch { return ""; } } return s; } if (h === "input") return d.input ?? ""; if (h === "item") { if (r[0] === "json") { try { return jpath(JSON.parse(d.item), r.slice(1).join(".")); } catch { return ""; } } return d.item ?? ""; } if (h === "item_index") return d.itemCount ? String(d.itemIndex) : ""; if (h === "item_count") return d.itemCount ? String(d.itemCount) : "";
     if (isLoopField(r.join("."))) { const l = d.loops?.[h]; if (!l) return ""; if (r[0] === "item_index") return String(l.index); if (r[0] === "item_count") return String(l.count); if (r[1] === "json") { try { return jtext(jpath(JSON.parse(l.item), r.slice(2).join("."))); } catch { return ""; } } return l.item; }
     if (h === "input_file") return d.inputFile || "/tmp/specwright/flow-input/step.txt";
     if (isStepField(r.join("."))) { const id = h; if (id && id in (d.steps || {})) { if (r[0] === "output_file") return d.files?.[id] || ""; if (r[1] === "json") { try { return jtext(jpath(JSON.parse(d.steps[id]), r.slice(2).join("."))); } catch { return ""; } } return d.steps[id]; } return ""; }
     return d[h] ?? ""; });
+  // render (flow.Render): on a Markdown table row a value stays in its cell
+  // (line breaks as <br>, | escaped), so multi-line results keep the table whole
+  const tableCell = (v) => String(v).replace(/\r\n/g, "\n").trim().replace(/\n/g, "<br>").replace(/(^|[^\\])\|/g, "$1\\|").replace(/(^|[^\\])\|/g, "$1\\|");
+  const render = (tpl, d) => {
+    tpl = String(tpl || "");
+    if (!tpl.includes("|") || !tpl.includes("{{")) return renderRaw(tpl, d);
+    return tpl.split("\n").map((l) => (/^\s*\|.*\|\s*$/.test(l) ? l.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (m) => tableCell(renderRaw(m, d))) : renderRaw(l, d))).join("\n");
+  };
   const jtext = (v) => (typeof v === "string" ? v : v == null ? "" : typeof v === "object" ? JSON.stringify(v, null, 2) : String(v));
   // JSON → JSON (template); mirrors internal/flow/jsontemplate.go
   const EACH = /^\{\{\s*#each\s+([^{}]+?)\s*\}\}$/, WHOLE = /^\{\{\s*([^{}]+?)\s*\}\}$/;
@@ -1266,9 +1274,15 @@ export function createMockBackend(methods) {
       emit({ type: "build.end", summary: "ok", ok: true });
       return { ok: true, command: "./mvnw -q -B compile", output: lines.join("\n") };
     },
-    async Metrics() {
+    async Metrics() { return api.MetricsIn({}); },
+    async MetricsIn(r = {}) {
+      const from = r.from ? Date.parse(r.from) : -Infinity, to = r.to ? Date.parse(r.to) : Infinity;
+      if (Number.isNaN(from) || Number.isNaN(to)) throw new Error("metrics: not a valid time");
+      if (from >= to) throw new Error("metrics: the start time must be before the end time");
+      const ledger = db.ledger.filter((e) => { const t = Date.parse(e.at); return t >= from && t < to; });
+      const all = !r.from && !r.to;
       const flowMetrics = () => {
-        const fl = db.ledger.filter((e) => String(e.workflow).startsWith("flow:")), top = {};
+        const fl = ledger.filter((e) => String(e.workflow).startsWith("flow:")), top = {};
         const m = { executed: fl.length, completed: 0, failed: 0, stopped: 0, toolExecutions: 0, aiCalls: 0, hoursSaved: 0, projectRuns: 0, projectHours: 0, usage: { input_tokens: 0, output_tokens: 0, cost_usd: 0, premium_requests: 0 }, top: [] };
         for (const e of fl) {
           m[e.state === "done" ? "completed" : e.state === "stopped" ? "stopped" : "failed"]++;
@@ -1282,7 +1296,7 @@ export function createMockBackend(methods) {
         return m;
       };
       const groups = {};
-      for (const e of db.ledger) {
+      for (const e of ledger) {
         if (e.workflow === "playground" || String(e.workflow).startsWith("flow:")) continue; // usage only, not workflow progress
         const g = (groups[e.workspace] ||= { name: e.workspace.split("/").pop(), at: e.at, approved: 0, steps: 6, files: 0, hours: 0, status: e.state, seen: {} });
         if (e.at >= g.at) { g.at = e.at; g.status = e.state; }
@@ -1291,12 +1305,12 @@ export function createMockBackend(methods) {
         else if (e.state === "done" && !g.seen[e.step]) { g.seen[e.step] = 1; g.approved++; g.hours += HOURS[e.step]; }
       }
       const recent = Object.values(groups).map(({ seen, ...g }) => ({ ...g, status: g.approved >= g.steps ? "done" : g.status === "done" ? "paused" : g.status })).sort((a, b) => b.at.localeCompare(a.at));
-      const sum = (k) => db.ledger.reduce((a, e) => a + (e[k] || 0), 0);
+      const sum = (k) => ledger.reduce((a, e) => a + (e[k] || 0), 0);
       const mine = groups[db.root];
       return {
         project: { filesCreated: mine?.files || 0, files: Object.keys(db.files).length, rules: db.profile.rules.length, hoursSaved: mine?.hours || 0, usage: {} },
-        allTime: { timesUsed: 14 + recent.filter((r) => r.status === "done").length, hoursSaved: 63.5 + recent.reduce((a, r) => a + r.hours, 0), usage: { input_tokens: sum("input_tokens"), output_tokens: sum("output_tokens"), cost_usd: sum("cost_usd"), premium_requests: sum("premium_requests"), model_calls: sum("model_calls") } },
-        perStep: Object.entries(HOURS).map(([step, hours]) => ({ step, hours })), recent, flows: flowMetrics(),
+        allTime: { timesUsed: (all ? 14 : 0) + recent.filter((r) => r.status === "done").length, hoursSaved: (all ? 63.5 : 0) + recent.reduce((a, r) => a + r.hours, 0), usage: { input_tokens: sum("input_tokens"), output_tokens: sum("output_tokens"), cost_usd: sum("cost_usd"), premium_requests: sum("premium_requests"), model_calls: sum("model_calls") } },
+        perStep: Object.entries(HOURS).map(([step, hours]) => ({ step, hours })), recent, flows: flowMetrics(), range: { from: r.from || "", to: r.to || "" }, entries: ledger.length,
       };
     },
     async Workflow() { return clone(db.wf); },
@@ -1342,7 +1356,30 @@ export function createMockBackend(methods) {
     async Decide(runId, kind, feedback) { if (!live || live.id !== runId || !live.waiter) throw new Error(`run ${runId} is not waiting for approval`); const w = live.waiter; live.waiter = null; w({ kind, feedback }); },
     async CancelRun(runId) { if (!live || live.id !== runId) throw new Error(`run ${runId} is not live`); live.cancelled = true; if (live.waiter) { const w = live.waiter; live.waiter = null; w({ kind: "cancel" }); } },
     async Live() { return live ? { id: live.id } : null; },
+    // housekeeping: archive, groups, auto-archive, tool tags
+    async ArchiveRuns(ids, archived) { let n = 0; for (const r of db.runs) if (ids.includes(r.id) && !(archived && r.state === "running")) { r.archived = archived; r.archivedAt = archived ? now() : undefined; n++; } persist(); return n; },
+    async GroupRuns(ids, group) { if (String(group).length > 80) throw new Error("a group name is at most 80 characters"); for (const r of db.runs) if (ids.includes(r.id)) r.group = String(group || "").trim(); persist(); },
+    async RunGroups() { return [...new Set(db.runs.map((r) => r.group).filter(Boolean))].sort(); },
+    async Housekeeping() { return clone(db.housekeeping ||= { playgroundDays: 0, historyDays: 0 }); },
+    async SaveHousekeeping(h) {
+      const pd = +h.playgroundDays || 0, hd = +h.historyDays || 0;
+      if (pd < 0 || hd < 0 || pd > 3650 || hd > 3650) throw new Error("days must be between 0 (never) and 3650");
+      let n = 0; const t = Date.now();
+      for (const r of db.runs) {
+        if (r.archived || ["running", "paused", "review", "scheduled"].includes(r.state)) continue;
+        const days = r.step === "playground" || r.kind === "playground" ? pd : hd;
+        if (days > 0 && t - Date.parse(r.ended || r.started) >= days * 864e5) { r.archived = true; r.archivedAt = now(); n++; }
+      }
+      db.housekeeping = { playgroundDays: pd, historyDays: hd, lastRun: now(), lastArchived: n }; persist(); return clone(db.housekeeping);
+    },
+    async ToolTags() { return clone(db.toolTags ||= {}); },
+    async SetToolTags(tool, tags) {
+      const clean = [...new Set((tags || []).map((t) => String(t).trim().toLowerCase().split(/\s+/).join("-")).filter((t) => t && t.length <= 40))];
+      if (clean.length > 20) throw new Error("at most 20 tags per tool");
+      db.toolTags ||= {}; if (clean.length) db.toolTags[tool] = clean; else delete db.toolTags[tool]; persist(); return clone(db.toolTags);
+    },
     async Runs(limit) { return clone(db.runs.filter((r) => r.workspace === db.root).slice(0, limit || 50)); },
+    // (archived runs stay in Runs, with archived: true; the lists filter them)
     async RunEvents(id) { return clone(db.events[id] || []); },
     async Extensions() { return extensions(); },
     async FlowBuiltinTools() { return flowBuiltins(); },
@@ -1553,7 +1590,7 @@ export function createMockBackend(methods) {
       return startFlowRun(clone(f), o);
     },
     async FlowRun(id) { const l = flowLive.get(id); if (l) return clone(l.st); const st = [...(db.events[id] || [])].reverse().find((e) => e.type === "flow.state")?.state; if (!st) throw new Error(`no flow run "${id}"`); return clone({ ...st, status: ["running", "review", "scheduled"].includes(st.status) ? "interrupted" : st.status }); },
-    async FlowRuns(limit) { return clone(db.runs.filter((r) => r.step === "flow" && r.workspace === db.root).slice(0, limit || 100)); },
+    async FlowRuns(limit) { return clone(db.runs.filter((r) => r.step === "flow" && !r.archived && r.workspace === db.root).slice(0, limit || 100)); },
     async DecideFlow(id, d) { const l = flowLive.get(id); if (!l?.decide) throw new Error("the run is not waiting for a review"); l.decide(d); },
     async StopFlowRun(id) { const l = flowLive.get(id); if (!l) throw new Error(`run ${id} is not live`); l.stop = true; if (l.decide) l.decide({ action: "stop" }); },
     async FlowCredentials(id) {
@@ -1567,7 +1604,7 @@ export function createMockBackend(methods) {
     async RemoveSecretFromKeychain(name) { delete kcStore[name]; },
     async RunResults(id) { const r = db.runs.find((x) => x.id === id); if (!r) throw new Error(`no run ${id}`); const dir = r.results || resultsDir(id); const files = Object.keys(db.files).filter((p) => p.startsWith(dir + "/")).map((p) => p.slice(dir.length + 1)).sort(); return { id, dir, abs: db.root + "/" + dir, files, ready: files.length > 0 }; },
     async RunThread(id) { const t = thread(id); if (!t.length) throw new Error(`no run ${id}`); return clone(t); },
-    async RecentRuns(limit) { return clone(db.runs.filter((r) => r.workspace === db.root).slice(0, limit || 50).map((r) => digest(r.id))); },
+    async RecentRuns(limit) { return clone(db.runs.filter((r) => !r.archived && r.workspace === db.root).slice(0, limit || 50).map((r) => digest(r.id))); },
     async RevealPath(p) { throw new Error("The browser preview cannot open Finder; the desktop app shows " + p + " there."); },
     async Libraries() { return annotated(); },
     async ManagedLibraries() { return clone(adm.libs.map((l) => ({ ...l, status: "verified", source: "app" }))); },

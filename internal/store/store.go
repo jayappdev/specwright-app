@@ -41,6 +41,12 @@ type Run struct {
 	Ask     string   `json:"ask,omitempty"`
 	Parents []string `json:"parents,omitempty"`
 	Results string   `json:"results,omitempty"`
+	// Archived runs are hidden from the Playground and History lists until
+	// restored (by hand, or automatically after some days); Group is a
+	// label the user gives runs to keep them together.
+	Archived   bool      `json:"archived,omitempty"`
+	ArchivedAt time.Time `json:"archivedAt,omitzero"`
+	Group      string    `json:"group,omitempty"`
 }
 
 // GetRun reads one run's summary row.
@@ -161,6 +167,37 @@ func (s *Store) SaveRun(r Run) error {
 		if len(r.Parents) == 0 {
 			r.Parents = old.Parents
 		}
+		// the user's archive flag and group belong to the run, not to the save
+		if !r.Archived && old.Archived {
+			r.Archived, r.ArchivedAt = true, old.ArchivedAt
+		}
+		if r.Group == "" {
+			r.Group = old.Group
+		}
+	}
+	b, err := json.MarshalIndent(r, "", "  ")
+	if err != nil {
+		return err
+	}
+	return writeAtomic(s.metaPath(r.ID), b)
+}
+
+// SetRunMeta archives or restores a run (archived != nil) and sets its
+// group (group != nil; "" removes it).
+func (s *Store) SetRunMeta(id string, archived *bool, group *string) error {
+	r, err := s.GetRun(id)
+	if err != nil {
+		return err
+	}
+	if archived != nil {
+		r.Archived = *archived
+		r.ArchivedAt = time.Time{}
+		if r.Archived {
+			r.ArchivedAt = time.Now().UTC()
+		}
+	}
+	if group != nil {
+		r.Group = strings.TrimSpace(*group)
 	}
 	b, err := json.MarshalIndent(r, "", "  ")
 	if err != nil {

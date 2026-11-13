@@ -330,7 +330,7 @@ func (h *Hub) FlowRuns(limit int) ([]store.Run, error) {
 	}
 	out := []store.Run{}
 	for _, r := range runs {
-		if r.Step == "flow" {
+		if r.Step == "flow" && !r.Archived {
 			out = append(out, r)
 		}
 	}

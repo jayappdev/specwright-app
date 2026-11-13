@@ -108,6 +108,41 @@ type Metrics struct {
 	PerStep []StepHours `json:"perStep"`
 	Recent  []RecentRun `json:"recent"`
 	Flows   FlowMetrics `json:"flows"`
+	// Range is the time window the numbers cover (empty ends: unbounded);
+	// Entries counts the ledger entries inside it.
+	Range   MetricsRange `json:"range"`
+	Entries int          `json:"entries"`
+}
+
+// MetricsRange limits Metrics to ledger entries at or after From and
+// before To (RFC 3339 times; an empty end is unbounded).
+type MetricsRange struct {
+	From string `json:"from"`
+	To   string `json:"to"`
+}
+
+// window parses the range.
+func (r MetricsRange) window() (from, to time.Time, err error) {
+	parse := func(s, what string) (time.Time, error) {
+		if s = strings.TrimSpace(s); s == "" {
+			return time.Time{}, nil
+		}
+		t, err := time.Parse(time.RFC3339, s)
+		if err != nil {
+			return t, fmt.Errorf("metrics: the %s time %q is not a valid time", what, s)
+		}
+		return t, nil
+	}
+	if from, err = parse(r.From, "start"); err != nil {
+		return
+	}
+	if to, err = parse(r.To, "end"); err != nil {
+		return
+	}
+	if !from.IsZero() && !to.IsZero() && !from.Before(to) {
+		err = fmt.Errorf("metrics: the start time must be before the end time")
+	}
+	return
 }
 
 // FlowMetrics summarizes flow runs (all projects, plus this one).
@@ -155,12 +190,28 @@ type RecentRun struct {
 }
 
 // Metrics computes project and all-time metrics from the ledger.
-func (h *Hub) Metrics() (Metrics, error) {
+func (h *Hub) Metrics() (Metrics, error) { return h.MetricsIn(MetricsRange{}) }
+
+// MetricsIn computes the metrics from the ledger entries inside r only.
+func (h *Hub) MetricsIn(r MetricsRange) (Metrics, error) {
 	var m Metrics
-	ents, err := h.Store.LedgerEntries()
+	from, to, err := r.window()
 	if err != nil {
 		return m, err
 	}
+	m.Range = r
+	all, err := h.Store.LedgerEntries()
+	if err != nil {
+		return m, err
+	}
+	ents := all[:0:0]
+	for _, e := range all {
+		if (!from.IsZero() && e.At.Before(from)) || (!to.IsZero() && !e.At.Before(to)) {
+			continue
+		}
+		ents = append(ents, e)
+	}
+	m.Entries = len(ents)
 	h.mu.RLock()
 	root := h.root
 	if h.profile != nil {

@@ -44,8 +44,7 @@ export function FilePreview() {
         <Icon.file />
         <div className="fp-title"><b title={d?.path || p.path}>{d?.name || p.path.split("/").pop()}</b>
           <small>{p.inline ? "result shown from memory" : d ? <>{d.rel || d.path}{p.line ? ":" + p.line : ""}{d.mod ? " · " + new Date(d.mod).toLocaleString() : ""}</> : p.path}</small></div>
-        {d && (p.inline ? <button className="btn secondary" onClick={() => navigator.clipboard?.writeText(d.text || "").then(() => toast("Copied."), () => {})}>Copy</button>
-          : <button className="btn secondary" title="Copy the full path" onClick={() => navigator.clipboard?.writeText(d.path).then(() => toast("Path copied."), () => {})}>Copy path</button>)}
+        {d && !p.inline && <button className="btn secondary" title="Copy the full path" onClick={() => navigator.clipboard?.writeText(d.path).then(() => toast("Path copied."), () => {})}>Copy path</button>}
         {inWs && d.kind !== "dir" && <button className="btn secondary" onClick={openInFiles}>Open in Files</button>}
         <button className="icon-btn" aria-label="Close preview" title="Close (Esc)" onClick={close}><Icon.x /></button>
       </header>

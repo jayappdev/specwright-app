@@ -19,6 +19,7 @@ import { AiProgress } from "../AiProgress.jsx";
 import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../Attachments.jsx";
 import { FileLink, Linkify } from "../FileLinks.jsx";
 import { mdRender } from "../markdown.js";
+import { CopyButton } from "../CopyButton.jsx";
 
 const frs = () => (S.frun ||= { flows: null, flowId: "", flow: null, creds: [], keychain: false, runs: [], runId: "", inputs: {}, files: {}, opts: defaultOpts(), secretVals: {}, showOpts: false, tab: "refine", decision: {} });
 const defaultOpts = () => ({ review: "ai", repeat: 1, forEach: { input: "", split: "lines", filter: "", max: 100 }, timeoutMinutes: 0, stepTimeoutSeconds: 0, startAt: "", skip: [], stopAfter: "", model: "" });
@@ -368,7 +369,7 @@ function Outputs({ st }) {
         <details key={k} className="fr-out" open={o.show || k === st.outputs.length - 1}>
           <summary><b>{o.title}</b> <span className="badge">{o.format.toUpperCase()}</span>{o.item && <span className="muted"> · {o.item}</span>}
             {o.saved?.map((p) => <span key={p}> · <FileLink path={p}>{p}</FileLink></span>)}{o.copied && <span className="badge badge-ok">copied</span>}{o.tools?.map((t) => <span key={t} className="badge badge-info">sent to {t}</span>)}
-            <button className="link" onClick={(e) => { e.preventDefault(); navigator.clipboard?.writeText(o.content).then(() => toast("Copied."), () => toast("Copy failed.")); }}>Copy</button></summary>
+            <CopyButton text={o.content} format={o.format === "txt" ? "" : o.format} /></summary>
           {o.errors?.map((e, j) => <div key={j} className="banner error">{e}</div>)}
           <ContentView title={o.title} text={o.content} format={o.format === "txt" ? undefined : o.format} files={(o.saved || []).map((p) => ({ label: p.split("/").pop(), path: p }))} />
         </details>))}

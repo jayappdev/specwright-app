@@ -2,6 +2,8 @@
 // and see its answer, every tool call with arguments and result, and the
 // tokens, cost or premium requests, model calls and timing of the run.
 import { ModelPicker } from "../ModelPicker.jsx";
+import { CopyButton } from "../CopyButton.jsx";
+import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHousekeeping.jsx";
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
@@ -40,9 +42,11 @@ async function loadPast() {
   const p = pg();
   if (p.loaded || !S.ws) return;
   p.loaded = true;
-  const runs = (await backend.Runs(200).catch(() => [])) || [];
+  const runs = (await backend.Runs(500).catch(() => [])) || [];
   for (const r of runs.filter((x) => x.step === "playground" || x.step === "flow")) {
-    if (!p.runs.some((x) => x.id === r.id)) p.runs.push({ id: r.id, prompt: r.ask || "", title: r.title || "", parents: r.parents || [], at: r.started, state: r.state, ...(r.step === "flow" ? { kind: "flow", flow: r.workflow } : {}) });
+    const had = p.runs.find((x) => x.id === r.id);
+    if (had) Object.assign(had, { archived: !!r.archived, group: r.group || "" });
+    else p.runs.push({ id: r.id, prompt: r.ask || "", title: r.title || "", parents: r.parents || [], at: r.started, state: r.state, archived: !!r.archived, group: r.group || "", ...(r.step === "flow" ? { kind: "flow", flow: r.workflow } : {}) });
   }
   p.runs.sort((a, b) => String(b.at).localeCompare(String(a.at)));
   if (!p.sel && p.runs[0]) select(p.runs[0].id);
@@ -151,12 +155,15 @@ export function Playground() {
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 8px 8px" }}><h1>Playground</h1>
           <button className="btn primary" onClick={() => { p.sel = ""; p.prompt = ""; update(); setTimeout(() => box.current?.focus(), 0); }}>+ New</button></div>
         {!p.runs.length && <p className="muted" style={{ padding: "4px 8px" }}>Prompts you run appear here.</p>}
-        {p.runs.map((x) => { const st = stateOf(S.events[x.id] || []), fst = x.kind === "flow" ? S.flowRuns[x.id] : null; return (
+        {p.runs.length > 0 && <RunListBar area="playground" runs={p.runs} />}
+        {visibleRuns("playground", p.runs, (x) => (x.title || "") + " " + (x.prompt || "") + " " + (x.flow || "")).map(([g, list]) => <RunGroup key={g || "-"} area="playground" name={g} count={list.length}>
+        {list.map((x) => { const st = stateOf(S.events[x.id] || []), fst = x.kind === "flow" ? S.flowRuns[x.id] : null; return (
           <button key={x.id} className={"run-item" + (x.id === p.sel ? " active" : "") + (x.kind === "flow" ? " pg-flow-item" : "")} onClick={() => select(x.id)}>
+            <PickBox area="playground" id={x.id} />
             <span className="run-item-top">{x.kind === "flow" ? <span className="pg-item-text"><span className="pg-flow-tag"><Icon.flow /> flow</span> {fst?.flowName || x.flow}</span> : <span className="pg-item-text">{x.parents?.length ? <span className="pg-thread-mark" title="Continues earlier runs">↳ </span> : null}{(x.title || promptOf(x)).split("\n")[0]}</span>}
               {x.kind === "flow" ? <Pill s={{ review: "paused", stopped: "cancelled", interrupted: "failed", scheduled: "pending" }[fst?.status || x.state] || fst?.status || x.state} label={{ review: "Waiting", done: "Completed", failed: "Failed", stopped: "Stopped", running: "Running", scheduled: "Scheduled", interrupted: "Interrupted" }[fst?.status || x.state]} /> : S.events[x.id]?.length ? <Pill s={st} label={PG_LABEL[st]} /> : null}</span>
             <small>{new Date(x.at).toLocaleString()}</small>
-          </button>); })}
+          </button>); })}</RunGroup>)}
       </nav>
       <div className="fview">
         <header className="view-head"><h1>Prompt playground</h1><div className="head-controls head-model"><span className="muted">Agent: {agentLabel()} · {S.ws.name}</span><ModelPicker value={p.model} onChange={(v) => { p.model = v; update(); }} label="Model" /></div></header>
@@ -190,9 +197,10 @@ export function Playground() {
               <Stat v={u.files.length} l="Files changed" sub={u.files.map((f) => f.path.split("/").pop()).slice(0, 3).join(", ")} />
             </div>
             <ResultsLink id={r.id} ended={!running && evs.some((e) => e.type === "run.end")} />
+            {!running && <div className="row-actions hk-run-actions"><RunActions area="playground" runs={p.runs} run={r} /></div>}
           </div>
           {problems.map((e) => <div key={e.seq} className={"banner" + (e.type === "run.retry" ? "" : " error")}><Linkify text={e.summary} /></div>)}
-          <div className="card pg-answer"><div className="card-head"><h3>Output</h3>{answer && <button className="link" onClick={() => navigator.clipboard?.writeText(answer).then(() => toast("Copied the answer."), () => {})}>Copy</button>}
+          <div className="card pg-answer"><div className="card-head"><h3>Output</h3>{answer && <CopyButton text={answer} format="md" />}
             {!running && evs.length > 0 && <button className="btn primary pg-continue" onClick={() => continueInPlayground([r.id])}><Icon.history /> Continue this conversation</button>}</div>
             {answer ? <div className="row assistant pg-text"><Linkify text={answer} />{running && <span className="caret" />}</div>
               : !running && <p className="muted">No text output.</p>}

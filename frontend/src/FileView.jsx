@@ -9,6 +9,7 @@
 //   binary    a short note
 // A toolbar zooms in and out (buttons, ⌘/Ctrl + = − 0, ⌘/Ctrl + scroll or
 // pinch). Zoom is kept per kind (text, image, PDF) for the whole app.
+import { CopyButton } from "./CopyButton.jsx";
 import { useEffect, useRef, useState } from "react";
 import { backend } from "./backend.js";
 import { errMsg, update } from "./store.js";
@@ -110,6 +111,8 @@ export function FileView({ slot, line = 0, label = "File contents" }) {
       <div className="fv-bar">
         {md && <div className="seg"><button className={"btn " + (mode === "rendered" ? "primary" : "secondary")} onClick={() => setMode("rendered")}>Preview</button><button className={"btn " + (mode === "source" ? "primary" : "secondary")} onClick={() => setMode("source")}>Raw data</button></div>}
         <span className="fv-meta muted">{d.kind === "text" ? `${lines.length || d.text.split("\n").length} lines · ` : d.kind === "dir" ? `${d.entries?.length || 0} entries · ` : ""}{d.kind !== "dir" ? fmtSize(d.size) : ""}{d.mime && d.kind !== "text" ? " · " + d.mime : ""}</span>
+        {d.kind === "text" && <CopyButton text={d.text} name={d.name} format={/\.(md|markdown|mdx)$/i.test(d.name) ? "md" : contentFormat(d.text, d.name)} />}
+        {d.kind === "image" && d.data && <CopyButton text={/svg/i.test(d.mime || "") ? atob(d.data) : ""} name={d.name} image={/svg/i.test(d.mime || "") ? null : { data: d.data, mime: d.mime }} />}
         {zoomable && <div className="fv-zoom" role="group" aria-label="Zoom">
           <button className="icon-btn" title="Zoom out (⌘ −)" aria-label="Zoom out" onClick={() => zoom(-1)}><Icon.minus /></button>
           <button className="fv-pct" title="Reset to 100% (⌘ 0)" onClick={() => zoom(0)}>{pct}</button>

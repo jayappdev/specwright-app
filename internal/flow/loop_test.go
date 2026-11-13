@@ -254,3 +254,38 @@ func TestJoinTextKeepsMarkdownWhole(t *testing.T) {
 		t.Fatal(h)
 	}
 }
+
+func TestTableRowsStayOneLine(t *testing.T) {
+	d := Data{Item: "AMZN", ItemCount: 1, Input: "265.58\n", Steps: map[string]string{"q": "price 265.58\nchange -0.7% | flat\n"}}
+	if got := Render("| {{item}} | {{input}} |", d); got != "| AMZN | 265.58 |" {
+		t.Fatalf("%q", got)
+	}
+	if got := Render("| {{item}} | {{q.buffer_output}} |", d); got != `| AMZN | price 265.58<br>change -0.7% \| flat |` {
+		t.Fatalf("%q", got)
+	}
+	// not a table row: values as they are
+	if got := Render("Price: {{input}}", d); got != "Price: 265.58\n" {
+		t.Fatalf("%q", got)
+	}
+	if got := Render("{{q.buffer_output}}\n| a | b |", d); got != "price 265.58\nchange -0.7% | flat\n\n| a | b |" {
+		t.Fatalf("%q", got)
+	}
+	g, _ := Gather(Node{Mode: "template", Template: "| {{item}} | {{input}} |"}, []ItemResult{{Item: "AMZN", Output: "a\nb"}, {Item: "MSFT", Output: "c"}}, Data{})
+	if g != "| AMZN | a<br>b |\n| MSFT | c |" {
+		t.Fatalf("%q", g)
+	}
+	h := MarkdownToHTML("| T | V |\n|---|---|\n" + g)
+	if strings.Count(h, "<tr>") != 3 {
+		t.Fatal(h)
+	}
+}
+
+func TestMarkdownTableCells(t *testing.T) {
+	h := MarkdownToHTML("| a | b |\n|---|---|\n| x<br>y | z \\| w |")
+	if !strings.Contains(h, "<td>x<br>y</td>") || !strings.Contains(h, "<td>z | w</td>") || strings.Count(h, "<td>") != 2 {
+		t.Fatal(h)
+	}
+	if h := MarkdownToHTML("text <script>x</script>"); strings.Contains(h, "<script>") {
+		t.Fatal("still escaped:", h)
+	}
+}

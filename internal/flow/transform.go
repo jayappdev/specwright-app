@@ -54,12 +54,44 @@ type LoopItem struct {
 	Count int    `json:"count"`
 }
 
-// Render fills {{…}} variables in tpl. Unknown variables become empty.
+// Render fills {{…}} variables in tpl. Unknown variables become empty. On
+// a line that is a Markdown table row ("| {{item}} | {{input}} |") a value
+// is kept to its cell: its line breaks become <br> and its | are escaped,
+// so a multi-line result does not split the row and break the table.
 func Render(tpl string, d Data) string {
-	return varRE.ReplaceAllStringFunc(tpl, func(m string) string {
-		v, _ := lookup(strings.TrimSpace(m[2:len(m)-2]), d)
-		return v
-	})
+	fill := func(s string, cell bool) string {
+		return varRE.ReplaceAllStringFunc(s, func(m string) string {
+			v, _ := lookup(strings.TrimSpace(m[2:len(m)-2]), d)
+			if cell {
+				v = TableCell(v)
+			}
+			return v
+		})
+	}
+	if !strings.Contains(tpl, "|") || !strings.Contains(tpl, "{{") {
+		return fill(tpl, false)
+	}
+	lines := strings.Split(tpl, "\n")
+	for i, l := range lines {
+		lines[i] = fill(l, tableRowRE.MatchString(l))
+	}
+	return strings.Join(lines, "\n")
+}
+
+var (
+	tableRowRE  = regexp.MustCompile(`^\s*\|.*\|\s*$`)
+	unescPipeRE = regexp.MustCompile(`(^|[^\\])\|`)
+)
+
+// TableCell makes a value fit in one Markdown table cell: trimmed, line
+// breaks as <br>, | escaped.
+func TableCell(v string) string {
+	v = strings.TrimSpace(strings.ReplaceAll(v, "\r\n", "\n"))
+	v = strings.ReplaceAll(v, "\n", "<br>")
+	for unescPipeRE.MatchString(v) { // twice for "||"
+		v = unescPipeRE.ReplaceAllString(v, `$1\|`)
+	}
+	return v
 }
 
 func lookup(v string, d Data) (string, bool) {
@@ -919,12 +951,26 @@ func MarkdownToHTML(md string) string {
 			flush()
 			closeList()
 			cells := func(s string) []string {
-				s = strings.Trim(strings.TrimSpace(s), "|")
-				parts := strings.Split(s, "|")
-				for k := range parts {
-					parts[k] = strings.TrimSpace(parts[k])
+				s = strings.TrimSpace(s)
+				s = strings.TrimPrefix(s, "|")
+				if strings.HasSuffix(s, "|") && !strings.HasSuffix(s, `\|`) {
+					s = s[:len(s)-1]
 				}
-				return parts
+				var parts []string
+				cur := ""
+				for k := 0; k < len(s); k++ {
+					switch {
+					case s[k] == '\\' && k+1 < len(s) && s[k+1] == '|': // an escaped | belongs to the cell
+						cur += "|"
+						k++
+					case s[k] == '|':
+						parts = append(parts, strings.TrimSpace(cur))
+						cur = ""
+					default:
+						cur += string(s[k])
+					}
+				}
+				return append(parts, strings.TrimSpace(cur))
 			}
 			b.WriteString("<table><thead><tr>")
 			for _, c := range cells(t) {
@@ -976,6 +1022,8 @@ var (
 	reLink   = regexp.MustCompile(`\[([^\]]+)\]\(([^)\s]+)\)`)
 )
 
+var reBr = regexp.MustCompile(`&lt;br\s*/?&gt;`)
+
 func inline(s string) string {
 	// protect inline code first
 	var codes []string
@@ -984,6 +1032,7 @@ func inline(s string) string {
 		return fmt.Sprintf("\x00%d\x00", len(codes)-1)
 	})
 	s = html.EscapeString(s)
+	s = reBr.ReplaceAllString(s, "<br>") // line breaks inside table cells
 	s = reLink.ReplaceAllStringFunc(s, func(m string) string {
 		p := reLink.FindStringSubmatch(m)
 		href := p[2]

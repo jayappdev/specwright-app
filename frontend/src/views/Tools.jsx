@@ -6,7 +6,7 @@ import { confirmDialog, askText } from "../Dialog.jsx";
 import { S, update, toast, errMsg, refreshExtensions, refreshSecrets, refreshSecretsSoon, refreshAdmin } from "../store.js";
 import { Icon, Chip, Pill } from "../ui.jsx";
 import { NeedWorkspace, StatusBadge } from "./Wizard.jsx";
-import { BuiltinList, BuiltinView, builtinsVisible } from "./Builtins.jsx";
+import { BuiltinList, BuiltinView, builtinsVisible, selectBuiltin } from "./Builtins.jsx";
 import { CopilotExtList, CopilotExtView, CopilotToolReview, approveCopilotTool, loadCopilotExts } from "./CopilotExts.jsx";
 import { loadPackages, registryFor } from "./Packages.jsx";
 import { AttachBar, AttachmentChips, DropZone, onPasteAttach } from "../Attachments.jsx";
@@ -229,6 +229,7 @@ function SecretsCard({ d }) {
 }
 
 export function Tools() {
+  useEffect(() => { loadToolTags(); }, []);
   if (!S.ws) return <NeedWorkspace what="tools" />;
   if (!S.tb) S.tb = tbDefaults();
   const tb = S.tb, d = tb.draft, si = STAGES.findIndex(([id]) => id === tb.stage), exts = S.ws.extensions || [];
@@ -367,12 +368,15 @@ export function Tools() {
     <div className="files">
       <nav className="ftree" aria-label="Tools">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 8px 8px" }}><h1>Tools</h1><button className="btn primary" onClick={() => newTool(false)}>+ New</button></div>
+        <ToolFinder />
+        {finding() ? <FoundTools exts={exts} /> : <>
         <BuiltinList />
         {[["managed", "Managed by admin · all projects"], ["project", "Project tools"], ["global", "Global tools"]].map(([g, l]) => (
-          <ToolGrid key={g} title={l} compact tools={exts.filter((t) => t.scope === g)} render={(t) => <ToolTile key={t.name} t={t} compact active={S.tb?.editing === t.name} onOpen={() => openTool(t)} />} />))}
-        <CopilotExtList />
+          <ToolGrid key={g} title={l} compact tools={withTags(exts.filter((t) => t.scope === g))} render={(t) => <ToolTile key={t.name} t={t} compact active={S.tb?.editing === t.name} onOpen={() => openTool(t)} />} />))}
+        <CopilotExtList /></>}
       </nav>
       <div className="fview">
+        {(S.bt?.sel && builtinsVisible() && !S.cx?.sel) ? <ToolTagsBar name={"builtin:" + S.bt.sel} /> : !S.cx?.sel && tb.editing ? <ToolTagsBar name={tb.editing} /> : null}
         {S.cx?.sel ? <CopilotExtView /> : S.bt?.sel && builtinsVisible() ? <BuiltinView /> : <>
         <header className="view-head"><h1>{tb.admin ? (tb.editing ? "Managed tool · " + tb.editing : "New managed tool") : tb.ro ? "Managed tool · " + tb.editing : tb.editing ? (d?.kind === "copilot" ? "Copilot tool · " : "Edit tool · ") + tb.editing : "New tool"}</h1>
           {(tb.admin || tb.ro) && <span className={"badge " + (tb.admin ? "badge-warn" : "")}><Icon.lock /> {tb.admin ? "admin mode" : "read-only"}</span>}</header>
@@ -420,5 +424,61 @@ function OutputShapeCard({ d, test }) {
       <span className="muted">{compact(learned)}</span></div>}
     {fieldsOf.length > 0 && <details><summary className="muted">{fieldsOf.length} field{fieldsOf.length === 1 ? "" : "s"}</summary>
       <ul className="shape-fields">{fieldsOf.map((p) => <li key={p.path} style={{ paddingLeft: p.depth * 14 }}><code>{p.path}</code> <span className="fl-shape-type">{p.type}</span>{p.description && <span className="muted"> · {p.description}</span>}</li>)}</ul></details>}
+  </div>;
+}
+
+
+// --- finding tools: search, tags, grouping --------------------------------------------
+
+const tf = () => (S.tf ||= { q: "", tag: "", groupBy: "source" });
+const finding = () => { const f = tf(); return !!(f.q.trim() || f.tag || f.groupBy === "tag"); };
+
+async function loadToolTags() {
+  if (S.toolTags) return;
+  S.toolTags = (await backend.ToolTags().catch(() => null)) || {};
+  update();
+}
+const tagsOf = (key) => (S.toolTags || {})[key] || [];
+const withTags = (list) => list.map((t) => ({ ...t, tags: tagsOf(t.name) }));
+const allTags = () => [...new Set(Object.values(S.toolTags || {}).flat())].sort();
+
+function ToolFinder() {
+  const f = tf(), set = (k, v) => { f[k] = v; update(); }, tags = allTags();
+  return <div className="tf-bar">
+    <input type="search" value={f.q} placeholder="Search tools: name, what it does, #tag" aria-label="Search tools" onChange={(e) => set("q", e.target.value)} />
+    <div className="tf-row"><span className="muted">Group by</span>
+      <div className="seg" role="group" aria-label="Group by">{[["source", "Source"], ["tag", "Tag"]].map(([v, l]) => <button key={v} type="button" aria-pressed={f.groupBy === v} onClick={() => set("groupBy", v)}>{l}</button>)}</div></div>
+    {tags.length > 0 && <div className="tf-tags">{tags.map((t) => <button key={t} type="button" className={"tt-tag tf-tag" + (f.tag === t ? " on" : "")} aria-pressed={f.tag === t} onClick={() => set("tag", f.tag === t ? "" : t)}>#{t}</button>)}</div>}
+  </div>;
+}
+
+// every tool (built-in, managed, project, global, Copilot) matching the
+// search and tag, grouped by source or by tag
+function FoundTools({ exts }) {
+  const f = tf(), q = f.q.trim().toLowerCase().replace(/^#/, "");
+  const items = [
+    ...(builtinsVisible() ? S.builtins || [] : []).map((t) => ({ name: t.name, key: "builtin:" + t.name, desc: t.description, kind: "builtin", scope: "builtin", status: t.enabled === false ? "off" : "built-in", open: () => { if (S.cx) S.cx.sel = ""; selectBuiltin(t.name); } })),
+    ...exts.map((t) => ({ ...t, key: t.name, open: () => { if (S.bt) S.bt.sel = ""; if (S.cx) S.cx.sel = ""; openTool(t); } })),
+  ].map((t) => ({ ...t, tags: tagsOf(t.key) }))
+    .filter((t) => (!f.tag || t.tags.includes(f.tag)) && (!q || (t.name + " " + (t.desc || "") + " " + t.tags.join(" ")).toLowerCase().includes(q)));
+  const SRC = [["builtin", "Built-in"], ["managed", "Managed by admin"], ["project", "Project tools"], ["global", "Global tools"]];
+  const groups = f.groupBy === "tag"
+    ? [...allTags().filter((t) => !f.tag || t === f.tag).map((t) => ["#" + t, items.filter((x) => x.tags.includes(t))]), ["Not tagged", items.filter((x) => !x.tags.length)]]
+    : [...SRC.map(([s, l]) => [l, items.filter((x) => x.scope === s)]), ["Other", items.filter((x) => !SRC.some(([s]) => s === x.scope))]];
+  const shown = groups.filter(([, l]) => l.length);
+  return <>{shown.map(([l, list]) => <ToolGrid key={l} title={l} compact tools={list} render={(t) => <ToolTile key={t.key} t={t} compact active={S.tb?.editing === t.name || (t.kind === "builtin" && S.bt?.sel === t.name)} onOpen={t.open} />} />)}
+    {!shown.length && <p className="muted" style={{ padding: "4px 8px" }}>No tools match{q ? ` “${f.q}”` : ""}{f.tag ? ` with #${f.tag}` : ""}.</p>}</>;
+}
+
+// The open tool's tags.
+function ToolTagsBar({ name }) {
+  const tags = tagsOf(name), [text, setText] = useState("");
+  const save = async (next) => { try { S.toolTags = await backend.SetToolTags(name, next); update(); } catch (e) { toast(errMsg(e)); } };
+  const add = () => { const t = text.split(",").map((x) => x.trim().replace(/^#/, "")).filter(Boolean); if (t.length) save([...tags, ...t]); setText(""); };
+  return <div className="tt-tagbar"><span className="muted">Tags</span>
+    {tags.map((t) => <span key={t} className="tt-tag">#{t}<button className="link" aria-label={"Remove tag " + t} onClick={() => save(tags.filter((x) => x !== t))}>✕</button></span>)}
+    <input value={text} list="tool-tag-list" placeholder={tags.length ? "add a tag" : "add tags, e.g. database, reporting"} aria-label="Add a tag" onChange={(e) => setText(e.target.value)}
+      onKeyDown={(e) => { if (e.key === "Enter" || e.key === ",") { e.preventDefault(); add(); } }} onBlur={add} />
+    <datalist id="tool-tag-list">{allTags().filter((t) => !tags.includes(t)).map((t) => <option key={t} value={t} />)}</datalist>
   </div>;
 }
