@@ -258,6 +258,31 @@ func (a *App) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) core
 	return val(a.hub.PreviewFlowStep(f, nodeID, sample))
 }
 
+// FlowShapes works out what data every step of a flow gets and gives.
+func (a *App) FlowShapes(f flow.Flow, samples map[string]string) map[string]flow.StepShape {
+	return val(a.hub.FlowShapes(f, samples))
+}
+
+// ParseSchema reads a JSON Schema, or learns one from example JSON.
+func (a *App) ParseSchema(text string) (*flow.Schema, error) { return ok(flow.ParseSchema(text)) }
+
+// DesignFlows asks the AI designer for flow options (new, or improvements of a flow).
+func (a *App) DesignFlows(r core.DesignRequest) (core.DesignResult, error) { return ok(a.hub.DesignFlows(r)) }
+
+// SaveFlowVersion saves a flow as a new version of another.
+func (a *App) SaveFlowVersion(baseID string, f flow.Flow) (core.FlowState, error) {
+	return ok(a.hub.SaveFlowVersion(baseID, f))
+}
+
+// FixFlowStep asks the AI for a changed definition of one step of a run.
+func (a *App) FixFlowStep(r core.StepFixRequest) (core.StepFix, error) { return ok(a.hub.FixFlowStep(r)) }
+
+// TryStepFix runs a trial of a changed step on an unsaved copy of the flow.
+func (a *App) TryStepFix(f core.StepFix) (core.FlowRunState, error) { return ok(a.hub.TryStepFix(f)) }
+
+// ApplyStepFix writes a trial's changed steps into the saved flow.
+func (a *App) ApplyStepFix(runID string) (core.FlowState, error) { return ok(a.hub.ApplyStepFix(runID)) }
+
 // FlowOps lists the designer's transformations, merge modes and formats.
 func (a *App) FlowOps() map[string]any { return val(a.hub.FlowOps()) }
 

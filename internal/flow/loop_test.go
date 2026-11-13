@@ -188,3 +188,44 @@ func TestLoopItemByID(t *testing.T) {
 		t.Fatal(got)
 	}
 }
+
+func TestSplitItemsFromJSONInput(t *testing.T) {
+	cases := []struct {
+		src, split, field string
+		want              string // items joined by |, or "ERR:<part of the message>"
+	}{
+		{`{"stocks": "AMZN"}`, "auto", "", "AMZN"},
+		{`{"stocks": "AMZN"}`, "lines", "", "AMZN"},
+		{"{\"stocks\": \"AMZN\\nMSFT\\n\"}", "lines", "", "AMZN|MSFT"},
+		{`{"stocks": "AMZN"}`, "json", "", "ERR:not a JSON array"},
+		{`{"stocks": "[\"AMZN\",\"MSFT\"]"}`, "json", "", "AMZN|MSFT"},
+		{"{\"stocks\": \"AMZN\\nMSFT\", \"note\": \"x\"}", "auto", "stocks", "AMZN|MSFT"},
+		{"{\"stocks\": \"AMZN\", \"note\": \"x\"}", "auto", "", "ERR:the fields stocks, note"},
+		{`{"stocks": "A", "picks": ["x", "y"]}`, "auto", "", "x|y"},
+		{`{"data": {"items": [{"sku": "k"}, {"sku": "m"}]}}`, "auto", "data.items", `{"sku":"k"}|{"sku":"m"}`},
+		{`{"data": {}}`, "auto", "rows", "ERR:no field \"rows\" (its fields: data)"},
+		{"a\nb", "auto", "", "a|b"},
+		{`{"x": "a1 b2"}`, "regex", "", "ERR:"},
+	}
+	for _, c := range cases {
+		n := Node{Split: c.split, Field: c.field}
+		if c.split == "regex" {
+			n.Expr = `[a-z]\d`
+		}
+		items, err := SplitItems(c.src, n)
+		got := strings.Join(items, "|")
+		if err != nil {
+			got = "ERR:" + err.Error()
+		}
+		if c.split == "regex" { // a regex sees the raw text
+			if err != nil || got != "a1|b2" {
+				t.Errorf("regex: %q", got)
+			}
+			continue
+		}
+		if strings.HasPrefix(c.want, "ERR:") && strings.HasPrefix(got, "ERR:") && strings.Contains(got, c.want[4:]) || got == c.want {
+			continue
+		}
+		t.Errorf("%s (%s, field %q): got %q, want %q", c.src, c.split, c.field, got, c.want)
+	}
+}

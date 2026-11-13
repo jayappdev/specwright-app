@@ -107,14 +107,14 @@ func (h *Hub) flowTools() []flow.ToolInfo {
 		if extension.IsManagedScope(e.Scope) && (e.Managed == nil || e.Managed.Status != extension.ManagedVerified) {
 			continue
 		}
-		t := flow.ToolInfo{Name: e.Name}
+		t := flow.ToolInfo{Name: e.Name, Output: e.Output, OutputBy: e.OutputBy}
 		for _, p := range e.Params {
 			t.Params = append(t.Params, flow.ToolParam{Name: p.Name, Required: p.Required})
 		}
 		out = append(out, t)
 	}
 	for _, e := range h.FlowBuiltinTools() {
-		t := flow.ToolInfo{Name: e.Name}
+		t := flow.ToolInfo{Name: e.Name, Output: e.Output, OutputBy: e.OutputBy}
 		for _, p := range e.Params {
 			t.Params = append(t.Params, flow.ToolParam{Name: p.Name, Required: p.Required})
 		}
@@ -295,4 +295,60 @@ func (h *Hub) FlowOps() map[string]any {
 	}
 	return map[string]any{"ops": ops, "mergeModes": flow.MergeModes, "formats": flow.Formats, "inputTypes": flow.InputTypes, "actionTypes": flow.ActionTypes,
 		"condOps": flow.CondOps, "condMatches": flow.CondMatches, "aggFns": flow.AggFns, "aggregateModes": flow.AggregateModes, "rowFormats": flow.RowFormats}
+}
+
+// FlowShapes works out what data every step of a flow gets and gives (see
+// flow.Shapes): from the tools' declared output shapes, the steps that
+// follow from their input, and samples — the designer's sample data, then
+// the outputs of the flow's last run. It is metadata for the designer and
+// is not sent to the AI.
+func (h *Hub) FlowShapes(f flow.Flow, samples map[string]string) map[string]flow.StepShape {
+	hints := flow.ShapeHints{Tools: map[string]*flow.Schema{}, ToolsBy: map[string]map[string]map[string]*flow.Schema{}, Samples: map[string]string{}}
+	exts, _ := h.Extensions()
+	for _, e := range append(exts, h.FlowBuiltinTools()...) {
+		if e.Output != nil {
+			hints.Tools[e.Name] = e.Output
+		}
+		if e.OutputBy != nil {
+			hints.ToolsBy[e.Name] = e.OutputBy
+		}
+	}
+	for id, s := range h.lastFlowOutputs(f.ID) {
+		hints.Samples[id] = s
+	}
+	for id, s := range samples {
+		if strings.TrimSpace(s) != "" {
+			hints.Samples[id] = s
+		}
+	}
+	return f.Shapes(hints)
+}
+
+// lastFlowOutputs: the step outputs of the flow's latest run (complete
+// ones only), to learn shapes from.
+func (h *Hub) lastFlowOutputs(flowID string) map[string]string {
+	out := map[string]string{}
+	if flowID == "" {
+		return out
+	}
+	runs, err := h.FlowRuns(40)
+	if err != nil {
+		return out
+	}
+	for _, r := range runs {
+		if r.Workflow != flowID {
+			continue
+		}
+		st, err := h.FlowRun(r.ID)
+		if err != nil {
+			continue
+		}
+		for _, s := range st.Steps {
+			if s.Status == "done" && !s.Truncated && s.Iterations == 0 && strings.TrimSpace(s.Output) != "" {
+				out[s.ID] = s.Output
+			}
+		}
+		break
+	}
+	return out
 }

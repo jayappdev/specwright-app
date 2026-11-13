@@ -7,6 +7,7 @@ package extension
 
 import (
 	"bytes"
+	"codegen/internal/flow"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -32,6 +33,12 @@ type Param struct {
 	Type     string `json:"type"`
 	Required bool   `json:"required"`
 	Desc     string `json:"desc"`
+	// Schema is the shape of a JSON parameter (type json, object or
+	// array): the designer shows its fields, and the agent is given a
+	// compact form of it when it fills the parameter in.
+	Schema *flow.Schema `json:"schema,omitempty"`
+	// Enum lists the values the parameter takes, when it has a fixed set.
+	Enum []string `json:"enum,omitempty"`
 }
 
 // Secret names an environment variable injected at run time. Only the name
@@ -66,11 +73,18 @@ type Extension struct {
 	TestFiles  []string       `json:"testFiles,omitempty"` // files attached to TestPrompt (workspace paths)
 	SampleTest string         `json:"sampleTest,omitempty"`
 	Call       map[string]any `json:"call,omitempty"`
-	Revision   int            `json:"revision"`
-	Approved   bool           `json:"approved"`
-	ApprovedAt time.Time      `json:"approvedAt,omitzero"`
-	Hash       string         `json:"hash,omitempty"`
-	LastTest   *TestResult    `json:"lastTest,omitempty"`
+	// Output is the shape of what the tool prints, when it prints JSON.
+	// Flows use it to know the fields later steps can use; it is designer
+	// metadata only and is never sent to the AI.
+	Output *flow.Schema `json:"output,omitempty"`
+	// OutputBy is the output's shape when an argument has a value
+	// (argument → value → shape), e.g. a built-in's format=json.
+	OutputBy   map[string]map[string]*flow.Schema `json:"outputBy,omitempty"`
+	Revision   int                                `json:"revision"`
+	Approved   bool                               `json:"approved"`
+	ApprovedAt time.Time                          `json:"approvedAt,omitzero"`
+	Hash       string                             `json:"hash,omitempty"`
+	LastTest   *TestResult                        `json:"lastTest,omitempty"`
 	// Deps are packages installed into the tool's own folder (Dir) from the
 	// configured registries: "pg@8.13.1", "requests==2.32.3",
 	// "github.com/jackc/pgx/v5@v5.7.1", "org.postgresql:postgresql:42.7.4".

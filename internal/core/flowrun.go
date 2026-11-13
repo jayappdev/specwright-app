@@ -59,6 +59,15 @@ type FlowRunOptions struct {
 	Skip               []string            `json:"skip"`
 	StopAfter          string              `json:"stopAfter"`
 	Model              string              `json:"model"`
+	// Reuse: steps that do not run again but give the output they gave in
+	// an earlier run (trying a changed step: the steps before it are reused)
+	Reuse map[string]ReusedStep `json:"reuse,omitempty"`
+}
+
+// ReusedStep is an earlier run's result of a step.
+type ReusedStep struct {
+	Output   string   `json:"output"`
+	Branches []string `json:"branches,omitempty"` // a Decision's paths
 }
 
 // ForEach runs the flow once per item of an input.
@@ -148,6 +157,8 @@ type FlowRunState struct {
 	Review       *FlowReview       `json:"review,omitempty"`
 	Changes      []string          `json:"changes,omitempty"` // improvements saved to the flow
 	MinutesSaved int               `json:"minutesSaved"`
+	// Trial: this run tried changed steps on an unsaved copy of the flow
+	Trial *FlowTrial `json:"trial,omitempty"`
 }
 
 // FlowDecision answers a review.
@@ -242,6 +253,11 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 			return FlowRunState{}, fmt.Errorf("the filter is not a valid pattern: %v", err)
 		}
 	}
+	return h.startFlow(root, f, o, nil)
+}
+
+// startFlow starts a run of f (a saved flow, or a trial copy).
+func (h *Hub) startFlow(root string, f *flow.Flow, o FlowRunOptions, trial *FlowTrial) (FlowRunState, error) {
 	h.mu.RLock()
 	agentName, model := h.agentName, h.model
 	h.mu.RUnlock()
@@ -251,7 +267,7 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 	runID := workflow.NewRunID()
 	fr := &flowRun{flow: f, decide: make(chan FlowDecision, 1), done: make(chan struct{}), t0: time.Now()}
 	fr.st = FlowRunState{ID: runID, FlowID: f.ID, FlowName: f.Name, Status: "running", Started: time.Now(), Options: o, Agent: agentName, Model: model,
-		Outputs: []FlowOutputState{}, MinutesSaved: f.EstimatedMinutes()}
+		Outputs: []FlowOutputState{}, MinutesSaved: f.EstimatedMinutes(), Trial: trial}
 	fr.st.Steps = stepStates(f)
 	ctx, cancel := context.WithCancel(h.ctx)
 	if o.TimeoutMinutes > 0 {
@@ -264,7 +280,11 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 	}
 	h.flowRuns[runID] = fr
 	h.mu.Unlock()
-	_ = h.Store.SaveRun(store.Run{ID: runID, Workspace: root, Workflow: f.ID, Step: "flow", Agent: agentName, Model: model, State: "running", Started: fr.st.Started, Kind: "flow", Title: f.Name, Ask: flowAsk(o.Inputs)})
+	kind, title := "flow", f.Name
+	if trial != nil {
+		kind, title = "flow-trial", f.Name+" (trial)"
+	}
+	_ = h.Store.SaveRun(store.Run{ID: runID, Workspace: root, Workflow: f.ID, Step: "flow", Agent: agentName, Model: model, State: "running", Started: fr.st.Started, Kind: kind, Title: title, Ask: flowAsk(o.Inputs)})
 	h.flowPublish(fr, "run.start", "Started flow "+f.Name, map[string]any{"flow": f.ID})
 	h.flowState(fr)
 	go h.execFlow(ctx, root, fr)
@@ -706,6 +726,45 @@ func (h *Hub) runNodes(ctx context.Context, root string, fr *flowRun, ids []stri
 			h.flowState(fr)
 			continue
 		}
+		if r, ok := o.Reuse[id]; ok && d.ItemCount == 0 { // an earlier run's result, not run again
+			reused := []string{id}
+			if n.Type == "loop" { // the whole loop: its steps and its Gather
+				body, g := li.Body(ids, id), li.Gather[id]
+				for _, b := range append(body, g) {
+					handled[b] = true
+					status[b] = "done"
+					if gr, ok := o.Reuse[b]; ok {
+						d.Steps[b] = gr.Output
+						reused = append(reused, b)
+					}
+				}
+			}
+			d.Steps[id] = r.Output
+			if n.Type == "decision" {
+				d.Branches = maps.Clone(d.Branches)
+				if d.Branches == nil {
+					d.Branches = map[string][]string{}
+				}
+				d.Branches[id] = r.Branches
+			}
+			for _, x := range reused {
+				out := d.Steps[x]
+				if p := h.flowOutputFile(fr, x, out); p != "" {
+					d.Files[x] = p
+				}
+				fr.update(func(st *FlowRunState) {
+					s := fr.step(x)
+					s.Status, s.Output, s.Notes = "done", "", []string{"reused from the earlier run"}
+					s.Output, s.Truncated = clip(out)
+					if x == id && n.Type == "decision" {
+						s.Branches = r.Branches
+					}
+				})
+				status[x] = "done"
+			}
+			h.flowState(fr)
+			continue
+		}
 		if n.Type == "loop" {
 			body, g := li.Body(ids, id), li.Gather[id]
 			for _, b := range body {
@@ -1063,17 +1122,11 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 		}
 		return out, u, err
 	case "ai":
-		prompt := flow.Render(n.Prompt, d)
-		// connected steps' output is always part of the prompt, even when
-		// the prompt does not mention it
-		if in := strings.TrimSpace(d.Input); in != "" && !flow.UsesUpstream(*n, f) {
-			if len(in) > 60000 {
-				in = in[:60000] + "\n…(shortened)"
-			}
-			prompt += "\n\n## Input from the previous step" + map[bool]string{true: "s", false: ""}[len(parents) > 1] + "\n```\n" + in + "\n```"
+		out, u, err := h.flowAgent(ctx, root, fr, n.ID, h.aiStepPrompt(f, n, d, len(parents)), firstNonEmpty(n.Model, fr.st.Options.Model))
+		if err == nil && n.OutputSchema != nil {
+			out = jsonReply(out)
 		}
-		prompt += h.aiSuffix(f, d)
-		return h.flowAgent(ctx, root, fr, n.ID, prompt, firstNonEmpty(n.Model, fr.st.Options.Model))
+		return out, u, err
 	case "gather":
 		fr.mu.Lock()
 		res := fr.gathered[n.ID]
@@ -1770,4 +1823,52 @@ func flowAsk(inputs map[string]string) string {
 		fmt.Fprintf(&b, "%s: %s\n", k, v)
 	}
 	return strings.TrimSpace(b.String())
+}
+
+// jsonReply takes the JSON out of an AI reply that was asked for JSON
+// only: without code fences or text around it, when the JSON is there.
+func jsonReply(s string) string {
+	t := strings.TrimSpace(s)
+	if i := strings.Index(t, "```"); i >= 0 {
+		rest := t[i+3:]
+		if nl := strings.IndexByte(rest, '\n'); nl >= 0 {
+			rest = rest[nl+1:]
+		}
+		if j := strings.Index(rest, "```"); j >= 0 {
+			t = strings.TrimSpace(rest[:j])
+		}
+	}
+	if json.Valid([]byte(t)) {
+		return t
+	}
+	for _, open := range []string{"{", "["} { // JSON with text around it
+		i := strings.Index(t, open)
+		j := strings.LastIndex(t, map[string]string{"{": "}", "[": "]"}[open])
+		if i >= 0 && j > i && json.Valid([]byte(t[i:j+1])) {
+			return t[i : j+1]
+		}
+	}
+	return s
+}
+
+// aiStepPrompt is what an AI step sends: its prompt, the connected steps'
+// output when the prompt does not use it, the expected reply's shape when
+// one is set, and the flow's context and skills. Other shape metadata
+// (tools' output shapes, the designer's field lists) is never added.
+func (h *Hub) aiStepPrompt(f *flow.Flow, n *flow.Node, d flow.Data, parents int) string {
+	prompt := flow.Render(n.Prompt, d)
+	// connected steps' output is always part of the prompt, even when
+	// the prompt does not mention it
+	if in := strings.TrimSpace(d.Input); in != "" && !flow.UsesUpstream(*n, f) {
+		if len(in) > 60000 {
+			in = in[:60000] + "\n…(shortened)"
+		}
+		prompt += "\n\n## Input from the previous step" + map[bool]string{true: "s", false: ""}[parents > 1] + "\n```\n" + in + "\n```"
+	}
+	// an expected reply: the one place a step's shape is sent to the AI,
+	// so the steps after it can rely on the fields
+	if n.OutputSchema != nil && n.OutputSchema.Known() {
+		prompt += "\n\nReply with only JSON in this shape, with no explanation and no code fences:\n" + n.OutputSchema.Compact()
+	}
+	return prompt + h.aiSuffix(f, d)
 }

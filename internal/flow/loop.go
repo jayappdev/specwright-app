@@ -2,6 +2,7 @@ package flow
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"regexp"
 	"strings"
@@ -110,28 +111,39 @@ func (f *Flow) Loops() (LoopInfo, []Issue) {
 	return li, is
 }
 
-// SplitItems turns a list into loop items.
+// SplitItems turns a list into loop items. When the list arrives inside a
+// JSON object — the Inputs step gives {"stocks": "AMZN\nMSFT"}, a tool
+// gives {"data": {"items": [...]}} — the list is taken from the object:
+// from the loop's Field (a path like stocks or data.items), else from its
+// only field, else from its only list. A list that is text is split as the
+// loop says (one per line by default); a JSON array gives its elements.
 func SplitItems(src string, n Node) ([]string, error) {
 	src = strings.TrimSpace(src)
 	mode := n.Split
-	if mode == "" || mode == "auto" {
+	if mode == "" {
+		mode = "auto"
+	}
+	if mode != "regex" && (strings.TrimSpace(n.Field) != "" || strings.HasPrefix(src, "{")) {
+		inner, isList, err := listIn(src, n.Field, mode)
+		if err != nil {
+			return nil, err
+		}
+		if isList || inner != src {
+			src = strings.TrimSpace(inner)
+			if isList && (mode == "auto" || mode == "lines") {
+				mode = "json"
+			}
+		}
+		if mode == "json" && !isList && !strings.HasPrefix(src, "[") {
+			return nil, fmt.Errorf("the list is text, not a JSON array: split it “One item per line” (or Detect)")
+		}
+	}
+	if mode == "auto" {
 		mode = "lines"
 		if strings.HasPrefix(src, "[") {
 			var probe []any
 			if json.Unmarshal([]byte(src), &probe) == nil {
 				mode = "json"
-			}
-		} else if strings.HasPrefix(src, "{") {
-			// an object: loop over its array value when it has exactly one
-			var obj map[string]any
-			if json.Unmarshal([]byte(src), &obj) == nil {
-				for _, v := range obj {
-					if arr, ok := v.([]any); ok {
-						b, _ := json.Marshal(arr)
-						src, mode = string(b), "json"
-						break
-					}
-				}
 			}
 		}
 	}
@@ -210,6 +222,65 @@ func SplitItems(src string, n Node) ([]string, error) {
 		}
 	}
 	return out, nil
+}
+
+// listIn takes the list out of JSON input: at path (when set), else the
+// only field of an object, else its only list. It returns the list as text
+// (a JSON array when isList), or src unchanged when there is nothing to take.
+func listIn(src, path, mode string) (string, bool, error) {
+	v, err := decodeOrdered(src)
+	if err != nil {
+		if strings.TrimSpace(path) != "" {
+			return "", false, fmt.Errorf("the list should be taken from the field %q, but the input is not JSON", path)
+		}
+		return src, false, nil
+	}
+	var picked any
+	switch {
+	case strings.TrimSpace(path) != "":
+		got, err := walkPath(v, strings.TrimSpace(path))
+		if err != nil {
+			msg := fmt.Sprintf("the input has no field %q", strings.TrimSpace(path))
+			if o, ok := v.(*Obj); ok {
+				msg += " (its fields: " + strings.Join(o.Keys, ", ") + ")"
+			}
+			return "", false, errors.New(msg)
+		}
+		picked = got
+	default:
+		o, ok := v.(*Obj)
+		if !ok {
+			return src, false, nil
+		}
+		var lists []string
+		for _, k := range o.Keys {
+			if _, isArr := o.Vals[k].([]any); isArr {
+				lists = append(lists, k)
+			}
+		}
+		switch {
+		case len(o.Keys) == 1:
+			picked = o.Vals[o.Keys[0]]
+		case len(lists) == 1:
+			picked = o.Vals[lists[0]]
+		default:
+			if mode == "json" || mode == "lines" || mode == "auto" {
+				return "", false, fmt.Errorf("the input is a JSON object with the fields %s: choose the field that holds the list in “List from”", strings.Join(o.Keys, ", "))
+			}
+			return src, false, nil
+		}
+	}
+	switch x := picked.(type) {
+	case []any:
+		return string(rawJSON(x)), true, nil
+	case nil:
+		return "", false, nil
+	case string:
+		return x, false, nil
+	case *Obj:
+		return string(rawJSON(x)), false, nil
+	}
+	return textOf(picked), false, nil
 }
 
 // ItemResult is what one loop item produced.

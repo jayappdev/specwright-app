@@ -345,26 +345,28 @@ type Op struct {
 
 // Ops lists the transformations by id.
 var Ops = map[string]Op{
-	"template":      {Name: "Fill a template", Group: "Text", Help: "Write the result with {{input}} and any other variable.", Tpl: true, check: needTemplate, apply: func(in string, n Node, d Data) (string, error) { d.Input = in; return Render(n.Template, d), nil }},
-	"trim":          {Name: "Trim whitespace", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.TrimSpace(in), nil }},
-	"uppercase":     {Name: "UPPERCASE", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.ToUpper(in), nil }},
-	"lowercase":     {Name: "lowercase", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.ToLower(in), nil }},
-	"truncate":      {Name: "Keep the first N characters", Group: "Text", Expr: "N", check: needInt, apply: truncate},
-	"filter-lines":  {Name: "Keep matching lines", Group: "Text", Expr: "Regular expression", check: needRegex, apply: filterLines},
-	"regex-extract": {Name: "Extract with a pattern", Group: "Text", Help: "Every match on its own line (the first group if the pattern has one).", Expr: "Regular expression", check: needRegex, apply: regexExtract},
-	"regex-replace": {Name: "Find and replace", Group: "Text", Help: "$1, $2 … refer to groups.", Expr: "Regular expression", Repl: true, check: needRegex, apply: regexReplace},
-	"split-lines":   {Name: "Lines → JSON array", Group: "Convert", apply: splitLines},
-	"json-path":     {Name: "Pick a JSON value", Group: "JSON", Help: "A path like items[0].name, items[*].id or $.data.total.", Expr: "Path", check: needExpr, apply: jsonPath},
-	"json-pick":     {Name: "Keep JSON fields", Group: "JSON", Help: "Comma-separated field names; works on an object or an array of objects.", Expr: "Fields", check: needExpr, apply: jsonPick},
-	"json-template": {Name: "JSON → JSON (template)", Group: "JSON", Help: "Write the JSON to produce. {{this.<path>}} reads the input JSON; a placeholder that is a whole string value (\"{{this.total}}\") keeps its type (number, list, object). For nested lists, an object whose only key is \"{{#each this.lines}}\" repeats its template for each element; inside it {{parent.<path>}} is the level above, {{root.<path>}} the whole input and {{this_index}} the position. Set a list path to apply the whole template to each element and get a JSON array.", Expr: "For each element of (optional list path, e.g. items)", Tpl: true, check: checkJSONTemplate, apply: jsonTemplate},
-	"json-pretty":   {Name: "Format JSON", Group: "JSON", apply: jsonPretty},
-	"json-minify":   {Name: "Minify JSON", Group: "JSON", apply: jsonMinify},
-	"csv-to-json":   {Name: "CSV → JSON", Group: "Convert", apply: csvToJSON},
-	"json-to-csv":   {Name: "JSON → CSV", Group: "Convert", apply: jsonToCSV},
-	"md-to-html":    {Name: "Markdown → HTML", Group: "Convert", apply: func(in string, _ Node, _ Data) (string, error) { return MarkdownToHTML(in), nil }},
-	"html-to-text":  {Name: "HTML → text", Group: "Convert", apply: func(in string, _ Node, _ Data) (string, error) { return HTMLToText(in), nil }},
-	"command":       {Name: "Run a command", Group: "Command", Help: "A shell command run in the project; the data arrives on stdin and stdout is the result (e.g. jq '.items', sort -u).", Expr: "Command", Exec: true, check: needExpr},
-	"ai":            {Name: "Ask AI to transform", Group: "AI", Help: "Describe the change; {{input}} is the data. Runs with the agent when the flow runs.", Tpl: true, AI: true, check: needTemplate},
+	"template":       {Name: "Fill a template", Group: "Text", Help: "Write the result with {{input}} and any other variable.", Tpl: true, check: needTemplate, apply: func(in string, n Node, d Data) (string, error) { d.Input = in; return Render(n.Template, d), nil }},
+	"trim":           {Name: "Trim whitespace", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.TrimSpace(in), nil }},
+	"uppercase":      {Name: "UPPERCASE", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.ToUpper(in), nil }},
+	"lowercase":      {Name: "lowercase", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.ToLower(in), nil }},
+	"truncate":       {Name: "Keep the first N characters", Group: "Text", Expr: "N", check: needInt, apply: truncate},
+	"filter-lines":   {Name: "Keep matching lines", Group: "Text", Expr: "Regular expression", check: needRegex, apply: filterLines},
+	"regex-extract":  {Name: "Extract with a pattern", Group: "Text", Help: "Every match on its own line (the first group if the pattern has one).", Expr: "Regular expression", check: needRegex, apply: regexExtract},
+	"regex-replace":  {Name: "Find and replace", Group: "Text", Help: "$1, $2 … refer to groups.", Expr: "Regular expression", Repl: true, check: needRegex, apply: regexReplace},
+	"split-lines":    {Name: "Lines → JSON array", Group: "Convert", apply: splitLines},
+	"json-path":      {Name: "Pick a JSON value", Group: "JSON", Help: "A path like items[0].name, items[*].id or $.data.total.", Expr: "Path", check: needExpr, apply: jsonPath},
+	"json-pick":      {Name: "Keep JSON fields", Group: "JSON", Help: "Comma-separated field names; works on an object or an array of objects.", Expr: "Fields", check: needExpr, apply: jsonPick},
+	"json-template":  {Name: "JSON → JSON (template)", Group: "JSON", Help: "Write the JSON to produce. {{this.<path>}} reads the input JSON; a placeholder that is a whole string value (\"{{this.total}}\") keeps its type (number, list, object). For nested lists, an object whose only key is \"{{#each this.lines}}\" repeats its template for each element; inside it {{parent.<path>}} is the level above, {{root.<path>}} the whole input and {{this_index}} the position. Set a list path to apply the whole template to each element and get a JSON array.", Expr: "For each element of (optional list path, e.g. items)", Tpl: true, check: checkJSONTemplate, apply: jsonTemplate},
+	"json-pretty":    {Name: "Format JSON", Group: "JSON", apply: jsonPretty},
+	"json-minify":    {Name: "Minify JSON", Group: "JSON", apply: jsonMinify},
+	"json-stringify": {Name: "JSON → string (stringify)", Group: "JSON", Help: "Turns JSON into a JSON string: {\"a\":1} becomes \"{\\\"a\\\":1}\" — for an API or tool that wants JSON inside a string field. With a field path, only that field is turned into a string (items[*].payload: in every element); the rest stays as it is.", Expr: "Field (optional: empty is the whole input)", apply: jsonStringify},
+	"json-parse":     {Name: "String → JSON (destringify)", Group: "Text", Help: "Turns a JSON string back into JSON: \"{\\\"a\\\":1}\" becomes {\"a\":1} (strings encoded twice are undone too). With a field path, only that field is parsed (items[*].payload: in every element); the rest stays as it is.", Expr: "Field (optional: empty is the whole input)", apply: jsonParse},
+	"csv-to-json":    {Name: "CSV → JSON", Group: "Convert", apply: csvToJSON},
+	"json-to-csv":    {Name: "JSON → CSV", Group: "Convert", apply: jsonToCSV},
+	"md-to-html":     {Name: "Markdown → HTML", Group: "Convert", apply: func(in string, _ Node, _ Data) (string, error) { return MarkdownToHTML(in), nil }},
+	"html-to-text":   {Name: "HTML → text", Group: "Convert", apply: func(in string, _ Node, _ Data) (string, error) { return HTMLToText(in), nil }},
+	"command":        {Name: "Run a command", Group: "Command", Help: "A shell command run in the project; the data arrives on stdin and stdout is the result (e.g. jq '.items', sort -u).", Expr: "Command", Exec: true, check: needExpr},
+	"ai":             {Name: "Ask AI to transform", Group: "AI", Help: "Describe the change; {{input}} is the data. Runs with the agent when the flow runs.", Tpl: true, AI: true, check: needTemplate},
 }
 
 func needTemplate(n Node) error {
@@ -539,6 +541,154 @@ func jsonMinify(in string, _ Node, _ Data) (string, error) {
 		return "", fmt.Errorf("the input is not JSON: %v", err)
 	}
 	return b.String(), nil
+}
+
+// jsonStringify: JSON (or text) → a JSON string, for the whole input or
+// one field.
+func jsonStringify(in string, n Node, _ Data) (string, error) {
+	field := strings.TrimSpace(n.Expr)
+	if field == "" {
+		t := strings.TrimSpace(in)
+		if v, err := decodeOrdered(t); err == nil {
+			return string(rawJSON(string(rawJSON(v)))), nil
+		}
+		return string(rawJSON(in)), nil // text: quoted as a JSON string
+	}
+	v, err := decodeOrdered(in)
+	if err != nil {
+		return "", fmt.Errorf("the input is not JSON: %v", err)
+	}
+	out, err := mapAt(v, field, func(x any) (any, error) {
+		if s, ok := x.(string); ok {
+			return s, nil // already a string
+		}
+		return string(rawJSON(x)), nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return indentJSON(out), nil
+}
+
+// jsonParse: a JSON string → the JSON in it (twice-encoded strings too),
+// for the whole input or one field.
+func jsonParse(in string, n Node, _ Data) (string, error) {
+	field := strings.TrimSpace(n.Expr)
+	if field == "" {
+		v, err := destringify(strings.TrimSpace(in))
+		if err != nil {
+			return "", err
+		}
+		if s, ok := v.(string); ok {
+			return s, nil // a string that holds text, not JSON
+		}
+		return indentJSON(v), nil
+	}
+	v, err := decodeOrdered(in)
+	if err != nil {
+		return "", fmt.Errorf("the input is not JSON: %v", err)
+	}
+	out, err := mapAt(v, field, func(x any) (any, error) {
+		s, ok := x.(string)
+		if !ok {
+			return x, nil // already JSON
+		}
+		got, err := destringify(string(rawJSON(s)))
+		if err != nil {
+			return nil, fmt.Errorf("%s: %v", field, err)
+		}
+		return got, nil
+	})
+	if err != nil {
+		return "", err
+	}
+	return indentJSON(out), nil
+}
+
+// destringify reads JSON out of JSON text that may be a string holding
+// JSON (up to three times encoded).
+func destringify(t string) (any, error) {
+	v, err := decodeOrdered(t)
+	if err != nil {
+		return nil, fmt.Errorf("the input is not a JSON string or JSON: %v", err)
+	}
+	for k := 0; k < 3; k++ {
+		s, ok := v.(string)
+		if !ok {
+			return v, nil
+		}
+		inner, err := decodeOrdered(strings.TrimSpace(s))
+		if err != nil {
+			return s, nil // text in a string: the text
+		}
+		v = inner
+	}
+	return v, nil
+}
+
+func indentJSON(v any) string {
+	var b bytes.Buffer
+	if err := json.Indent(&b, rawJSON(v), "", "  "); err != nil {
+		return string(rawJSON(v))
+	}
+	return b.String()
+}
+
+// mapAt changes the value(s) at a path (key, [n], and [*] or a key on a
+// list for every element) with fn, and returns the changed data.
+func mapAt(v any, path string, fn func(any) (any, error)) (any, error) {
+	toks := pathTok.FindAllStringSubmatch(strings.TrimPrefix(strings.TrimPrefix(strings.TrimSpace(path), "$"), "."), -1)
+	var walk func(cur any, i int) (any, error)
+	walk = func(cur any, i int) (any, error) {
+		if i == len(toks) {
+			return fn(cur)
+		}
+		m := toks[i]
+		switch x := cur.(type) {
+		case []any:
+			if m[1] != "" && m[1] != "*" {
+				k, _ := strconv.Atoi(m[1])
+				if k >= len(x) {
+					return nil, fmt.Errorf("%s: there is no element %d", path, k)
+				}
+				nv, err := walk(x[k], i+1)
+				if err != nil {
+					return nil, err
+				}
+				x[k] = nv
+				return x, nil
+			}
+			next := i
+			if m[1] == "*" {
+				next = i + 1
+			}
+			for k := range x { // every element (a key on a list maps over it)
+				nv, err := walk(x[k], next)
+				if err != nil {
+					return nil, err
+				}
+				x[k] = nv
+			}
+			return x, nil
+		case *Obj:
+			key := m[2] + m[3]
+			if m[1] != "" || key == "" {
+				return nil, fmt.Errorf("%s: %q is an object, not a list", path, m[0])
+			}
+			old, ok := x.Vals[key]
+			if !ok {
+				return nil, fmt.Errorf("%s: there is no field %q (its fields: %s)", path, key, strings.Join(x.Keys, ", "))
+			}
+			nv, err := walk(old, i+1)
+			if err != nil {
+				return nil, err
+			}
+			x.Vals[key] = nv
+			return x, nil
+		}
+		return nil, fmt.Errorf("%s: nothing at %q", path, m[0])
+	}
+	return walk(v, 0)
 }
 
 func csvToJSON(in string, _ Node, _ Data) (string, error) {

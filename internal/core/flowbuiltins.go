@@ -45,7 +45,7 @@ func (h *Hub) FlowBuiltinTools() []extension.Extension {
 
 func builtinAsTool(t builtin.Tool) extension.Extension {
 	e := extension.Extension{Name: BuiltinPrefix + t.Name, Desc: t.Title + ": " + t.Desc, Kind: "builtin", Scope: "builtin",
-		Status: "tested", Approved: true, Lang: t.Group, Params: []extension.Param{}, Secrets: []extension.Secret{}, Perms: []string{}}
+		Status: "tested", Approved: true, Lang: t.Group, Params: []extension.Param{}, Secrets: []extension.Secret{}, Perms: []string{}, OutputBy: t.OutputBy}
 	if !t.ReadOnly {
 		e.Perms = []string{"writes"}
 	}
@@ -82,7 +82,16 @@ func builtinAsTool(t builtin.Tool) extension.Extension {
 		case "object":
 			desc += " (JSON)"
 		}
-		e.Params = append(e.Params, extension.Param{Name: n, Type: typ, Required: req[n], Desc: desc})
+		var enum []string
+		switch ev := p["enum"].(type) {
+		case []string:
+			enum = ev
+		case []any:
+			for _, v := range ev {
+				enum = append(enum, fmt.Sprint(v))
+			}
+		}
+		e.Params = append(e.Params, extension.Param{Name: n, Type: typ, Required: req[n], Desc: desc, Enum: enum})
 	}
 	return e
 }

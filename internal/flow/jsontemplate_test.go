@@ -117,3 +117,50 @@ func TestJSONTemplateVarsAreKnown(t *testing.T) {
 		}
 	}
 }
+
+func TestJSONStringifyAndParse(t *testing.T) {
+	run := func(op, expr, in string) string {
+		out, err := Transform(Node{Op: op, Expr: expr}, in, Data{})
+		if err != nil {
+			return "ERR " + err.Error()
+		}
+		return compact(out)
+	}
+	cases := []struct{ op, expr, in, want string }{
+		{"json-stringify", "", `{"a": 1, "b": [true, "x"]}`, `"{\"a\":1,\"b\":[true,\"x\"]}"`},
+		{"json-stringify", "", "plain text", `"plain text"`},
+		{"json-stringify", "payload", `{"id": 7, "payload": {"z": 1, "a": 2}}`, `{"id":7,"payload":"{\"z\":1,\"a\":2}"}`},
+		{"json-stringify", "items[*].meta", `{"items": [{"meta": {"k": 1}}, {"meta": [2]}]}`, `{"items":[{"meta":"{\"k\":1}"},{"meta":"[2]"}]}`},
+		{"json-parse", "", `"{\"a\":1,\"b\":[true]}"`, `{"a":1,"b":[true]}`},
+		{"json-parse", "", `"\"{\\\"twice\\\":true}\""`, `{"twice":true}`},
+		{"json-parse", "", `{"already": "json"}`, `{"already":"json"}`},
+		{"json-parse", "body", `{"status": 200, "body": "{\"rows\":[{\"n\":1}]}"}`, `{"status":200,"body":{"rows":[{"n":1}]}}`},
+		{"json-parse", "items.payload", `{"items": [{"payload": "[1,2]"}, {"payload": {"ok": true}}]}`, `{"items":[{"payload":[1,2]},{"payload":{"ok":true}}]}`},
+		{"json-parse", "nope", `{"body": "{}"}`, `ERR nope: there is no field "nope" (its fields: body)`},
+		{"json-parse", "", `not json`, `ERR the input is not a JSON string or JSON`},
+	}
+	for _, c := range cases {
+		got := run(c.op, c.expr, c.in)
+		if strings.HasPrefix(c.want, "ERR") && strings.HasPrefix(got, c.want) || got == c.want {
+			continue
+		}
+		t.Errorf("%s(%q) %s:\n got %s\nwant %s", c.op, c.expr, c.in, got, c.want)
+	}
+	// round trip, and the text of a string that holds text
+	s, _ := Transform(Node{Op: "json-stringify"}, `{"k": [1, 2]}`, Data{})
+	back, _ := Transform(Node{Op: "json-parse"}, s, Data{})
+	if compact(back) != `{"k":[1,2]}` {
+		t.Fatal(back)
+	}
+	if txt, _ := Transform(Node{Op: "json-parse"}, `"hello"`, Data{}); txt != "hello" {
+		t.Fatal(txt)
+	}
+	// shapes: the field changes, the rest stays
+	in := SchemaOfText(`{"id": 1, "body": "{}"}`)
+	if sh := transformShape(&Node{Op: "json-stringify", Expr: "id"}, in, nil); sh.Prop("id").Type != "string" || sh.Prop("body").Type != "string" || in.Prop("id").Type != "integer" {
+		t.Fatal(sh)
+	}
+	if sh := transformShape(&Node{Op: "json-parse"}, in, nil); sh != nil {
+		t.Fatal("a whole parse is learned, not known")
+	}
+}

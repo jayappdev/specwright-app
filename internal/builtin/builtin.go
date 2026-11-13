@@ -12,6 +12,7 @@
 package builtin
 
 import (
+	"codegen/internal/flow"
 	"context"
 	"encoding/json"
 	"errors"
@@ -32,6 +33,10 @@ type Tool struct {
 	Desc     string         `json:"description"`
 	Schema   map[string]any `json:"inputSchema"`
 	ReadOnly bool           `json:"readOnly"`
+	// OutputBy is the shape of the output when an argument has a given
+	// value (argument → value → shape): fetch_webpage with format=json.
+	// Flow designer metadata; never sent to the AI.
+	OutputBy map[string]map[string]*flow.Schema `json:"outputBy,omitempty"`
 	run      func(ctx context.Context, b *Box, a args) (string, error)
 }
 

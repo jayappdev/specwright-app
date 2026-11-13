@@ -5,7 +5,7 @@
 import { useState } from "react";
 import { S, update, toast } from "./store.js";
 import { Icon } from "./ui.jsx";
-import { mdToHtml } from "./richtext.js";
+import { mdRender } from "./markdown.js";
 import { highlight } from "./highlight.js";
 import { FileLink, Linkify } from "./FileLinks.jsx";
 
@@ -55,7 +55,7 @@ function Table({ head, rows, more }) {
 export function RenderPreview({ text, format }) {
   const t = String(text || "");
   if (format === "html") return <iframe className="cv-html" sandbox="" srcDoc={t} title="HTML preview" />;
-  if (format === "md") return <div className="rich cv-md" dangerouslySetInnerHTML={{ __html: mdToHtml(t) }} />;
+  if (format === "md") return <div className="rich md cv-md" dangerouslySetInnerHTML={{ __html: mdRender(t) }} />;
   if (format === "csv") {
     const rows = parseCSV(t.trim());
     if (rows.length > 1) return <Table head={rows[0]} rows={rows.slice(1, 501)} more={Math.max(0, rows.length - 501)} />;

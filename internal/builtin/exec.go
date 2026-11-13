@@ -1,7 +1,10 @@
 package builtin
 
 import (
+	"encoding/json"
+
 	"bytes"
+	"codegen/internal/flow"
 	"context"
 	"errors"
 	"fmt"
@@ -339,7 +342,18 @@ func fetchWebpage(ctx context.Context, b *Box, a args) (string, error) {
 	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" {
 		return "", errors.New("url must be an absolute http(s) address")
 	}
+	format := strings.ToLower(strings.TrimSpace(a.str("format")))
+	switch format {
+	case "", "text", "json", "raw":
+	default:
+		return "", fmt.Errorf("format must be text, json or raw, not %q", format)
+	}
+	// text is read by the AI: short by default; json and raw are data for
+	// later steps: whole by default
 	limit := a.num("max_chars", 20000, 500, 200000)
+	if format == "json" || format == "raw" {
+		limit = a.num("max_chars", fetchDataLimit, 500, fetchDataLimit)
+	}
 	ctx, cancel := context.WithTimeout(ctx, 25*time.Second)
 	defer cancel()
 	req, _ := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
@@ -352,11 +366,17 @@ func fetchWebpage(ctx context.Context, b *Box, a args) (string, error) {
 		return "", fmt.Errorf("fetch failed: %v", err)
 	}
 	defer resp.Body.Close()
-	body, _ := io.ReadAll(io.LimitReader(resp.Body, 5<<20))
+	body, _ := io.ReadAll(io.LimitReader(resp.Body, fetchDataLimit+1))
+	if format == "raw" { // the body exactly as the server sent it
+		return fetchRaw(resp, body, limit)
+	}
 	ct := resp.Header.Get("Content-Type")
 	text, title := string(body), ""
 	if strings.Contains(ct, "html") || strings.HasPrefix(strings.TrimSpace(text), "<") && strings.Contains(strings.ToLower(text[:min(len(text), 500)]), "<html") {
 		title, text = htmlToText(text)
+	}
+	if format == "json" {
+		return fetchJSON(resp, body, title, text, limit), nil
 	}
 	if isBinary(body) {
 		return fmt.Sprintf("%s → %s, %s binary content (%s); not shown", u, resp.Status, ct, human(int64(len(body)))), nil
@@ -371,6 +391,110 @@ func fetchWebpage(ctx context.Context, b *Box, a args) (string, error) {
 		head += "\nTitle: " + title
 	}
 	return head + "\n\n" + text + more, nil
+}
+
+// fetchDataLimit caps a response read for json and raw (5 MB).
+const fetchDataLimit = 5 << 20
+
+// fetchRaw is the response body exactly as sent — for later steps that
+// parse it (JSON, CSV, XML). An error status, a binary body or a body over
+// the limit fail, rather than giving data a parser would choke on.
+func fetchRaw(resp *http.Response, body []byte, limit int) (string, error) {
+	if resp.StatusCode < 200 || resp.StatusCode > 299 {
+		snippet := strings.TrimSpace(string(body))
+		if len(snippet) > 300 {
+			snippet = snippet[:300] + "…"
+		}
+		return "", fmt.Errorf("%s returned %s: %s", resp.Request.URL, resp.Status, snippet)
+	}
+	if isBinary(body) {
+		return "", fmt.Errorf("%s returned binary content (%s, %s); raw gives text only", resp.Request.URL, resp.Header.Get("Content-Type"), human(int64(len(body))))
+	}
+	if len(body) > limit {
+		return "", fmt.Errorf("the response is larger than %d characters (max_chars); raise max_chars (up to %d)", limit, fetchDataLimit)
+	}
+	return string(body), nil
+}
+
+// FetchJSONShape is the shape of fetch_webpage's output with format=json.
+var FetchJSONShape = &flow.Schema{Type: "object", Required: []string{"url", "status", "ok", "contentType", "headers", "truncated"}, Properties: flow.Props{
+	{Name: "url", Schema: &flow.Schema{Type: "string", Description: "the final URL, after redirects"}},
+	{Name: "status", Schema: &flow.Schema{Type: "integer", Description: "HTTP status code, e.g. 200"}},
+	{Name: "statusText", Schema: &flow.Schema{Type: "string", Description: "e.g. 200 OK"}},
+	{Name: "ok", Schema: &flow.Schema{Type: "boolean", Description: "true for a 2xx status"}},
+	{Name: "contentType", Schema: &flow.Schema{Type: "string"}},
+	{Name: "title", Schema: &flow.Schema{Type: "string", Description: "an HTML page's title"}},
+	{Name: "headers", Schema: &flow.Schema{Type: "object", Description: "response headers, lower-case names"}},
+	{Name: "json", Schema: &flow.Schema{Description: "the body parsed, when it is JSON"}},
+	{Name: "body", Schema: &flow.Schema{Type: "string", Description: "the body as text, when it is not JSON (HTML as readable text)"}},
+	{Name: "size", Schema: &flow.Schema{Type: "integer", Description: "body size in bytes"}},
+	{Name: "truncated", Schema: &flow.Schema{Type: "boolean", Description: "the body was longer than max_chars"}},
+	{Name: "binary", Schema: &flow.Schema{Type: "boolean", Description: "binary content, not included"}},
+}}
+
+// fetchJSON is fetch_webpage's response as a JSON object, so later steps
+// can read the status and the data by field. Error statuses are data here,
+// not failures: a later step can check "ok".
+func fetchJSON(resp *http.Response, body []byte, title, text string, limit int) string {
+	out := map[string]any{"url": resp.Request.URL.String(), "status": resp.StatusCode, "statusText": resp.Status, "ok": resp.StatusCode >= 200 && resp.StatusCode < 300,
+		"contentType": resp.Header.Get("Content-Type"), "size": len(body), "truncated": false}
+	hs := map[string]string{}
+	for k, v := range resp.Header {
+		if len(v) > 0 && !strings.EqualFold(k, "Set-Cookie") { // never pass cookies on
+			hs[strings.ToLower(k)] = strings.Join(v, ", ")
+		}
+	}
+	out["headers"] = hs
+	if title != "" {
+		out["title"] = title
+	}
+	switch {
+	case isBinary(body):
+		out["binary"] = true
+	default:
+		var v any
+		if t := strings.TrimSpace(string(body)); (strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[")) && json.Unmarshal(body, &v) == nil {
+			if len(t) <= limit {
+				out["json"] = v
+				break
+			}
+			out["truncated"] = true // too long to pass on whole: its text, cut
+			out["body"] = t[:limit]
+			break
+		}
+		if len(text) > limit {
+			out["truncated"] = true
+			text = text[:limit]
+		}
+		out["body"] = text
+	}
+	b, _ := json.MarshalIndent(orderedFetch(out), "", "  ")
+	return string(b)
+}
+
+// orderedFetch keeps the fields in the shape's order.
+func orderedFetch(m map[string]any) any {
+	keys := []string{"url", "status", "statusText", "ok", "contentType", "title", "headers", "json", "body", "size", "truncated", "binary"}
+	var b strings.Builder
+	b.WriteByte('{')
+	first := true
+	for _, k := range keys {
+		v, ok := m[k]
+		if !ok {
+			continue
+		}
+		if !first {
+			b.WriteByte(',')
+		}
+		first = false
+		kj, _ := json.Marshal(k)
+		vj, _ := json.Marshal(v)
+		b.Write(kj)
+		b.WriteByte(':')
+		b.Write(vj)
+	}
+	b.WriteByte('}')
+	return json.RawMessage(b.String())
 }
 
 // proxyFrom applies the workspace's proxy settings (HTTPS_PROXY etc. from
