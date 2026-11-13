@@ -18,7 +18,7 @@ import { ResultsLink } from "../RunResults.jsx";
 import { AiProgress } from "../AiProgress.jsx";
 import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../Attachments.jsx";
 import { FileLink, Linkify } from "../FileLinks.jsx";
-import { mdToHtml } from "../richtext.js";
+import { mdRender } from "../markdown.js";
 
 const frs = () => (S.frun ||= { flows: null, flowId: "", flow: null, creds: [], keychain: false, runs: [], runId: "", inputs: {}, files: {}, opts: defaultOpts(), secretVals: {}, showOpts: false, tab: "refine", decision: {} });
 const defaultOpts = () => ({ review: "ai", repeat: 1, forEach: { input: "", split: "lines", filter: "", max: 100 }, timeoutMinutes: 0, stepTimeoutSeconds: 0, startAt: "", skip: [], stopAfter: "", model: "" });
@@ -202,7 +202,7 @@ const estimate = (f) => f.minutesSaved || f.nodes.reduce((m, n) => m + ({ tool: 
 
 function RenderOutput({ o }) {
   if (o.format === "html") return <iframe className="fr-html" sandbox="" srcDoc={o.content} title={o.title} />;
-  if (o.format === "md") return <div className="rich fr-md" dangerouslySetInnerHTML={{ __html: mdToHtml(o.content) }} />;
+  if (o.format === "md") return <div className="rich md fr-md" dangerouslySetInnerHTML={{ __html: mdRender(o.content) }} />;
   if (o.format === "csv") {
     const rows = o.content.trim().split("\n").slice(0, 200).map((l) => l.split(","));
     return <div className="fr-table"><table className="table"><thead><tr>{rows[0]?.map((c, k) => <th key={k}>{c}</th>)}</tr></thead><tbody>{rows.slice(1).map((r, k) => <tr key={k}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody></table></div>;
@@ -272,9 +272,85 @@ function Steps({ st }) {
           {open[s.id] && <div className="fr-step-body">{s.error && <div className={"banner " + (s.status === "skipped" ? "" : "error")}>{s.error}</div>}
             {s.args && Object.keys(s.args).length > 0 && <div className="fr-args"><div className="muted">{s.why ? <><Icon.spark /> Arguments chosen by AI · {s.why}</> : "Arguments"}</div>
               {Object.entries(s.args).map(([k, v]) => <div key={k} className="fr-arg"><code className="inline-code" data-nofile>{k}</code><pre className="code fr-pre">{typeof v === "string" ? v : JSON.stringify(v, null, 2)}</pre></div>)}</div>}{(s.output || s.outputFile) && <ContentView title={s.title} text={s.output} files={[s.inputFile && { label: "input", path: s.inputFile }, s.outputFile && s.args && { label: "args.json", path: s.outputFile.replace(/[^/]+$/, "args.json") }, s.outputFile && { label: "output", path: s.outputFile }].filter(Boolean)} />}{s.truncated && <small className="muted">Shortened for display; the output file has all of it.</small>}</div>}
+          {canFix(st, s) && <div className="fr-step-actions">
+            <button className="link" onClick={() => openFix(st, s)}><Icon.spark /> {s.status === "failed" ? "Fix with AI" : "Improve"}</button>
+            {st.trial?.steps?.some((x) => x.id === s.id) && <span className="badge badge-info" title={st.trial.steps.find((x) => x.id === s.id)?.why}>changed in this trial</span>}</div>}
+          {frs().fix?.runId === st.id && frs().fix?.stepId === s.id && <StepFixPanel st={st} s={s} />}
         </li>; })}</ol>
     </div>
   );
+}
+
+// --- fixing or improving one step with AI ----------------------------------------------
+
+const canFix = (st, s) => !LIVE.includes(st.status) && s.type !== "start" && ["failed", "done"].includes(s.status);
+
+function openFix(st, s) {
+  const r = frs();
+  r.fix = r.fix?.runId === st.id && r.fix?.stepId === s.id ? null : { runId: st.id, stepId: s.id, prompt: "", model: r.fix?.model || "", busy: false, res: null, error: "" };
+  update();
+}
+
+const nodeSettings = (n) => { const c = { ...n }; for (const k of ["id", "x", "y"]) delete c[k]; return JSON.stringify(c, null, 2); };
+
+function StepFixPanel({ st, s }) {
+  const r = frs(), fx = r.fix, failed = s.status === "failed";
+  const set = (k, v) => { fx[k] = v; update(); };
+  const suggest = async () => {
+    Object.assign(fx, { busy: true, error: "", res: null }); update();
+    try { fx.res = await backend.FixFlowStep({ runId: st.id, stepId: s.id, prompt: fx.prompt, model: fx.model }); }
+    catch (e) { fx.error = errMsg(e); }
+    fx.busy = false; update();
+  };
+  const tryIt = async () => {
+    fx.trying = true; update();
+    try {
+      const t = await backend.TryStepFix(fx.res);
+      S.flowRuns[t.id] = t; S.loaded[t.id] = true; S.events[t.id] ||= [];
+      r.runs = [{ id: t.id, workflow: t.flowId, state: t.status, started: t.started, kind: "flow-trial", usage: {} }, ...r.runs];
+      r.fix = null; r.runId = t.id;
+      toast("Trying the change: the steps before it reuse this run's results.");
+    } catch (e) { fx.error = errMsg(e); }
+    fx.trying = false; update();
+  };
+  const errs = (fx.res?.issues || []).filter((i) => i.level === "error");
+  return <div className="fr-fix">
+    <p className="muted fl-help">{failed ? "The AI changes only this step's settings (or its tool) so it runs and gives the steps after it what they need. " : "Say what should be better; the AI changes only this step. "}
+      It sees the step, what reached it in this run{failed ? ", its error" : ", its result"} and how the steps after it use it. Nothing is saved until you try the change and apply it.</p>
+    <textarea rows={2} value={fx.prompt} placeholder={failed ? "Optional: what you know about the problem, e.g. the API now returns a list under data." : "e.g. keep only the open items, sort by date, and give JSON with id and title."} onChange={(e) => set("prompt", e.target.value)}
+      onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) suggest(); }} />
+    <div className="ai-model"><span className="muted">Model</span><ModelPicker value={fx.model} onChange={(v) => set("model", v)} label="Model for the fix" />
+      <button className="btn primary" disabled={fx.busy} onClick={suggest}>{fx.busy ? "Working on it…" : fx.res ? "Suggest again" : failed ? "Suggest a fix" : "Suggest an improvement"}</button>
+      <button className="link" onClick={() => { r.fix = null; update(); }}>Cancel</button></div>
+    {fx.busy && <AiProgress phases={["Reading the step and what happened", "Working out the change", "Checking it against the flow"]} />}
+    {fx.error && <div className="banner error">{fx.error}</div>}
+    {fx.res && <div className="fr-fix-res">
+      <div><b>Suggested change</b>{fx.res.why && <span className="muted"> · {fx.res.why}</span>}</div>
+      <div className="chips">{fx.res.changes.map((c) => <span key={c} className="chip">{c}</span>)}</div>
+      {fx.res.issues.map((i, k) => <div key={k} className={"banner " + (i.level === "error" ? "error" : "")}>{i.message}</div>)}
+      <div className="fr-fix-diff"><div><div className="muted">Now</div><pre className="code fr-pre">{nodeSettings(fx.res.before)}</pre></div>
+        <div><div className="muted">Changed</div><pre className="code fr-pre">{nodeSettings(fx.res.node)}</pre></div></div>
+      <div className="row-actions"><button className="btn primary" disabled={fx.trying || errs.length > 0} onClick={tryIt}>{fx.trying ? "Starting…" : "Try it"}</button>
+        <span className="muted fl-help">Runs a copy of the flow with this change: the steps before it reuse this run's results; this step and the ones after it run again. The flow itself is not changed yet.</span></div>
+    </div>}
+  </div>;
+}
+
+// A trial run: what changed, and Apply / Discard.
+function TrialBanner({ st }) {
+  const r = frs(), t = st.trial, live = LIVE.includes(st.status);
+  const title = (id) => st.steps.find((x) => x.id === id)?.title || id;
+  const apply = async () => {
+    try { await backend.ApplyStepFix(st.id); t.applied = true; toast(`Applied to the flow ${st.flowName}.`); update(); } catch (e) { toast(errMsg(e)); }
+  };
+  return <div className={"banner fr-trial" + (t.applied ? " applied" : "")}>
+    <div><b>{t.applied ? "Applied to the flow." : "Trial of a change — not saved yet."}</b> Changed: {t.steps.map((x) => <span key={x.id}><b>{title(x.id)}</b>{x.why ? ` (${x.why})` : ""}</span>).reduce((a, b) => [a, "; ", b])}.
+      {t.reused?.length > 0 && <> Reused from the earlier run (not run again): {t.reused.map(title).join(", ")}.</>}</div>
+    {!live && !t.applied && <div className="row-actions">
+      <button className="btn primary" onClick={apply}>{st.status === "done" ? "Apply to the flow" : "Apply anyway"}</button>
+      <button className="btn secondary" onClick={() => openRun(t.baseRun)}>Discard · back to the earlier run</button>
+      <span className="muted fl-help">{st.status === "done" ? "Check the steps and outputs below. Apply writes only the changed step into the flow." : "The trial did not finish. You can improve the step again from here."}</span></div>}
+  </div>;
 }
 
 function Outputs({ st }) {
@@ -305,6 +381,7 @@ function RunView({ st }) {
         {!live && <button className="btn secondary fr-switch" onClick={() => { r.runId = ""; update(); }}>All flows</button>}
       </div></header>
     {st.status === "scheduled" && <div className="banner">Starts at {new Date(st.options.startAt).toLocaleString()}. Keep the app open; you can stop it before then.</div>}
+    {st.trial && <TrialBanner st={st} />}
     {st.error && st.status !== "done" && <div className={"banner " + (st.status === "stopped" ? "" : "error")}>{st.error}</div>}
     {!live && <ResultsLink id={st.id} ended />}
     {st.changes?.length > 0 && <div className="banner fr-saved"><Icon.check /> Saved to the flow: {st.changes.join("; ")}</div>}
@@ -365,7 +442,7 @@ export function FlowRun() {
           <button className={"run-item" + (r.flowId === f.id && !r.runId ? " active" : "")} onClick={() => { r.runId = ""; loadFlow(f.id); }}>
             <span className="run-item-top"><b>{f.name}</b></span><small>{f.steps} steps · {f.outputs} outputs</small></button>
           {runsOf(f.id).map((x) => { const live = S.flowRuns[x.id]?.status || x.state; return <button key={x.id} className={"run-item fr-run-item" + (r.runId === x.id ? " active" : "")} onClick={() => openRun(x.id)}>
-            <span className="run-item-top"><span>{new Date(x.started).toLocaleString()}</span><Pill s={pill(live)} label={STATUS_LABEL[live] || live} /></span></button>; })}
+            <span className="run-item-top"><span>{new Date(x.started).toLocaleString()}{(x.kind === "flow-trial" || S.flowRuns[x.id]?.trial) && <span className="badge badge-info" style={{ marginLeft: 6 }}>trial</span>}</span><Pill s={pill(live)} label={STATUS_LABEL[live] || live} /></span></button>; })}
         </div>)}
         {r.flows && !r.flows.length && <p className="muted" style={{ padding: "4px 8px" }}>No flows yet. Design one under Tools › Flow designer.</p>}
       </nav>

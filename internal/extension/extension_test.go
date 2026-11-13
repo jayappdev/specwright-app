@@ -2,6 +2,7 @@ package extension
 
 import (
 	"bytes"
+	"codegen/internal/flow"
 	"context"
 	"encoding/json"
 	"os"
@@ -84,7 +85,9 @@ func TestNpmScriptsNeedApproval(t *testing.T) {
 func TestBridgeAndMCP(t *testing.T) {
 	root := t.TempDir()
 	s := NewStore(root)
-	e, _ := s.Save(Extension{Name: "echo-arg", Desc: "Echo", Params: []Param{{Name: "v", Required: true}}, Command: "echo {{v}}"})
+	e, _ := s.Save(Extension{Name: "echo-arg", Desc: "Echo", Params: []Param{{Name: "v", Required: true},
+		{Name: "opts", Type: "json", Desc: "options", Schema: &flow.Schema{Type: "object", Properties: flow.Props{{Name: "deep", Schema: &flow.Schema{Type: "boolean"}}}}}},
+		Command: "echo {{v}}", Output: &flow.Schema{Type: "object", Description: "OUTPUT-SHAPE-NOT-FOR-AI"}})
 	p := &prov{root: root, exts: []Extension{e}}
 	br, err := StartBridge(p)
 	if err != nil {
@@ -112,6 +115,10 @@ func TestBridgeAndMCP(t *testing.T) {
 	}
 	if !strings.Contains(lines[1], "echo-arg") || !strings.Contains(lines[1], ToolName) {
 		t.Fatalf("tools/list: %s", lines[1])
+	}
+	// the agent gets a JSON parameter's shape, never the output's
+	if !strings.Contains(lines[1], "Shape: {deep: boolean}") || strings.Contains(lines[1], "OUTPUT-SHAPE-NOT-FOR-AI") {
+		t.Fatalf("tools/list shapes: %s", lines[1])
 	}
 	var call struct {
 		Result struct {

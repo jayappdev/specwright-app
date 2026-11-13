@@ -129,7 +129,11 @@ func handleMCP(c *bridgeClient, req rpcReq) (any, *rpcErr) {
 						if !p.Required {
 							s += ", optional"
 						}
-						ps = append(ps, s+"): "+p.Desc)
+						s += "): " + p.Desc
+						if p.Schema != nil && p.Schema.Known() { // a JSON parameter: the shape to send
+							s += " Shape: " + p.Schema.Compact()
+						}
+						ps = append(ps, s)
 					}
 					fmt.Fprintf(&b, " Arguments: %s.", strings.Join(ps, "; "))
 				}

@@ -17,6 +17,8 @@ import { ToolIcon } from "../ToolTile.jsx";
 import { AttachBar, AttachmentChips, onPasteAttach } from "../Attachments.jsx";
 import { FileLink } from "../FileLinks.jsx";
 import { openFlowGuide, GUIDE_TYPES } from "./FlowGuide.jsx";
+import { paths as schemaPaths, compact, typeName } from "../schema.js";
+import { AiProgress } from "../AiProgress.jsx";
 
 const NODE_W = 216, PORT_Y = 30, GRID = 10;
 const snap = (v) => Math.round(v / GRID) * GRID;
@@ -87,8 +89,17 @@ async function openFlow(id) {
     const flow = await backend.LoadFlow(id);
     Object.assign(f, { id, flow, sel: null, selEdge: null, dirty: false, preview: {} });
     f.issues = (await backend.ValidateFlow(flow).catch(() => [])) || [];
+    await refreshShapes();
   } catch (e) { toast(errMsg(e)); }
   update();
+}
+
+// What every step gets and gives (designer metadata; never sent to the AI).
+async function refreshShapes() {
+  const f = fl();
+  if (!f.flow) return;
+  const samples = Object.fromEntries(Object.entries(f.samples[f.flow.id]?.steps || {}).filter(([, v]) => String(v).trim()));
+  f.shapes = (await backend.FlowShapes(f.flow, samples).catch(() => null)) || {};
 }
 
 let timer = 0;
@@ -107,6 +118,7 @@ async function save() {
   try {
     const st = await backend.SaveFlow(f.flow);
     f.issues = st.issues || []; f.dirty = false;
+    await refreshShapes();
     f.flow.updated = st.flow.updated;
     const s = (f.list || []).find((x) => x.id === f.flow.id);
     if (s) { s.name = f.flow.name; s.updated = st.flow.updated; }
@@ -188,7 +200,8 @@ function addNode(spec, x, y) {
   const right = flow.nodes.reduce((m, n) => Math.max(m, n.x), 40);
   const id = uniqueId(spec.type === "tool" ? toolRef(spec.tool) : spec.type);
   const n = { id, type: spec.type, title: uniqueTitle(flow, spec.type === "tool" ? toolRef(spec.tool) : (STEP_TYPES.find((t) => t.type === spec.type)?.name || "").replace(/\s*\(.*\)$/, ""), id), x: snap(x ?? right + NODE_W + 60), y: snap(y ?? 120) };
-  if (spec.type === "tool") { n.tool = spec.tool; n.args = {}; const t = tools().find((x) => x.name === spec.tool); (t?.params || []).forEach((p) => { n.args[p.name] = ""; }); }
+  if (spec.type === "tool") { n.tool = spec.tool; n.args = {}; const t = tools().find((x) => x.name === spec.tool); (t?.params || []).forEach((p) => { n.args[p.name] = ""; });
+    if (spec.tool === "builtin:fetch_webpage") n.args.format = "raw"; } // in a flow, the response is data for the next steps
   if (spec.type === "ai") n.prompt = "";
   if (spec.type === "merge") { n.mode = "concat"; n.separator = "\\n\\n"; }
   if (spec.type === "transform") n.op = "json-path";
@@ -201,7 +214,7 @@ function addNode(spec, x, y) {
   // connect from the selected step (or the inputs) so the new step is wired up
   const from = f.sel && nodeOf(f.sel)?.type !== "output" ? f.sel : x == null ? "start" : null;
   flow.nodes.push(n);
-  if (from) { const e = { from, to: n.id }, fa = nodeOf(from); if (fa?.type === "decision") e.branch = nextBranch(fa); flow.edges.push(e); const note = fa?.type === "decision" ? `Connected on the path “${branchName(fa, e.branch)}”. Click the connection to change it.` : autoWire(from, n); if (note && from !== "start") toast(note); }
+  if (from) { const e = { from, to: n.id }, fa = nodeOf(from); if (fa?.type === "decision") e.branch = nextBranch(fa); flow.edges.push(e); const note = fa?.type === "decision" ? `Connected on the path “${branchName(fa, e.branch)}”. Click the connection to change it.` : autoWire(from, n) || loopFromInputs(fa, n); if (note && (from !== "start" || n.type === "loop")) toast(note); }
   f.sel = n.id; f.selEdge = null;
   changed();
 }
@@ -252,7 +265,7 @@ function connect(from, to) {
     toast(`Connected on the path “${branchName(a, e.branch)}”. Click the connection to change it.`);
   }
   flow.edges.push(e);
-  const note = autoWire(from, b);
+  const note = autoWire(from, b) || loopFromInputs(a, b);
   if (note) toast(note);
   changed();
 }
@@ -260,11 +273,112 @@ function connect(from, to) {
 function removeSelected() {
   const f = fl(), flow = f.flow;
   if (f.selEdge != null) { flow.edges.splice(f.selEdge, 1); f.selEdge = null; return changed(); }
-  const n = nodeOf(f.sel);
-  if (!n || n.type === "start") return;
-  flow.nodes = flow.nodes.filter((x) => x.id !== n.id);
-  flow.edges = flow.edges.filter((e) => e.from !== n.id && e.to !== n.id);
-  f.sel = null; changed();
+  const ids = new Set(selectedIds().filter((id) => nodeOf(id)?.type !== "start"));
+  if (!ids.size) return;
+  flow.nodes = flow.nodes.filter((x) => !ids.has(x.id));
+  flow.edges = flow.edges.filter((e) => !ids.has(e.from) && !ids.has(e.to));
+  f.sel = null; f.multi = []; changed();
+  if (ids.size > 1) toast(`Deleted ${ids.size} steps.`);
+}
+
+// --- several selected steps: select, copy, paste ------------------------------------
+
+// the selected steps: the one in the inspector, and the others selected with it
+function selectedIds() {
+  const f = fl(), out = [...(f.multi || [])];
+  if (f.sel && !out.includes(f.sel)) out.push(f.sel);
+  return out.filter((id) => nodeOf(id));
+}
+function setSelection(ids) {
+  const f = fl();
+  ids = [...new Set(ids)].filter((id) => nodeOf(id));
+  f.multi = ids.length > 1 ? ids : []; f.sel = ids[ids.length - 1] || null; f.selEdge = null;
+  update();
+}
+
+const CLIP_FORMAT = "specwright-steps";
+
+// copySteps puts the selected steps, the connections between them and the
+// inputs they use on the clipboard (and keeps them for pasting in the app).
+function copySteps(e) {
+  const f = fl(), flow = f.flow, ids = new Set(selectedIds().filter((id) => nodeOf(id)?.type !== "start"));
+  if (!ids.size) return false;
+  const nodes = flow.nodes.filter((n) => ids.has(n.id)).map((n) => JSON.parse(JSON.stringify(n)));
+  const edges = flow.edges.filter((x) => ids.has(x.from) && ids.has(x.to));
+  const text = JSON.stringify(nodes), inputs = flow.inputs.filter((i) => text.includes("inputs." + i.name));
+  const clip = { format: CLIP_FORMAT, version: 1, from: flow.name, nodes, edges, inputs };
+  const json = JSON.stringify(clip, null, 2);
+  S.flowClip = clip;
+  if (e?.clipboardData) { e.clipboardData.setData("text/plain", json); e.preventDefault(); }
+  else writeClipboard(json);
+  toast(`Copied ${nodes.length} step${nodes.length === 1 ? "" : "s"}${edges.length ? ` and ${edges.length} connection${edges.length === 1 ? "" : "s"}` : ""}. Paste them into this or another flow with ⌘V.`);
+  return true;
+}
+
+// the system clipboard: the desktop app's, else the browser's
+function writeClipboard(text) {
+  try { if (window.runtime?.ClipboardSetText) return window.runtime.ClipboardSetText(text); } catch { /* the browser's */ }
+  return navigator.clipboard?.writeText(text).catch(() => {});
+}
+async function readClipboard() {
+  try { if (window.runtime?.ClipboardGetText) return await window.runtime.ClipboardGetText(); } catch { /* the browser's */ }
+  try { return await navigator.clipboard.readText(); } catch { return ""; }
+}
+// pasteFromClipboard: copied steps from the clipboard (another window or
+// flow), else the ones copied in this session
+async function pasteFromClipboard(asNew) {
+  const c = readClip(await readClipboard()) || S.flowClip;
+  if (!c) return toast("Nothing to paste: select steps and copy them (⌘C) first.");
+  S.flowClip = c;
+  if (asNew || !fl().flow) return pasteAsNewFlow(c);
+  pasteSteps(c);
+}
+
+const readClip = (text) => { try { const c = JSON.parse(text); return c?.format === CLIP_FORMAT && Array.isArray(c.nodes) ? c : null; } catch { return null; } };
+
+// pasteSteps adds copied steps to the open flow: new ids (their references
+// to each other follow), placed next to what is there, the inputs they use
+// added when the flow lacks them; the pasted steps end up selected.
+function pasteSteps(clip) {
+  const f = fl(), flow = f.flow;
+  if (!flow || !clip?.nodes?.length) return;
+  const map = {}, added = [];
+  const minX = Math.min(...clip.nodes.map((n) => n.x || 0)), minY = Math.min(...clip.nodes.map((n) => n.y || 0));
+  const same = clip.nodes.some((n) => nodeOf(n.id) && nodeOf(n.id).x === n.x && nodeOf(n.id).y === n.y); // pasting where the copies came from
+  const right = Math.max(...flow.nodes.map((n) => n.x)) + NODE_W + 60;
+  const ox = same ? 40 : right - minX, oy = same ? 60 : 120 - minY;
+  for (const n of clip.nodes) {
+    if (n.type === "start") continue;
+    const id = uniqueId(n.id);
+    map[n.id] = id;
+    const c = JSON.parse(JSON.stringify(n));
+    Object.assign(c, { id, x: snap((n.x || 0) + ox), y: snap((n.y || 0) + oy) });
+    flow.nodes.push(c); added.push(c);
+  }
+  // references between the pasted steps follow their new ids
+  const pairs = Object.entries(map).filter(([a, b]) => a !== b).sort((x, y) => y[0].length - x[0].length);
+  const fix = (s) => typeof s !== "string" ? s : pairs.reduce((t, [a, b]) => t.replace(new RegExp("\\{\\{(\\s*)(steps\\.)?" + a.replace(/[-]/g, "\\-") + "(?=[.}\\s])", "g"), "{{$1$2" + b), s);
+  for (const c of added) {
+    for (const k of ["prompt", "template", "source", "expr", "instruction"]) if (c[k]) c[k] = fix(c[k]);
+    for (const k in c.args || {}) c.args[k] = fix(c.args[k]);
+    for (const a of c.actions || []) { a.path = fix(a.path); for (const k in a.args || {}) a.args[k] = fix(a.args[k]); }
+  }
+  for (const e of clip.edges || []) if (map[e.from] && map[e.to]) flow.edges.push({ ...e, from: map[e.from], to: map[e.to] });
+  const newInputs = (clip.inputs || []).filter((i) => !flow.inputs.some((x) => x.name === i.name));
+  flow.inputs.push(...newInputs.map((i) => JSON.parse(JSON.stringify(i))));
+  setSelection(added.map((c) => c.id));
+  changed();
+  toast(`Pasted ${added.length} step${added.length === 1 ? "" : "s"}${newInputs.length ? `, and the input${newInputs.length === 1 ? "" : "s"} ${newInputs.map((i) => i.name).join(", ")}` : ""}. Connect them where they belong.`);
+}
+
+async function pasteAsNewFlow(clip) {
+  clip ||= S.flowClip;
+  if (!clip) return toast("Copy some steps in a flow first (select them, then ⌘C).");
+  try {
+    const flow = await backend.NewFlow("Steps from " + (clip.from || "a flow"));
+    await loadList(); await openFlow(flow.id);
+    pasteSteps(clip);
+  } catch (e) { toast(errMsg(e)); }
 }
 
 // rename a step and every {{steps.<id>…}} / {{<id>.output_file|buffer_output}} that refers to it
@@ -289,10 +403,12 @@ function renameNode(n, id) {
 
 let lastField = null;
 const track = { onFocus: (e) => { lastField = e.target; } };
-function insertVar(v) {
+function insertVar(v) { insertText(`{{${v}}}`); }
+function insertText(text, replace) {
   const el = lastField;
   if (!el || !document.body.contains(el)) return toast("Click in a field first, then pick a variable.");
-  const text = `{{${v}}}`, s = el.selectionStart ?? el.value.length, e = el.selectionEnd ?? s;
+  if (replace) { el.setSelectionRange(0, el.value.length); }
+  const s = el.selectionStart ?? el.value.length, e = el.selectionEnd ?? s;
   const val = el.value.slice(0, s) + text + el.value.slice(e);
   Object.getOwnPropertyDescriptor(Object.getPrototypeOf(el), "value").set.call(el, val);
   el.dispatchEvent(new Event("input", { bubbles: true }));
@@ -330,31 +446,51 @@ function edgeLabel(a, b, e) {
 // --- canvas ------------------------------------------------------------------------------
 
 function Canvas() {
-  const f = fl(), flow = f.flow, box = useRef(null), [drag, setDrag] = useState(null), [link, setLink] = useState(null);
+  const f = fl(), flow = f.flow, box = useRef(null), [drag, setDrag] = useState(null), [link, setLink] = useState(null), [band, setBand] = useState(null);
+  const sel = new Set(selectedIds());
   const ts = tools();
   const z = f.zoom;
   const toLocal = (e) => { const r = box.current.getBoundingClientRect(); return { x: (e.clientX - r.left + box.current.scrollLeft) / z, y: (e.clientY - r.top + box.current.scrollTop) / z }; };
   useEffect(() => {
-    if (!drag && !link) return;
+    if (!drag && !link && !band) return;
     const move = (e) => {
-      if (drag) { const p = toLocal(e); const n = nodeOf(drag.id); if (n) { n.x = Math.max(0, snap(p.x - drag.dx)); n.y = Math.max(0, snap(p.y - drag.dy)); drag.moved = true; update(); } }
+      if (drag?.group) { const p = toLocal(e), dx = p.x - drag.p0.x, dy = p.y - drag.p0.y; for (const [id, s0] of Object.entries(drag.group)) { const n = nodeOf(id); if (n) { n.x = Math.max(0, snap(s0.x + dx)); n.y = Math.max(0, snap(s0.y + dy)); } } drag.moved = true; update(); }
+      else if (drag) { const p = toLocal(e); const n = nodeOf(drag.id); if (n) { n.x = Math.max(0, snap(p.x - drag.dx)); n.y = Math.max(0, snap(p.y - drag.dy)); drag.moved = true; update(); } }
+      if (band) setBand({ ...band, ...toLocal(e), moved: true });
       if (link) setLink({ ...link, ...toLocal(e) });
     };
     const up = (e) => {
       if (drag?.moved) changed();
+      if (band) { // select the steps the rectangle touches
+        if (band.moved) {
+          const x1 = Math.min(band.x0, band.x), x2 = Math.max(band.x0, band.x), y1 = Math.min(band.y0, band.y), y2 = Math.max(band.y0, band.y);
+          const hit = fl().flow.nodes.filter((n) => n.type !== "start" && n.x < x2 && n.x + NODE_W > x1 && n.y < y2 && n.y + 64 > y1).map((n) => n.id);
+          setSelection(band.add ? [...selectedIds(), ...hit] : hit);
+        } else { f.sel = null; f.multi = []; f.selEdge = null; update(); }
+        setBand(null);
+      }
       if (link) { const el = document.elementFromPoint(e.clientX, e.clientY)?.closest("[data-node]"); if (el) connect(link.from, el.dataset.node); }
       setDrag(null); setLink(null);
     };
     window.addEventListener("mousemove", move); window.addEventListener("mouseup", up);
     return () => { window.removeEventListener("mousemove", move); window.removeEventListener("mouseup", up); };
-  }, [drag, link]);
+  }, [drag, link, band]);
   useEffect(() => {
+    const busy = (e) => e.target?.closest?.("input, textarea, select, [contenteditable=true]") || document.querySelector(".drawer-scrim, .file-preview, .ai-designer") || String(window.getSelection?.() || "").trim();
     const key = (e) => {
-      if (e.target?.closest?.("input, textarea, select, [contenteditable=true]") || document.querySelector(".drawer-scrim, .file-preview")) return;
+      if (busy(e)) return;
       if ((e.key === "Delete" || e.key === "Backspace") && (f.sel || f.selEdge != null)) { e.preventDefault(); removeSelected(); }
-      if (e.key === "Escape") { f.sel = null; f.selEdge = null; update(); }
+      if (e.key === "Escape") { f.sel = null; f.multi = []; f.selEdge = null; update(); }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") { e.preventDefault(); setSelection(fl().flow.nodes.filter((n) => n.type !== "start").map((n) => n.id)); }
+      // ⌘C / ⌘V as keys too: the desktop app may have no Edit menu to fire copy and paste events
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "c" && selectedIds().some((id) => nodeOf(id)?.type !== "start")) { e.preventDefault(); copySteps(); }
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "v") { e.preventDefault(); pasteFromClipboard(); }
     };
-    window.addEventListener("keydown", key); return () => window.removeEventListener("keydown", key);
+    // copy and paste through the system clipboard (no permission needed)
+    const copy = (e) => { if (!busy(e)) copySteps(e); };
+    const paste = (e) => { if (busy(e)) return; const c = readClip(e.clipboardData?.getData("text/plain") || ""); if (c) { e.preventDefault(); S.flowClip = c; pasteSteps(c); } };
+    window.addEventListener("keydown", key); window.addEventListener("copy", copy); window.addEventListener("paste", paste);
+    return () => { window.removeEventListener("keydown", key); window.removeEventListener("copy", copy); window.removeEventListener("paste", paste); };
   }, []);
   const wheel = (e) => { if (!e.ctrlKey && !e.metaKey) return; e.preventDefault(); f.zoom = Math.min(1.6, Math.max(0.4, +(z - e.deltaY * 0.002).toFixed(2))); update(); };
   const issuesFor = (id) => f.issues.filter((i) => i.node === id);
@@ -368,12 +504,15 @@ function Canvas() {
     <div className="fl-canvas" ref={box} onWheel={wheel}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes("application/x-flow-step")) e.preventDefault(); }}
       onDrop={(e) => { const spec = e.dataTransfer.getData("application/x-flow-step"); if (!spec) return; e.preventDefault(); const p = toLocal(e); f.sel = null; addNode(JSON.parse(spec), p.x - NODE_W / 2, p.y - 24); }}
-      onMouseDown={(e) => { if (e.target === box.current || e.target.classList.contains("fl-plane")) { f.sel = null; f.selEdge = null; update(); } }}>
+      onMouseDown={(e) => { // empty canvas: draw a rectangle to select steps
+        if (e.button !== 0 || !(e.target === box.current || e.target.classList.contains("fl-plane") || e.target.classList.contains("fl-edges"))) return;
+        const p = toLocal(e); setBand({ x0: p.x, y0: p.y, x: p.x, y: p.y, add: e.shiftKey || e.metaKey || e.ctrlKey }); }}>
       <div className="fl-plane" style={{ width: W, height: H, transform: `scale(${z})` }}>
         <svg className="fl-edges" width={W} height={H}>
           {flow.edges.map((e, k) => { const a = nodeOf(e.from), b = nodeOf(e.to); if (!a || !b) return null; const d = path(port(a, true), port(b, false)); return <g key={k} className={"fl-edge" + (f.selEdge === k ? " sel" : "")} onMouseDown={(ev) => { ev.stopPropagation(); f.selEdge = k; f.sel = null; update(); }}><path d={d} className="hit" /><path d={d} className="line" markerEnd="url(#fl-arrow)" />{(() => { const lab = edgeLabel(a, b, e); if (!lab) return null; const p1 = port(a, true), p2 = port(b, false); return <text x={(p1.x + p2.x) / 2} y={(p1.y + p2.y) / 2 - 6} className="fl-edge-label" textAnchor="middle">{lab}</text>; })()}</g>; })}
           {back.map((b) => <g key={"loop-" + b.k} className="fl-loopback"><path d={b.d} markerEnd="url(#fl-arrow)" /><text x={b.x} y={b.y} textAnchor="middle">next item ↺</text></g>)}
           {link && (() => { const a = nodeOf(link.from); return a && link.x != null ? <path d={path(port(a, true), { x: link.x, y: link.y })} className="fl-linking" /> : null; })()}
+          {band?.moved && <rect className="fl-band" x={Math.min(band.x0, band.x)} y={Math.min(band.y0, band.y)} width={Math.abs(band.x - band.x0)} height={Math.abs(band.y - band.y0)} />}
           <defs><marker id="fl-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" /></marker></defs>
         </svg>
         {flow.nodes.map((n) => {
@@ -386,9 +525,14 @@ function Canvas() {
             : n.type === "aggregate" ? (n.mode === "window" ? "Window" : "Group") + ((n.groupBy || []).length ? " by " + n.groupBy.join(", ") : " · all rows") : "";
           const inLoop = loops.stack[n.id] || [], loopName = inLoop.length ? nodeOf(inLoop[inLoop.length - 1])?.title || inLoop[inLoop.length - 1] : "";
           return (
-            <div key={n.id} data-node={n.id} className={"fl-node t-" + n.type + (f.sel === n.id ? " sel" : "") + (err ? " has-err" : is.length ? " has-warn" : "") + (link ? " linking" : "") + (inLoop.length ? " in-loop" : "")}
+            <div key={n.id} data-node={n.id} className={"fl-node t-" + n.type + (f.sel === n.id || sel.has(n.id) ? " sel" : "") + (err ? " has-err" : is.length ? " has-warn" : "") + (link ? " linking" : "") + (inLoop.length ? " in-loop" : "")}
               style={{ left: n.x, top: n.y, width: NODE_W }}
-              onMouseDown={(e) => { if (e.button !== 0 || e.target.closest(".fl-port")) return; const p = toLocal(e); f.sel = n.id; f.selEdge = null; update(); setDrag({ id: n.id, dx: p.x - n.x, dy: p.y - n.y }); }}>
+              onMouseDown={(e) => {
+                if (e.button !== 0 || e.target.closest(".fl-port")) return;
+                const p = toLocal(e);
+                if (e.shiftKey || e.metaKey || e.ctrlKey) { const cur = selectedIds(); setSelection(cur.includes(n.id) ? cur.filter((x) => x !== n.id) : [...cur, n.id]); return; } // add or remove
+                if (sel.has(n.id) && sel.size > 1) { f.sel = n.id; update(); setDrag({ group: Object.fromEntries([...sel].map((id) => [id, { x: nodeOf(id).x, y: nodeOf(id).y }])), p0: p }); return; } // move them all
+                f.sel = n.id; f.multi = []; f.selEdge = null; update(); setDrag({ id: n.id, dx: p.x - n.x, dy: p.y - n.y }); }}>
               {n.type !== "start" && <span className="fl-port in" title="Input" />}
               <div className="fl-node-head"><StepIcon n={n} tools={ts} /><div className="fl-node-text"><b>{n.title || n.id}</b><small>{sub}</small></div>
                 {is.length > 0 && <span className={"fl-badge " + (err ? "err" : "warn")} title={is.map((i) => i.message).join("\n")}>{is.length}</span>}</div>
@@ -399,7 +543,7 @@ function Canvas() {
           );
         })}
       </div>
-      {flow.nodes.length === 1 && <div className="fl-hint"><b>Start by dragging a tool or step here</b><span>Drag from a step's ● to another step to connect them. Delete removes the selected step or connection.</span></div>}
+      {flow.nodes.length === 1 && <div className="fl-hint"><b>Start by dragging a tool or step here</b><span>Drag from a step's ● to another step to connect them. Delete removes the selected step or connection.</span><span>Select several steps with ⇧-click or by drawing a box on the canvas; ⌘C copies them, ⌘V pastes them here or into another flow.</span></div>}
       <div className="fl-zoom"><button className="icon-btn" aria-label="Zoom out" onClick={() => { f.zoom = Math.max(0.4, +(z - 0.1).toFixed(2)); update(); }}><Icon.minus /></button>
         <button className="fv-pct" onClick={() => { f.zoom = 1; update(); }}>{Math.round(z * 100)}%</button>
         <button className="icon-btn" aria-label="Zoom in" onClick={() => { f.zoom = Math.min(1.6, +(z + 0.1).toFixed(2)); update(); }}><Icon.plus /></button></div>
@@ -454,6 +598,8 @@ function FlowSettings() {
     <Field label="Name"><input value={flow.name} onChange={(e) => { flow.name = e.target.value; changed(); }} /></Field>
     <Field label="Description"><textarea rows={2} value={flow.description || ""} onChange={(e) => { flow.description = e.target.value; changed(); }} /></Field>
     <Field label="Manual work one run replaces (minutes)" hint="Counted as hours saved in Metrics when a run completes. Empty: estimated from the steps."><input type="number" min="0" value={flow.minutesSaved || ""} placeholder="estimate" onChange={(e) => { flow.minutesSaved = +e.target.value || 0; changed(); }} /></Field>
+    {(flow.revision > 1 || flow.designed) && <p className="muted fl-help">{flow.revision > 1 && <>Version {flow.revision}{flow.parent ? <> of <button className="link" onClick={() => openFlow(flow.parent)}>{(f.list || []).find((x) => x.id === flow.parent)?.name || flow.parent}</button></> : ""}. </>}{flow.designed}</p>}
+    <FlowInterface />
     <h4>Custom context</h4>
     <p className="muted fl-help">Given to every AI step (and available as {"{{context}}"}): background, conventions, constraints.</p>
     <textarea rows={6} value={flow.context.text || ""} placeholder="e.g. We build Java 21 Spring services. Specs follow the team template; keep them under two pages." {...track} onPaste={onPasteAttach(ctxFiles.current)} onChange={(e) => { flow.context.text = e.target.value; changed(); }} />
@@ -520,7 +666,8 @@ function ArgsEditor({ node, args, toolName, extraVars, aiFills }) {
           {!isBuiltin(t.name) && <li><b>Without a field:</b> tools that read piped data (like <code className="inline-code" data-nofile>jq</code> or <code className="inline-code" data-nofile>grep</code>) get it as their input, as with <code className="inline-code" data-nofile>a | b</code> in a terminal.</li>}
           {isBuiltin(t.name) && <li><b>Built-in tools</b> only read their fields: put the result into one (← button) or name a file from it.</li>}</ul></details></div>}
     {t.params.map((p) => <Field key={p.name} label={<>{p.name}{p.required && !aiFills ? " *" : ""} <span className="muted">· {p.type}</span>{extraVars == null && feeders.map((x) => <button key={x.id} type="button" className="fl-use" title={FILE_PARAM(p) ? `Give ${p.name} a file holding the result of ${x.title || x.id}` : `Put the result of ${x.title || x.id} into ${p.name}`} onClick={(e) => { e.preventDefault(); args[p.name] = feedFor(p, x.id); changed(); }}>← {x.title || x.id}{FILE_PARAM(p) ? " (as a file)" : ""}</button>)}</>} hint={p.desc}>
-    {long(p) ? <textarea rows={3} value={args[p.name] || ""} placeholder={aiFills ? "AI fills this (or type a value to fix it)" : p.required ? "Required" : "Optional"} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => { args[p.name] = e.target.value; changed(); }} />
+    {p.enum?.length ? <select value={args[p.name] || ""} onChange={(e) => { args[p.name] = e.target.value; changed(); }}><option value="">{p.required ? "Choose…" : "(default)"}</option>{p.enum.map((v) => <option key={v} value={v}>{v}</option>)}{args[p.name] && !p.enum.includes(args[p.name]) && <option value={args[p.name]}>{args[p.name]}</option>}</select>
+      : long(p) ? <textarea rows={3} value={args[p.name] || ""} placeholder={aiFills ? "AI fills this (or type a value to fix it)" : p.required ? "Required" : "Optional"} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => { args[p.name] = e.target.value; changed(); }} />
       : <input value={args[p.name] || ""} placeholder={aiFills ? "AI fills this (or type a value to fix it)" : p.required ? "Required" : "Optional"} {...track} onChange={(e) => { args[p.name] = e.target.value; changed(); }} />}</Field>)}
     <VarChips node={node} extra={extraVars} /></>;
 }
@@ -546,7 +693,9 @@ function Preview({ node }) {
     const steps = { ...sm.steps };
     for (const id of ancestors(flow, node.id)) if (!(id in steps)) steps[id] = "";
     const r = await backend.PreviewFlowStep(flow, node.id, { inputs: sm.inputs, steps, context: flow.context.text || "", skills: flow.skills.map((s) => s.path).join("\n") }).catch((e) => ({ error: errMsg(e) }));
-    f.preview[node.id] = r; update();
+    f.preview[node.id] = r;
+    await refreshShapes(); // sample data teaches the shapes of steps that do not declare one
+    update();
   };
   const usesInputs = flow.inputs.filter((i) => JSON.stringify(node).includes("inputs." + i.name));
   return (
@@ -573,6 +722,7 @@ function StepInspector({ n }) {
   return <>
     <div className="fl-insp-head"><StepIcon n={n} tools={tools()} size={36} /><div><h3>{n.title || n.id}</h3><small className="muted">{n.type === "tool" ? (isBuiltin(n.tool) ? "Built-in tool" : "Tool") : STEP_TYPES.find((t) => t.type === n.type)?.name || "Inputs"}</small></div>
       <span style={{ marginLeft: "auto", display: "flex", gap: 10 }}>{GUIDE_TYPES.has(n.type) && <button className="link" title="How this step works, with examples" onClick={() => openFlowGuide(n.type)}>How to use ↗</button>}
+        {n.type !== "start" && <button className="link" title="Copy this step (⌘C); paste it with ⌘V here or in another flow" onClick={() => copySteps()}>Copy</button>}
         {n.type !== "start" && <button className="link" onClick={removeSelected}>Delete</button>}</span></div>
     {issues.map((i, k) => <div key={k} className={"banner " + (i.level === "error" ? "error" : "")}>{i.message}</div>)}
     {n.type === "start" ? <InputsEditor /> : <>
@@ -606,8 +756,10 @@ function StepInspector({ n }) {
       {n.type === "ai" && <>
         <Field label="Prompt" hint="The flow's context and skills are added automatically."><textarea rows={8} value={n.prompt || ""} placeholder="e.g. Write a specification for {{inputs.ticket}} from {{steps.jira}}. Follow the skills." {...track} onChange={(e) => set("prompt", e.target.value)} /></Field>
         <VarChips node={n} />
+        <ExpectedReply n={n} set={set} />
         <div className="field fl-field"><span className="muted">Model</span><ModelPicker value={n.model || ""} onChange={(v) => set("model", v)} label="Model" /><small className="muted">Default: the model chosen when the flow runs, else the app's model.</small></div>
       </>}
+      <DataPanel n={n} />
       {n.type === "decision" && <DecisionInspector n={n} set={set} />}
       {n.type === "filter" && <FilterInspector n={n} set={set} />}
       {n.type === "aggregate" && <AggregateInspector n={n} set={set} />}
@@ -622,6 +774,7 @@ function StepInspector({ n }) {
         const g = loopInfo(fl().flow).gather[n.id];
         return <>
           <p className="muted fl-help">Every step connected after this one runs once per item, up to {g ? <b>{nodeOf(g)?.title || g}</b> : <>a <b>Gather</b> step (add one after the steps to repeat)</>}, which collects the results. In those steps use <code className="inline-code" data-nofile>{"{{item}}"}</code> (and <code className="inline-code" data-nofile>{"{{item.json.name}}"}</code> for JSON items), <code className="inline-code" data-nofile>{"{{item_index}}"}</code> and <code className="inline-code" data-nofile>{"{{item_count}}"}</code>. A tool or AI prompt connected after the loop gets the current item. With loops inside loops, use the loop's step id: <code className="inline-code" data-nofile>{`{{${stepRef(fl().flow, n.id)}.item}}`}</code>, <code className="inline-code" data-nofile>{`{{${stepRef(fl().flow, n.id)}.item.json.name}}`}</code>, <code className="inline-code" data-nofile>{`{{${stepRef(fl().flow, n.id)}.item_index}}`}</code>.</p>
+          <LoopListFrom n={n} set={set} />
           <Field label="Split the list into items"><select value={n.split || "auto"} onChange={(e) => set("split", e.target.value)}>{SPLIT_MODES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
           {n.split === "regex" && <Field label="Pattern" hint="Each match is an item (its first group, if it has one), e.g. class (\w+)"><input value={n.expr || ""} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => set("expr", e.target.value)} /></Field>}
           <div className="fl-row">
@@ -646,7 +799,7 @@ function StepInspector({ n }) {
         <Field label="Transformation"><select value={n.op || ""} onChange={(e) => set("op", e.target.value)}>
           {Object.entries(opGroups).map(([g, list]) => <optgroup key={g} label={g}>{list.map(([id, o]) => <option key={id} value={id}>{o.name}</option>)}</optgroup>)}</select></Field>
         {op.help && <p className="muted fl-help">{op.help}</p>}
-        {op.expr && <Field label={op.expr}><input value={n.expr || ""} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => set("expr", e.target.value)} /></Field>}
+        {op.expr && <Field label={op.expr}><input list={/^json-(path|template|stringify|parse)$/.test(n.op) ? "paths-" + n.id : undefined} data-path={/^json-(path|template|stringify|parse)$/.test(n.op) ? "1" : undefined} value={n.expr || ""} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => set("expr", e.target.value)} /></Field>}
         {op.replace && <Field label="Replace with"><input value={n.replace || ""} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => set("replace", e.target.value)} /></Field>}
         {op.template && <><Field label={op.ai ? "Instruction for the AI" : "Template"}><textarea value={n.template || ""} placeholder={op.ai ? "e.g. Turn {{input}} into a bulleted list of acceptance criteria." : n.op === "json-template" ? '{\n  "customer": "{{this.customer.name}}",\n  "orders": { "{{#each this.orders}}": {\n    "id": "{{this.id}}",\n    "lines": { "{{#each this.lines}}": {\n      "sku": "{{this.sku}}",\n      "order": "{{parent.id}}",\n      "n": "{{this_index}}"\n    } }\n  } }\n}' : "{{input}}"} style={n.op === "json-template" ? { fontFamily: "var(--font-mono)" } : undefined} rows={n.op === "json-template" ? 12 : 5} {...track} onChange={(e) => set("template", e.target.value)} /></Field><VarChips node={n} extra={n.op === "json-template" ? ["this", "this_index", "parent", "root"] : ["input"]} /></>}
         <details><summary className="muted">Input (default: the output of the step before)</summary>
@@ -677,8 +830,23 @@ function StepInspector({ n }) {
 }
 
 function Inspector() {
-  const f = fl(), n = f.sel ? nodeOf(f.sel) : null, e = !n && f.selEdge != null ? f.flow.edges[f.selEdge] : null;
-  return <aside className="fl-inspector" aria-label="Inspector">{n ? <StepInspector key={n.id} n={n} /> : e ? <EdgeInspector key={f.selEdge} e={e} /> : <FlowSettings key={f.flow.id} />}</aside>;
+  const f = fl(), n = f.sel ? nodeOf(f.sel) : null, e = !n && f.selEdge != null ? f.flow.edges[f.selEdge] : null, many = selectedIds();
+  return <aside className="fl-inspector" aria-label="Inspector">{many.length > 1 ? <MultiInspector ids={many} /> : n ? <StepInspector key={n.id} n={n} /> : e ? <EdgeInspector key={f.selEdge} e={e} /> : <FlowSettings key={f.flow.id} />}</aside>;
+}
+
+function MultiInspector({ ids }) {
+  const f = fl(), flow = f.flow, set = new Set(ids), inner = flow.edges.filter((e) => set.has(e.from) && set.has(e.to)).length;
+  return <>
+    <div className="fl-insp-head"><div><h3>{ids.length} steps selected</h3><small className="muted">{inner} connection{inner === 1 ? "" : "s"} between them</small></div>
+      <button className="link" style={{ marginLeft: "auto" }} onClick={removeSelected}>Delete</button></div>
+    <ul className="fl-multi">{ids.map((id) => { const n = nodeOf(id); return <li key={id}><StepIcon n={n} tools={tools()} size={22} /> <b>{n.title || n.id}</b> <span className="muted">{n.type === "tool" ? toolRef(n.tool) : n.type}</span>
+      <button className="link" title="Remove from the selection" onClick={() => setSelection(ids.filter((x) => x !== id))}>✕</button></li>; })}</ul>
+    <div className="row-actions">
+      <button className="btn primary" onClick={() => copySteps()}>Copy</button>
+      <button className="btn secondary" onClick={() => { copySteps(); pasteSteps(S.flowClip); }}>Duplicate</button>
+      <button className="btn secondary" onClick={() => { copySteps(); pasteAsNewFlow(S.flowClip); }}>Copy to a new flow</button></div>
+    <p className="muted fl-help">Drag one of them to move them all. ⌘C copies them with the connections between them (and the inputs they use); ⌘V pastes them into this flow, or open another flow and paste there. ⇧-click or ⌘-click adds or removes a step; drawing a box on the empty canvas selects the steps it touches; ⌘A selects all; Esc clears.</p>
+  </>;
 }
 
 // --- decisions, filters, aggregates ---------------------------------------------------
@@ -711,7 +879,7 @@ function EdgeInspector({ e }) {
 }
 
 // A condition: rules joined by all / any / none; a rule can be a group of its own.
-function CondEditor({ cond, onChange, depth = 0, what = "the data" }) {
+function CondEditor({ cond, onChange, depth = 0, what = "the data", listId }) {
   const ops = fl().ops?.condOps || [];
   const c = cond || newCond();
   const put = () => onChange({ ...c });
@@ -721,9 +889,9 @@ function CondEditor({ cond, onChange, depth = 0, what = "the data" }) {
       <span className="muted">{depth ? "these:" : "these conditions:"}</span>
       {depth > 0 && <button className="link" onClick={() => onChange(null)}>Remove group</button>}</div>
     {(c.rules || []).map((r, i) => r.group
-      ? <CondEditor key={i} cond={r.group} depth={depth + 1} what={what} onChange={(g) => { if (g) c.rules[i] = { group: g }; else c.rules.splice(i, 1); put(); }} />
+      ? <CondEditor key={i} cond={r.group} depth={depth + 1} what={what} listId={listId} onChange={(g) => { if (g) c.rules[i] = { group: g }; else c.rules.splice(i, 1); put(); }} />
       : <div key={i} className="fl-rule">
-        <input className="fl-rule-field" aria-label="Field" placeholder="field, e.g. customer.tier (empty: the whole value)" value={r.field || ""} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => setRule(i, "field", e.target.value)} />
+        <input className="fl-rule-field" aria-label="Field" list={listId} data-path="1" placeholder="field, e.g. customer.tier (empty: the whole value)" value={r.field || ""} style={{ fontFamily: "var(--font-mono)" }} {...track} onChange={(e) => setRule(i, "field", e.target.value)} />
         <button className="link" aria-label="Remove condition" title="Remove" onClick={() => { c.rules.splice(i, 1); put(); }}>✕</button>
         <select aria-label="Comparison" value={r.op || "eq"} onChange={(e) => setRule(i, "op", e.target.value)}>{ops.map((o) => <option key={o.id} value={o.id}>{o.name}</option>)}</select>
         {!ops.find((o) => o.id === r.op)?.unary && <input className="fl-rule-value" aria-label="Value" placeholder={r.op === "between" ? "low, high" : r.op === "in" || r.op === "not_in" ? "a, b, c" : "value or {{…}}"} value={r.value || ""} {...track} onChange={(e) => setRule(i, "value", e.target.value)} />}
@@ -762,7 +930,7 @@ function DecisionInspector({ n, set }) {
         <input aria-label="Path name" value={b.label || ""} placeholder={b.id} onChange={(e) => { n.branches[i] = { ...b, label: e.target.value }; put(); }} />
         <button className="link" disabled={i === 0} title="Check earlier" onClick={() => { const x = n.branches.splice(i, 1)[0]; n.branches.splice(i - 1, 0, x); put(); }}>↑</button>
         <button className="link" aria-label="Remove path" title="Remove path" onClick={() => { n.branches.splice(i, 1); flow.edges.forEach((e) => { if (e.from === n.id && e.branch === b.id) e.branch = ""; }); put(); }}>✕</button></div>
-      <CondEditor cond={b.when} what="the data" onChange={(c) => { n.branches[i] = { ...b, when: c || newCond() }; put(); }} />
+      <CondEditor cond={b.when} what="the data" listId={"paths-" + n.id} onChange={(c) => { n.branches[i] = { ...b, when: c || newCond() }; put(); }} />
       <small className="muted">Leads to: {targets(b.id).join(", ") || "nothing yet: connect a step from this decision and choose this path on the connection"}</small>
     </div>)}
     <button className="btn secondary" onClick={() => { const id = nextId(); (n.branches ||= []).push({ id, label: "Path " + id.replace("path", ""), when: newCond() }); put(); }}>+ Path</button>
@@ -777,9 +945,9 @@ function DecisionInspector({ n, set }) {
 function FilterInspector({ n, set }) {
   return <>
     <Field label="Rows that match"><div className="seg">{[["keep", "Keep"], ["drop", "Drop"]].map(([v, l]) => <button key={v} type="button" aria-pressed={(n.mode || "keep") === v} onClick={() => set("mode", v)}>{l}</button>)}</div></Field>
-    <CondEditor cond={n.cond} what="each row" onChange={(c) => set("cond", c || newCond())} />
+    <CondEditor cond={n.cond} what="each row" listId={"paths-" + n.id} onChange={(c) => set("cond", c || newCond())} />
     <div className="fl-row">
-      <Field label="Sort by" hint="Fields; -total sorts high to low"><input value={listText(n.orderBy)} placeholder="e.g. -total, id" onChange={(e) => set("orderBy", textList(e.target.value))} /></Field>
+      <Field label="Sort by" hint="Fields; -total sorts high to low"><input list={"paths-" + n.id} data-path="list" {...track} value={listText(n.orderBy)} placeholder="e.g. -total, id" onChange={(e) => set("orderBy", textList(e.target.value))} /></Field>
       <Field label="At most" hint="rows (empty: all)"><input type="number" min="0" value={n.max || ""} onChange={(e) => set("max", +e.target.value || 0)} /></Field>
     </div>
     <label className="check"><input type="checkbox" checked={!!n.unique} onChange={(e) => set("unique", e.target.checked)} /> Drop repeated rows</label>
@@ -795,14 +963,14 @@ function AggregateInspector({ n, set }) {
   return <>
     <Field label="Result"><div className="seg">{[["group", "One row per group"], ["window", "Every row, with its group's values"]].map(([v, l]) => <button key={v} type="button" aria-pressed={(n.mode || "group") === v} onClick={() => set("mode", v)}>{l}</button>)}</div></Field>
     <p className="muted fl-help">{win ? "Like SQL's OVER (PARTITION BY … ORDER BY …): every row is kept, with values over its group added: totals, ranks, running sums, the previous or next row's value." : "Like SQL's GROUP BY: one row per distinct combination of the group fields, with the values calculated over its rows. With no group fields, one row of totals."}</p>
-    <Field label={win ? "Partition by" : "Group by"} hint="Fields, comma-separated: region, customer.tier"><input value={listText(n.groupBy)} placeholder="e.g. region, customer.tier" onChange={(e) => set("groupBy", textList(e.target.value))} /></Field>
+    <Field label={win ? "Partition by" : "Group by"} hint="Fields, comma-separated: region, customer.tier"><input list={"paths-" + n.id} data-path="list" {...track} value={listText(n.groupBy)} placeholder="e.g. region, customer.tier" onChange={(e) => set("groupBy", textList(e.target.value))} /></Field>
     <div className="fl-measures">
       <div className="muted">Values to calculate</div>
       {ms.map((m, i) => { const fn = fns.find((x) => x.id === m.fn) || {}; return <div key={i} className="fl-measure">
         <select aria-label="Function" value={m.fn} onChange={(e) => { ms[i] = { ...m, fn: e.target.value }; put(); }}>
           <optgroup label="Over the group">{fns.filter((x) => !x.window).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</optgroup>
           {win && <optgroup label="Window (per row)">{fns.filter((x) => x.window).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}</optgroup>}</select>
-        {!fn.noField || m.fn === "count" ? <input aria-label="Field" placeholder={m.fn === "count" ? "field (empty: rows)" : "field, e.g. total"} value={m.field || ""} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => { ms[i] = { ...m, field: e.target.value }; put(); }} /> : <span />}
+        {!fn.noField || m.fn === "count" ? <input aria-label="Field" list={"paths-" + n.id} data-path="1" {...track} placeholder={m.fn === "count" ? "field (empty: rows)" : "field, e.g. total"} value={m.field || ""} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => { ms[i] = { ...m, field: e.target.value }; put(); }} /> : <span />}
         <input aria-label="Name" placeholder="name in the result" value={m.as || ""} onChange={(e) => { ms[i] = { ...m, as: e.target.value }; put(); }} />
         <button className="link" aria-label="Remove value" onClick={() => { ms.splice(i, 1); put(); }}>✕</button>
         {fn.arg && <input className="fl-measure-arg" aria-label={fn.arg} placeholder={fn.arg} value={m.arg || ""} onChange={(e) => { ms[i] = { ...m, arg: e.target.value }; put(); }} />}
@@ -841,8 +1009,10 @@ export function Flows() {
     <div className="files flows">
       <nav className="ftree" aria-label="Flows">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 8px 8px" }}><h1>Flows</h1><button className="btn primary" onClick={newFlow}>+ New</button></div>
+        <div style={{ padding: "0 8px 8px", display: "grid", gap: 4, justifyItems: "start" }}><button className="link" title="Describe what you want; the AI designer proposes flows built from your tools" onClick={() => openDesigner("new")}><Icon.spark /> New flow with AI</button>
+          {S.flowClip && <button className="link" title={`${S.flowClip.nodes.length} copied step(s) from ${S.flowClip.from || "a flow"}`} onClick={() => pasteFromClipboard(true)}>Paste {S.flowClip.nodes.length} step{S.flowClip.nodes.length === 1 ? "" : "s"} as a new flow</button>}</div>
         {(f.list || []).map((x) => <button key={x.id} className={"run-item" + (x.id === f.flow?.id ? " active" : "")} onClick={() => openFlow(x.id)}>
-          <span className="run-item-top"><b>{x.name}</b></span><small>{x.steps} step{x.steps === 1 ? "" : "s"} · {x.outputs} output{x.outputs === 1 ? "" : "s"}{x.updated ? " · " + new Date(x.updated).toLocaleDateString() : ""}</small></button>)}
+          <span className="run-item-top"><b>{x.name}</b>{x.revision > 1 && <span className="badge" title={"A version of " + ((f.list || []).find((y) => y.id === x.parent)?.name || x.parent)}>v{x.revision}</span>}</span><small>{x.steps} step{x.steps === 1 ? "" : "s"} · {x.outputs} output{x.outputs === 1 ? "" : "s"}{x.updated ? " · " + new Date(x.updated).toLocaleDateString() : ""}</small></button>)}
         {f.list && !f.list.length && <p className="muted" style={{ padding: "4px 8px" }}>No flows yet. A flow strings tools together: inputs → tools, AI, merges and transforms → outputs.</p>}
         <div style={{ padding: "10px 8px" }}><button className="btn secondary" onClick={() => imp.current?.click()}>Import…</button>
           <input ref={imp} type="file" accept=".json,application/json" hidden onChange={(e) => { const file = e.target.files[0]; e.target.value = ""; if (file) importFlow(file); }} /></div>
@@ -862,11 +1032,259 @@ export function Flows() {
           <button className="btn secondary" onClick={deleteFlow}>Delete</button>
           <button className="btn primary" disabled={f.saving || !f.dirty} onClick={save}>Save</button>
         </header>
-        <div className="fl-work"><Palette /><Canvas /><Inspector /></div>
+        <div className="fl-work"><Palette /><Canvas /><Inspector />{f.ai?.open && <AIDesigner />}</div>
       </div> : <section className="view"><div className="card"><h3>Design a flow</h3>
         <p className="wf-desc">Drag tools onto a canvas and connect them. Give the flow inputs (text, files, clipboard), a custom context and skills; merge and transform data between steps; and produce outputs as Markdown, text, HTML, CSV or JSON that are saved, passed to a tool, copied or shown.</p>
         <p className="wf-desc">New to flows? The <button className="link" onClick={() => openFlowGuide("")}>Flow step guide</button> explains every step with examples you can open here.</p>
-        <div className="row-actions"><button className="btn primary" onClick={newFlow}>Create a flow</button><button className="btn secondary" onClick={() => imp.current?.click()}>Import a flow…</button></div></div></section>}
+        <div className="row-actions"><button className="btn primary" onClick={() => openDesigner("new")}><Icon.spark /> Describe it to the AI designer</button><button className="btn secondary" onClick={newFlow}>Create a flow</button><button className="btn secondary" onClick={() => imp.current?.click()}>Import a flow…</button></div></div>
+        {f.ai?.open && <AIDesigner inline />}</section>}
     </div>
   );
+}
+
+
+// --- data shapes: what each step gets and gives ------------------------------------
+
+const SHAPE_SOURCE = {
+  declared: ["Declared", "badge-ok", "declared by the tool, the expected reply or the flow's inputs"],
+  derived: ["Worked out", "badge-info", "worked out from the steps before it"],
+  sample: ["Learned", "badge-warn", "learned from sample data or the flow's last run; declare it to be sure"],
+  unknown: ["Not known yet", "", ""],
+};
+const jsonPathVar = (base, p) => `${base}.buffer_output.json${p.startsWith("[") ? "" : "."}${p}`;
+
+// a field list; clicking a field puts it where the cursor is
+function ShapeTree({ schema, pick, max = 40 }) {
+  const [all, setAll] = useState(false);
+  if (!schema) return null;
+  const ps = schemaPaths(schema, 400);
+  if (!ps.length) return <p className="muted fl-help">{typeName(schema) === "string" ? "Text (not JSON)." : "A " + typeName(schema) + " value."}{schema.description ? " " + schema.description : ""}</p>;
+  const shown = all ? ps : ps.slice(0, max);
+  return <div className="fl-shape">
+    {shown.map((p) => <button key={p.path} type="button" className="fl-shape-row" style={{ paddingLeft: 6 + p.depth * 14 }} title={(p.description ? p.description + " · " : "") + p.path + " · click to use it"}
+      onMouseDown={(e) => e.preventDefault()} onClick={() => pick(p.path)}>
+      <code>{p.path.split(".").pop()}</code><span className="fl-shape-type">{p.type}</span>{p.description && <small className="muted">{p.description}</small>}</button>)}
+    {ps.length > max && <button className="link" onClick={() => setAll(!all)}>{all ? "Show fewer" : `Show all ${ps.length} fields`}</button>}
+  </div>;
+}
+
+function DataPanel({ n }) {
+  const f = fl(), flow = f.flow, sh = f.shapes?.[n.id];
+  if (!sh || n.type === "start") return null;
+  const parents = parentsOf(flow, n.id), one = parents.length === 1 ? parents[0] : null;
+  const inLoop = !!one && nodeOf(one)?.type === "loop";
+  const rowsStep = n.type === "filter" || n.type === "aggregate", dataStep = rowsStep || n.type === "decision";
+  const gets = rowsStep ? sh.rows : n.type === "loop" ? sh.item : sh.in;
+  // a field of what the step gets: into a path field as it is, into a template as a variable
+  const pickIn = (p) => {
+    const el = lastField, isPath = el && document.body.contains(el) ? el.dataset?.path : "";
+    if (isPath) return insertText(isPath === "list" && el.value.trim() ? el.value.replace(/,?\s*$/, ", ") + p : p, true);
+    if (dataStep || n.type === "loop") return insertVar("this." + p);
+    if (inLoop) return insertVar("item.json" + (p.startsWith("[") ? "" : ".") + p);
+    if (one) return insertVar(jsonPathVar(one, p));
+    toast("Connect one step into this one to use its fields.");
+  };
+  const pickOut = (p) => { const v = `{{${jsonPathVar(n.id, p)}}}`; navigator.clipboard?.writeText(v).catch(() => {}); toast(`Copied ${v}: paste it into a later step.`); };
+  const [label, cls, why] = SHAPE_SOURCE[sh.source] || SHAPE_SOURCE.unknown;
+  const unknownHint = n.type === "tool" ? <>Declare the tool's output on the <button className="link" onClick={() => { S.view = "tools"; update(); }}>Tools</button> screen, or give sample output (Try it with sample data) or run the flow once to learn it.</>
+    : n.type === "ai" ? "Set the expected reply above, or run the flow once to learn it." : "Connect a step whose output is known.";
+  return <details className="fl-data" open>
+    <summary><b>Data</b> <span className="muted">the fields this step gets and gives</span></summary>
+    <datalist id={"paths-" + n.id}>{(gets ? schemaPaths(gets, 300) : []).map((p) => <option key={p.path} value={p.path}>{p.type}{p.description ? " · " + p.description : ""}</option>)}</datalist>
+    <div className="fl-data-sec">
+      <div className="fl-data-head">{rowsStep ? "Each row it gets" : n.type === "loop" ? "Each item" : "Gets"}{one && <small className="muted">from {nodeOf(one)?.title || one}</small>}</div>
+      {gets ? <><code className="fl-compact" title="The shape, compactly">{compact(gets)}</code><ShapeTree schema={gets} pick={pickIn} />
+        <small className="muted">Click a field to use it where you were typing{dataStep || n.type === "loop" ? " (as a path in a field box, else as {{this.<field>}})" : inLoop ? " ({{item.json.<field>}})" : one ? ` ({{${one}.buffer_output.json.<field>}})` : ""}.</small></>
+        : <p className="muted fl-help">{parents.length ? "Not known yet: " + (parents.length > 1 ? "several steps are connected, and their outputs arrive one after another as text." : "the step before has no known shape.") : "Nothing is connected into it."}</p>}
+    </div>
+    {n.type !== "output" && <div className="fl-data-sec">
+      <div className="fl-data-head">Gives <span className={"badge " + cls} title={why}>{label}</span></div>
+      {sh.out ? <><code className="fl-compact">{compact(sh.out)}</code><ShapeTree schema={sh.out} pick={pickOut} />
+        <small className="muted">Later steps read a field as <code className="inline-code" data-nofile>{`{{${n.id}.buffer_output.json.<field>}}`}</code>; click one to copy it.</small></>
+        : <p className="muted fl-help">{unknownHint}</p>}
+    </div>}
+  </details>;
+}
+
+// An AI step's expected reply: shown to later steps and, only when set, sent to the AI.
+function ExpectedReply({ n, set }) {
+  const [text, setText] = useState(n.outputSchema ? JSON.stringify(n.outputSchema, null, 2) : "");
+  const apply = async () => {
+    if (!text.trim()) { if (n.outputSchema) set("outputSchema", undefined); return; }
+    try { const s = await backend.ParseSchema(text); set("outputSchema", s); setText(JSON.stringify(s, null, 2)); } catch (e) { toast("Expected reply: " + errMsg(e)); }
+  };
+  return <details className="fl-expect" open={!!n.outputSchema}>
+    <summary><b>Expected reply</b> <span className="muted">{n.outputSchema ? compact(n.outputSchema) : "optional: JSON the next steps can rely on"}</span></summary>
+    <p className="muted fl-help">Paste an example of the JSON you want back, or a JSON Schema. Later steps then know its fields, and the AI is asked to reply with only JSON in this shape. It is the only shape ever sent to the AI, so leave it empty for free-form answers.</p>
+    <textarea rows={6} value={text} placeholder={'{"type": "bug", "title": "Checkout crashes", "priority": 2}'} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => setText(e.target.value)} onBlur={apply} />
+    {n.outputSchema && <div className="row-actions"><button className="link" onClick={() => { setText(""); set("outputSchema", undefined); }}>Clear</button></div>}
+  </details>;
+}
+
+// The flow's interface: its inputs and the shapes of its outputs, for whoever integrates it.
+function FlowInterface() {
+  const f = fl(), flow = f.flow, sh = f.shapes || {};
+  const outs = flow.nodes.filter((n) => n.type === "output");
+  const iface = () => ({ flow: flow.id, inputs: sh.start?.out || { type: "object" }, outputs: Object.fromEntries(outs.map((n) => [n.title || n.id, { format: n.format, ...(n.format === "json" && sh[n.id]?.out ? { schema: sh[n.id].out } : {}) }])) });
+  return <details className="fl-data">
+    <summary><b>Interface</b> <span className="muted">inputs and outputs, for integrating this flow</span></summary>
+    <div className="fl-data-sec"><div className="fl-data-head">Inputs</div>{flow.inputs.length ? <code className="fl-compact">{compact(sh.start?.out)}</code> : <p className="muted fl-help">No inputs.</p>}</div>
+    <div className="fl-data-sec"><div className="fl-data-head">Outputs</div>
+      {outs.map((n) => <div key={n.id}><b>{n.title || n.id}</b> <span className="muted">{(n.format || "").toUpperCase()}</span>{n.format === "json" && <code className="fl-compact">{sh[n.id]?.out ? compact(sh[n.id].out) : "shape not known yet"}</code>}</div>)}
+      {!outs.length && <p className="muted fl-help">No outputs yet.</p>}</div>
+    <button className="btn secondary small" onClick={() => { navigator.clipboard?.writeText(JSON.stringify(iface(), null, 2)).catch(() => {}); toast("Copied the flow's interface as JSON Schema."); }}>Copy as JSON Schema</button>
+  </details>;
+}
+
+
+// --- a loop's list ------------------------------------------------------------------
+
+// A Loop connected to the Inputs step gets all the inputs as one JSON object:
+// take the list from the input that holds one (several lines, picks, files).
+function loopFromInputs(a, n) {
+  if (a?.type !== "start" || n?.type !== "loop" || (n.field || "").trim() || (n.source || "").trim()) return "";
+  const ins = fl().flow.inputs || [];
+  if (!ins.length) return "";
+  const i = ins.find((x) => ["multiline", "multichoice", "files"].includes(x.type)) || ins[0];
+  n.field = i.name;
+  return `The loop goes through the input “${i.label || i.name}”, one item per line. Change it in “List from”.`;
+}
+
+function LoopListFrom({ n, set }) {
+  const f = fl(), sh = f.shapes?.[n.id], obj = sh?.in?.type === "object" ? sh.in : null;
+  const ps = obj ? schemaPaths(obj, 200) : [];
+  return <Field label="List from" hint={obj ? "The input is a JSON object: the field that holds the list. Empty: its only field, or its only list." : "For JSON input: the path of the list, e.g. items or data.rows. Empty: the whole input (or an object's only field)."}>
+    <input list={"listpaths-" + n.id} data-path="1" {...track} value={n.field || ""} placeholder={obj ? (ps.find((p) => p.depth === 0)?.path || "field") : "e.g. data.items"} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => set("field", e.target.value)} />
+    <datalist id={"listpaths-" + n.id}>{ps.map((p) => <option key={p.path} value={p.path}>{p.type}{p.description ? " · " + p.description : ""}</option>)}</datalist>
+  </Field>;
+}
+
+// --- the AI designer ---------------------------------------------------------------
+
+const DESIGN_EXAMPLES = [
+  "Every morning, tell me which blocking issues the quality gate found, grouped by file",
+  "Find the TODOs in the project and give me a short list of the urgent ones",
+  "Read a Jira ticket and write acceptance criteria for it",
+  "Check the API spec for problems and summarise what to fix first",
+];
+const DESIGN_PHASES = ["Reading your tools and their contracts", "Sketching the options", "Wiring the steps", "Trying every option with sample data", "Fixing what did not work", "Ranking: tools and plain steps before AI"];
+
+function openDesigner(mode) {
+  const f = fl();
+  const switching = f.ai?.mode !== (f.flow ? mode : "new");
+  mode = "new"; // fixing a flow happens on Run flows, step by step
+  f.ai = { ...(f.ai || {}), open: true, mode, prompt: switching ? "" : f.ai?.prompt || "", res: switching ? null : f.ai?.res };
+  update();
+}
+
+function PathChips({ flow }) {
+  const order = [], node = (id) => flow.nodes.find((x) => x.id === id);
+  const visit = (id) => { if (order.includes(id)) return; order.push(id); flow.edges.filter((e) => e.from === id).forEach((e) => visit(e.to)); };
+  visit("start");
+  return <div className="guide-path">{order.filter((id) => id !== "start" && node(id)).map((id, i) => {
+    const n = node(id), br = flow.edges.find((e) => e.to === id && e.branch);
+    return <span key={id} className={"guide-chip" + (n.type === "ai" ? " ai" : "")}>{i > 0 && <span className="muted">{br ? `◆ ${br.branch === "else" ? "Otherwise" : (node(br.from)?.branches || []).find((b) => b.id === br.branch)?.label || br.branch} →` : "→"}</span>}
+      <StepIcon n={n} tools={tools()} size={18} />{n.title || (n.type === "tool" ? toolRef(n.tool) : n.id)}</span>;
+  })}</div>;
+}
+
+function stepDetail(n) {
+  switch (n.type) {
+    case "tool": return toolRef(n.tool) + (Object.keys(n.args || {}).length ? " · " + Object.entries(n.args).map(([k, v]) => `${k}=${v}`).join(", ") : "") + (n.instruction ? " · AI fills: " + n.instruction : "");
+    case "ai": return (n.prompt || "").slice(0, 140) + (n.outputSchema ? " → " + compact(n.outputSchema) : "");
+    case "transform": return n.op + (n.expr ? " " + n.expr : "");
+    case "filter": return (n.mode === "drop" ? "drop " : "keep ") + condCount(n.cond) + " condition(s)" + (n.orderBy?.length ? " · sort " + n.orderBy.join(", ") : "");
+    case "aggregate": return (n.groupBy?.length ? "by " + n.groupBy.join(", ") + " · " : "") + (n.measures || []).map((m) => `${m.fn}(${m.field || ""})`).join(", ");
+    case "decision": return (n.branches || []).map((b) => b.label || b.id).join(" / ") + " / otherwise";
+    case "output": return (n.format || "").toUpperCase() + " · " + (n.actions || []).map((a) => a.type + (a.path ? " " + a.path : "")).join(", ");
+    default: return n.mode || n.split || "";
+  }
+}
+
+function OptionCard({ o, improving, apply }) {
+  const [steps, setSteps] = useState(false);
+  const errs = o.issues.filter((i) => i.level === "error"), warns = o.issues.length - errs.length;
+  return <div className={"ai-option" + (o.recommended ? " recommended" : "")}>
+    <div className="ai-option-head"><b>{o.title}</b>
+      {o.recommended && <span className="badge badge-ok">Recommended</span>}
+      <span className={"badge " + (o.deterministic ? "badge-info" : "badge-warn")} title={o.deterministic ? "Runs the same way every time: tools and plain steps only" : "Some steps ask the AI"}>{o.deterministic ? "No AI" : `AI in ${o.aiSteps} step${o.aiSteps === 1 ? "" : "s"}`}</span>
+      {o.trial && <span className={"badge " + (o.trial.ok ? "badge-ok" : "badge-warn")} title="Tried with sample data: tools and AI steps mocked, every other step run for real">{o.trial.ok ? "✓ Tried" : "✗ Trial failed"}</span>}
+      {improving && o.fixes > 0 && <span className="badge badge-ok">Fixes {o.fixes} problem{o.fixes === 1 ? "" : "s"}</span>}
+      {improving && o.rewrite && <span className="badge badge-warn" title="It keeps few of the current steps">Rewrites most of it</span>}
+      {errs.length > 0 && <span className="badge badge-warn" title={errs.map((i) => i.message).join("\n")}>{errs.length} problem{errs.length === 1 ? "" : "s"}</span>}
+      {!errs.length && warns > 0 && <span className="badge" title={o.issues.map((i) => i.message).join("\n")}>{warns} note{warns === 1 ? "" : "s"}</span>}</div>
+    <p>{o.summary}</p>
+    {o.why && <p className="muted fl-help">{o.why}</p>}
+    <PathChips flow={o.flow} />
+    {o.tools.length > 0 && <div className="muted fl-help">Uses: {o.tools.map((t) => <code key={t} className="inline-code" data-nofile>{toolRef(t)}</code>).reduce((a, b) => [a, " ", b])}</div>}
+    {improving && o.changes?.length > 0 && <ul className="ai-changes">{o.changes.map((c, i) => <li key={i}>{c}</li>)}</ul>}
+    <details open={steps} onToggle={(e) => setSteps(e.currentTarget.open)}><summary className="muted">{o.flow.nodes.length - 1} steps{o.flow.inputs?.length ? ` · inputs: ${o.flow.inputs.map((i) => i.label || i.name).join(", ")}` : ""}</summary>
+      <ol className="ai-steps">{o.flow.nodes.filter((n) => n.type !== "start").map((n) => <li key={n.id}><StepIcon n={n} tools={tools()} size={16} /> <b>{n.title || n.id}</b> <span className="muted">{n.type} · {stepDetail(n)}</span></li>)}</ol>
+      {errs.length > 0 && <div className="banner error">{errs.map((i) => i.message).join(" ")}</div>}</details>
+    {o.trial && <TrialReport t={o.trial} />}
+    <div className="row-actions"><button className="btn primary" onClick={() => apply(o)}>{improving ? "Save as a new version" : "Use this flow"}</button></div>
+  </div>;
+}
+
+// How an option's trial run went: each step with its (sample) output, and the checks.
+const TRIAL_ICON = { done: "✓", failed: "✗", blocked: "✗", off: "–", "not run": "·" };
+function TrialReport({ t }) {
+  const [open, setOpen] = useState(!t.ok);
+  const passed = t.checks.filter((c) => c.ok).length;
+  return <details className={"ai-trial" + (t.ok ? "" : " failed")} open={open} onToggle={(e) => setOpen(e.currentTarget.open)}>
+    <summary className="muted">Trial run with sample data · {passed} of {t.checks.length} check{t.checks.length === 1 ? "" : "s"} passed</summary>
+    <ul className="ai-checks">{t.checks.map((c, i) => <li key={i} className={c.ok ? "ok" : "bad"}>{c.ok ? "✓" : "✗"} {c.label}{c.note ? <span className="muted"> · {c.note}</span> : null}</li>)}</ul>
+    {Object.keys(t.inputs || {}).length > 0 && <div className="muted fl-help">Inputs: {Object.entries(t.inputs).map(([k, v]) => `${k} = ${v}`).join(", ")}</div>}
+    <ol className="ai-trial-steps">{t.steps.filter((s) => s.type !== "start").map((s) => <li key={s.id} className={s.status}>
+      <span className="ai-trial-st" title={s.status}>{TRIAL_ICON[s.status] || "·"}</span> <b>{s.title}</b>
+      <span className="muted"> {s.status === "off" ? "not on the path taken" : s.status}{s.mocked ? " · sample output (mocked)" : ""}{s.path ? " · → " + s.path : ""}{s.runs > 1 ? ` · ran ${s.runs}×` : ""}</span>
+      {s.error && <div className="ai-trial-err">{s.error}</div>}
+      {s.output && s.status === "done" && <details><summary className="muted">output</summary><pre className="code guide-pre">{s.output}</pre></details>}</li>)}</ol>
+  </details>;
+}
+
+function AIDesigner({ inline }) {
+  const f = fl(), ai = f.ai, improving = ai.mode === "improve" && !!f.flow;
+  const set = (k, v) => { ai[k] = v; update(); };
+  const design = async () => {
+    if (f.dirty) await save();
+    Object.assign(ai, { busy: true, error: "", res: null }); update();
+    try { ai.res = await backend.DesignFlows({ prompt: ai.prompt, flowId: improving ? f.flow.id : "", options: 3, model: ai.model || "" }); }
+    catch (e) { ai.error = errMsg(e); }
+    ai.busy = false; update();
+  };
+  const apply = async (o) => {
+    try {
+      const designed = "Made by the AI designer" + (ai.prompt.trim() ? `: “${ai.prompt.trim().slice(0, 200)}”` : "") + ".";
+      let id;
+      if (improving) {
+        const st = await backend.SaveFlowVersion(f.flow.id, { ...o.flow, designed });
+        id = st.flow.id; toast(`Saved as ${st.flow.name}; the original is unchanged.`);
+      } else {
+        const base = await backend.NewFlow(o.flow.name || o.title);
+        await backend.SaveFlow({ ...base, name: o.flow.name || o.title, description: o.summary, inputs: o.flow.inputs || [], nodes: o.flow.nodes, edges: o.flow.edges, designed });
+        id = base.id; toast(`Created the flow ${o.flow.name || o.title}. Check the steps, then Run it.`);
+      }
+      ai.open = false; ai.res = null;
+      await loadList(); await openFlow(id);
+    } catch (e) { toast(errMsg(e)); }
+  };
+  return <div className={"ai-designer" + (inline ? " inline" : "")} role="dialog" aria-label="AI designer">
+    <div className="ai-designer-head"><Icon.spark /><h3>{improving ? `Fix and improve “${f.flow.name}”` : "New flow with AI"}</h3>
+      <span className="muted">{improving ? "The AI changes this flow; you get versions of it to choose from" : "Describe what you want in your own words"}</span>
+      <button className="link" style={{ marginLeft: "auto" }} aria-label="Close" onClick={() => set("open", false)}>✕</button></div>
+    {improving && (() => { const n = f.issues.filter((i) => i.level === "error").length; return n ? <div className="banner">This flow has {n} problem{n === 1 ? "" : "s"}: the AI fixes {n === 1 ? "it" : "them"} first.</div> : null; })()}
+    <div className="ai-model"><span className="muted">Model</span><ModelPicker value={ai.model || ""} onChange={(v) => set("model", v)} label="Model for the AI designer" /><small className="muted">Default: the app's model.</small></div>
+    <textarea rows={3} value={ai.prompt} placeholder={improving ? "What should be fixed or better? e.g. it fails on the scan step; stop when there is nothing to report; use the tools instead of AI. Leave empty to fix its problems and improve it in general." : "e.g. " + DESIGN_EXAMPLES[0]} onChange={(e) => set("prompt", e.target.value)}
+      onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) design(); }} />
+    {!improving && !ai.prompt && <div className="chips">{DESIGN_EXAMPLES.map((x) => <button key={x} type="button" className="chip" onClick={() => set("prompt", x)}>{x.split(" ").slice(0, 7).join(" ")}…</button>)}</div>}
+    <div className="row-actions"><button className="btn primary" disabled={ai.busy || (!improving && !ai.prompt.trim())} onClick={design}>{ai.busy ? (improving ? "Working on it…" : "Designing…") : ai.res ? "Try again" : improving ? "Fix and improve" : "Design options"}</button>
+      <span className="muted fl-help">{improving ? "It keeps this flow's steps and changes only what is needed, using your tools first, then plain steps, and AI steps only where nothing else fits. Every version is tried with sample data before you see it (tools and AI mocked, everything else run for real); the one you choose is saved as a new version, and the original stays as it is." : "It uses your tools first, connected by their data shapes, then plain steps, and AI steps only where nothing else fits. Every option is tried with sample data before you see it (tools and AI mocked, everything else run for real); the one you choose opens here."}</span></div>
+    {ai.busy && <AiProgress phases={DESIGN_PHASES} />}
+    {ai.error && <div className="banner error">{ai.error}</div>}
+    {ai.res && <>
+      <div className="ai-options">{ai.res.options.map((o, i) => <OptionCard key={i} o={o} improving={improving} apply={apply} />)}</div>
+      <p className="muted fl-help">{ai.res.repaired ? "Some options were fixed automatically after the check. " : ""}{ai.res.usage?.input_tokens ? `Used ${(ai.res.usage.input_tokens + ai.res.usage.output_tokens).toLocaleString()} tokens` : ""}{ai.res.usage?.premium_requests ? ` · ${ai.res.usage.premium_requests} premium request${ai.res.usage.premium_requests === 1 ? "" : "s"}` : ""}{ai.res.usage?.cost_usd ? ` · $${ai.res.usage.cost_usd.toFixed(3)}` : ""}</p>
+    </>}
+  </div>;
 }

@@ -102,6 +102,9 @@ func aiArgsPrompt(e *extension.Extension, request string, fixed map[string]any, 
 			req = "required"
 		}
 		fmt.Fprintf(&b, "- %s (%s, %s): %s\n", p.Name, firstNonEmpty(p.Type, "string"), req, p.Desc)
+		if p.Schema != nil && p.Schema.Known() { // a JSON parameter: its shape
+			fmt.Fprintf(&b, "  shape: %s\n", p.Schema.Compact())
+		}
 	}
 	fmt.Fprintf(&b, "\nWhat the call should achieve:\n%s\n", strings.TrimSpace(request))
 	if len(fixed) > 0 {

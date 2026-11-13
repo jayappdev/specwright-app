@@ -13,7 +13,7 @@ import { useEffect, useRef, useState } from "react";
 import { backend } from "./backend.js";
 import { errMsg, update } from "./store.js";
 import { highlight } from "./highlight.js";
-import { mdToHtml } from "./richtext.js";
+import { mdRender } from "./markdown.js";
 import { Icon } from "./ui.jsx";
 import { fmtSize } from "./Attachments.jsx";
 import { FileLink } from "./FileLinks.jsx";
@@ -120,7 +120,7 @@ export function FileView({ slot, line = 0, label = "File contents" }) {
       {d.matches?.length > 0 && <div className="banner fp-matches">Showing the shortest match. Also found: {d.matches.map((m) => <FileLink key={m} path={m}>{m}</FileLink>).reduce((a, b) => [a, ", ", b])}</div>}
       {d.truncated && <div className="banner">{d.kind === "text" ? `Showing the first ${fmtSize(d.text.length)} of ${fmtSize(d.size)}.` : `This file is ${fmtSize(d.size)}, too large to preview.`}</div>}
       <div className="fv-content" style={{ "--fv-zoom": (kind === "text" ? z : 100) / 100 }}>
-        {d.kind === "text" && md && mode === "rendered" && (fmt === "md" ? <div className="fp-md rich" dangerouslySetInnerHTML={{ __html: mdToHtml(d.text) }} /> : <RenderPreview text={d.text} format={fmt} />)}
+        {d.kind === "text" && md && mode === "rendered" && (fmt === "md" ? <div className="fp-md rich md" dangerouslySetInnerHTML={{ __html: mdRender(d.text) }} /> : <RenderPreview text={d.text} format={fmt} />)}
         {d.kind === "text" && !(md && mode === "rendered") && (d.text ? <pre className="code lines fp-code" aria-label={label}>{lines.map((l, k) => <span className={"ln" + (line === k + 1 ? " ln-hl" : "")} data-ln={k + 1} key={k}>{l.length ? l.map(([cls, t], j) => cls ? <span key={j} className={cls}>{t}</span> : t) : " "}</span>)}</pre> : <p className="muted fp-center">Empty file.</p>)}
         {d.kind === "image" && slot.url && <div className={"fp-image" + (z === "fit" ? " fit" : "")}><img ref={img} src={slot.url} alt={d.name} onLoad={() => force((n) => n + 1)}
           style={z === "fit" ? undefined : { width: img.current?.naturalWidth ? Math.round(img.current.naturalWidth * z / 100) + "px" : z + "%", maxWidth: "none", maxHeight: "none" }} /></div>}

@@ -482,12 +482,21 @@ export const BUILTINS = [
     "name": "fetch_webpage",
     "title": "Fetch web page",
     "group": "web",
-    "description": "Fetch an http(s) URL and return its readable text (HTML is converted to text; JSON and plain text as is). Uses the configured corporate proxy. Good for documentation and API references.",
+    "description": "Fetch an http(s) URL and return its readable text (HTML is converted to text; JSON and plain text as is). Uses the configured corporate proxy. Good for documentation and API references. With format \"json\" the response comes back as a JSON object (url, status, ok, contentType, title, headers, and json — the parsed body — or body — its text); with format \"raw\" it is exactly the response body (e.g. an API's JSON, as is), for later steps to parse.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "format": {
+          "description": "text (default): the URL and status, then the readable text; json: the response as a JSON object (status, headers, parsed body); raw: exactly the response body, nothing added (fails on an error status)",
+          "enum": [
+            "text",
+            "json",
+            "raw"
+          ],
+          "type": "string"
+        },
         "max_chars": {
-          "description": "Characters to return (default 20000)",
+          "description": "Characters to return (default 20000 for text; the whole response, up to 5 MB, for json and raw)",
           "type": "integer"
         },
         "url": {
@@ -501,7 +510,70 @@ export const BUILTINS = [
       "type": "object"
     },
     "readOnly": true,
-    "enabled": true
+    "enabled": true,
+    "outputBy": {
+      "format": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "url": {
+              "type": "string",
+              "description": "the final URL, after redirects"
+            },
+            "status": {
+              "type": "integer",
+              "description": "HTTP status code, e.g. 200"
+            },
+            "statusText": {
+              "type": "string",
+              "description": "e.g. 200 OK"
+            },
+            "ok": {
+              "type": "boolean",
+              "description": "true for a 2xx status"
+            },
+            "contentType": {
+              "type": "string"
+            },
+            "title": {
+              "type": "string",
+              "description": "an HTML page's title"
+            },
+            "headers": {
+              "type": "object",
+              "description": "response headers, lower-case names"
+            },
+            "json": {
+              "description": "the body parsed, when it is JSON"
+            },
+            "body": {
+              "type": "string",
+              "description": "the body as text, when it is not JSON (HTML as readable text)"
+            },
+            "size": {
+              "type": "integer",
+              "description": "body size in bytes"
+            },
+            "truncated": {
+              "type": "boolean",
+              "description": "the body was longer than max_chars"
+            },
+            "binary": {
+              "type": "boolean",
+              "description": "binary content, not included"
+            }
+          },
+          "required": [
+            "url",
+            "status",
+            "ok",
+            "contentType",
+            "headers",
+            "truncated"
+          ]
+        }
+      }
+    }
   },
   {
     "name": "todo_list",

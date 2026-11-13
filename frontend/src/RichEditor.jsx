@@ -3,6 +3,7 @@
 import { useEffect, useRef, useState } from "react";
 import { askText } from "./Dialog.jsx";
 import { mdToHtml, htmlToMd, sanitizeHtml } from "./richtext.js";
+import { mdRender } from "./markdown.js";
 
 const B = (props) => <button type="button" className="rte-btn" onMouseDown={(e) => e.preventDefault()} {...props} />;
 
@@ -83,5 +84,5 @@ export function RichEditor({ value, onChange, placeholder = "", minHeight = 140,
 
 // Read-only rendering of a rule's Markdown.
 export function RichText({ md, className = "" }) {
-  return <div className={"rich " + className} dangerouslySetInnerHTML={{ __html: mdToHtml(md || "") }} />;
+  return <div className={"rich md " + className} dangerouslySetInnerHTML={{ __html: mdRender(md || "") }} />;
 }

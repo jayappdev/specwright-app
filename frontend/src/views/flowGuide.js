@@ -140,6 +140,7 @@ export const GUIDE = [
     how: [
       "Connect the step whose output is the list into the Loop (or write the list in “The list”).",
       "Choose how to split it: one per line, a JSON array, CSV rows or the matches of a pattern; Detect picks JSON or lines.",
+      "When the list arrives inside a JSON object — connected to the Inputs step, the loop gets {\"stocks\": \"AMZN\\nMSFT\"} — set “List from” to the field that holds it (stocks, or a path like data.items). Empty: the object's only field, or its only list. Connected to Inputs, the loop picks the input itself.",
       "Every step connected after the Loop runs once per item, up to a Gather step, which you must add to collect the results.",
       "Inside the loop use {{item}} (and {{item.json.name}} for JSON items), {{item_index}} and {{item_count}}. With loops inside loops, use the loop's step id: {{files.item}}.",
       "Options: keep only items matching a pattern, at most N items, skip repeats, keep going when an item fails.",

@@ -1,5 +1,7 @@
 package builtin
 
+import "codegen/internal/flow"
+
 // registry lists every built-in tool. Descriptions are written for the
 // model: what the tool is for, when to prefer it, and what it returns.
 var registry = []Tool{
@@ -118,11 +120,13 @@ var registry = []Tool{
 		Schema: obj(map[string]any{})},
 	// --- web --------------------------------------------------------------
 	{Name: "fetch_webpage", Title: "Fetch web page", Group: "web", ReadOnly: true, run: fetchWebpage,
-		Desc: "Fetch an http(s) URL and return its readable text (HTML is converted to text; JSON and plain text as is). Uses the configured corporate proxy. Good for documentation and API references.",
+		Desc: "Fetch an http(s) URL and return its readable text (HTML is converted to text; JSON and plain text as is). Uses the configured corporate proxy. Good for documentation and API references. With format \"json\" the response comes back as a JSON object (url, status, ok, contentType, title, headers, and json — the parsed body — or body — its text); with format \"raw\" it is exactly the response body (e.g. an API's JSON, as is), for later steps to parse.",
 		Schema: obj(map[string]any{
 			"url":       p("string", "Absolute http(s) URL"),
-			"max_chars": p("integer", "Characters to return (default 20000)"),
-		}, "url")},
+			"max_chars": p("integer", "Characters to return (default 20000 for text; the whole response, up to 5 MB, for json and raw)"),
+			"format":    map[string]any{"type": "string", "enum": []string{"text", "json", "raw"}, "description": "text (default): the URL and status, then the readable text; json: the response as a JSON object (status, headers, parsed body); raw: exactly the response body, nothing added (fails on an error status)"},
+		}, "url"),
+		OutputBy: map[string]map[string]*flow.Schema{"format": {"json": FetchJSONShape}}},
 	// --- plan -------------------------------------------------------------
 	{Name: "todo_list", Title: "Todo list", Group: "plan", ReadOnly: true, run: todoList,
 		Desc: "Keep a short todo list for multi-step work: pass items to replace the list (each {title, status: pending|in_progress|done}), or call without items to read it. Mark items done as you finish them.",

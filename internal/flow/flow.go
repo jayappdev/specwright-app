@@ -43,6 +43,13 @@ type Flow struct {
 	// Metrics); 0 means "estimate from the steps".
 	MinutesSaved int       `json:"minutesSaved,omitempty"`
 	Updated      time.Time `json:"updated,omitzero"`
+	// Versions: a flow saved as a new version of another (by the AI
+	// designer's "improve", or by hand) names the flow it came from and its
+	// number in that family (the original is 1).
+	Parent   string `json:"parent,omitempty"`
+	Revision int    `json:"revision,omitempty"`
+	// Designed says how the flow was made, e.g. "AI designer: <request>".
+	Designed string `json:"designed,omitempty"`
 }
 
 // EstimatedMinutes is MinutesSaved, or an estimate from the steps.
@@ -115,6 +122,10 @@ type Node struct {
 	// ai
 	Prompt string `json:"prompt,omitempty"`
 	Model  string `json:"model,omitempty"`
+	// OutputSchema is the JSON an AI step is expected to reply with: the
+	// designer shows it to the steps after it, and the agent is asked to
+	// reply in that shape (the only shape metadata the AI is sent).
+	OutputSchema *Schema `json:"outputSchema,omitempty"`
 
 	// merge
 	Mode      string `json:"mode,omitempty"`      // concat | json-object | json-array | template
@@ -128,8 +139,11 @@ type Node struct {
 	Source  string `json:"source,omitempty"`  // template for the input (default: the upstream output)
 
 	// loop (Source and Expr are shared with transform; see loop.go)
-	Split           string `json:"split,omitempty"`  // auto | lines | json | csv | regex
-	Filter          string `json:"filter,omitempty"` // keep items matching this pattern
+	Split  string `json:"split,omitempty"`  // auto | lines | json | csv | regex
+	Filter string `json:"filter,omitempty"` // keep items matching this pattern
+	// Field: for JSON input, the path of the list ("stocks", "data.items");
+	// empty: the object's only field, or its only list
+	Field           string `json:"field,omitempty"`
 	Max             int    `json:"max,omitempty"`    // at most this many items (0 = MaxLoopItems)
 	Unique          bool   `json:"unique,omitempty"` // drop repeated items
 	ContinueOnError bool   `json:"continueOnError,omitempty"`
@@ -309,6 +323,9 @@ type Issue struct {
 type ToolInfo struct {
 	Name   string
 	Params []ToolParam
+	Output *Schema // the shape of what it prints, when declared
+	// OutputBy: the shape when an argument has a value (format → json → shape)
+	OutputBy map[string]map[string]*Schema
 }
 
 // ToolParam is one parameter of a tool.
@@ -473,6 +490,17 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 			}
 		}
 	}
+	// the fields the flow uses, against the shapes worked out for it
+	toolOut, toolsBy := map[string]*Schema{}, map[string]map[string]map[string]*Schema{}
+	for _, t := range tools {
+		if t.Output != nil {
+			toolOut[t.Name] = t.Output
+		}
+		if t.OutputBy != nil {
+			toolsBy[t.Name] = t.OutputBy
+		}
+	}
+	is = append(is, f.checkPaths(f.Shapes(ShapeHints{Tools: toolOut, ToolsBy: toolsBy}))...)
 	for _, n := range f.Nodes {
 		parents := f.Parents(n.ID)
 		if n.Type != "start" && len(parents) == 0 {
@@ -763,6 +791,8 @@ type Summary struct {
 	Steps       int       `json:"steps"`
 	Outputs     int       `json:"outputs"`
 	Updated     time.Time `json:"updated"`
+	Parent      string    `json:"parent,omitempty"`
+	Revision    int       `json:"revision,omitempty"`
 }
 
 // List returns the workspace's flows, newest first.
@@ -783,7 +813,7 @@ func List(root string) ([]Summary, error) {
 		if err != nil {
 			continue
 		}
-		s := Summary{ID: f.ID, Name: f.Name, Description: f.Description, Updated: f.Updated}
+		s := Summary{ID: f.ID, Name: f.Name, Description: f.Description, Updated: f.Updated, Parent: f.Parent, Revision: f.Revision}
 		for _, n := range f.Nodes {
 			switch n.Type {
 			case "output":
