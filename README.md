@@ -113,7 +113,26 @@ npm --prefix frontend run build
 wails build
 ```
 
+On macOS, build with `scripts/build-mac.sh` instead (see below).
+
 Run `wails dev` for development. To use the UI in a browser with the mock backend, run `npm --prefix frontend run dev` and open http://localhost:5173.
+
+### Signing the macOS app
+
+`wails build` signs the app ad-hoc, so every build has a new code hash. macOS then treats each build as a new app and asks again for the Documents folder (and the keychain). `scripts/build-mac.sh` builds the app and signs it with a stable certificate, so macOS remembers what you allowed across rebuilds.
+
+You need one certificate, created once. Either:
+
+- **Apple Development (free):** in Xcode › Settings › Accounts, sign in with your Apple ID, then Manage Certificates › + › Apple Development.
+- **Self-signed:** in Keychain Access › Certificate Assistant › Create a Certificate, set Name to `SpecWright Local`, Identity Type to Self Signed Root and Certificate Type to Code Signing.
+
+Then build:
+
+```bash
+scripts/build-mac.sh
+```
+
+To sign an existing build without rebuilding, run `scripts/build-mac.sh --sign`. To pick a certificate yourself, set `SPECWRIGHT_SIGN_IDENTITY` to its name. After the first signed build, macOS asks one last time; old SpecWright entries under System Settings › Privacy & Security › Files and Folders can be removed.
 
 Headless example (the mock agent needs no CLI):
 
