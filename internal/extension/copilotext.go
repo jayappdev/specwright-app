@@ -29,7 +29,7 @@ var copilotEntries = []string{"extension.mjs", "extension.cjs", "extension.js"}
 
 // limits for copying an extension folder (node_modules is never copied)
 const (
-	maxCopilotExtFile  = 5 << 20
+	maxCopilotExtFile  = 25 << 20 // room for a bundled driver or library jar
 	maxCopilotExtTotal = 50 << 20
 	maxCopilotExtFiles = 2000
 )

@@ -105,3 +105,27 @@ func TestCopilotExtensionsListAndCopy(t *testing.T) {
 		t.Fatal("lines must be added once")
 	}
 }
+
+// A bundled driver jar (ojdbc11.jar is about 7 MB) is copied; a file over
+// the per-file limit is still refused.
+func TestCopilotExtCopyFileSizes(t *testing.T) {
+	home, root := t.TempDir(), t.TempDir()
+	t.Setenv("COPILOT_HOME", home)
+	src := filepath.Join(home, "extensions", "oracle-db")
+	write(t, filepath.Join(src, "extension.mjs"), sampleExt)
+	jar := filepath.Join(src, "jdbc", "ojdbc11.jar")
+	write(t, jar, strings.Repeat("j", 7<<20))
+	dst, err := CopyCopilotExt(root, "oracle-db", false, func(string) error { return nil })
+	if err != nil {
+		t.Fatal(err)
+	}
+	if fi, err := os.Stat(filepath.Join(dst, "jdbc", "ojdbc11.jar")); err != nil || fi.Size() != 7<<20 {
+		t.Fatalf("jar not copied: %v", err)
+	}
+	if err := os.Truncate(jar, maxCopilotExtFile+1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := CopyCopilotExt(root, "oracle-db", true, func(p string) error { return os.RemoveAll(p) }); err == nil || !strings.Contains(err.Error(), "larger than 25 MB") {
+		t.Fatalf("want a size error, got %v", err)
+	}
+}
