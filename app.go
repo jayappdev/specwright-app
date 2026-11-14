@@ -84,6 +84,21 @@ func (a *App) SetDiagram(kind, rel string) error   { return a.hub.SetDiagram(kin
 func (a *App) Compile() (core.BuildResult, error)  { return ok(a.hub.Compile()) }
 func (a *App) Metrics() (core.Metrics, error)      { return ok(a.hub.Metrics()) }
 
+// FlowSecretStatus: where each secret input of a flow gets its value (never the value).
+func (a *App) FlowSecretStatus(id string) ([]core.SecretInputState, error) {
+	return ok(a.hub.FlowSecretStatus(id))
+}
+
+// CheckKeychain: whether a keychain entry exists (never its value).
+func (a *App) CheckKeychain(ref flow.KeychainRef) core.KeychainStatus {
+	return a.hub.CheckKeychain(ref)
+}
+
+// SaveToKeychain stores a value in the system keychain.
+func (a *App) SaveToKeychain(ref flow.KeychainRef, value string) error {
+	return a.hub.SaveToKeychain(ref, value)
+}
+
 // MetricsIn: the metrics of the ledger entries between r.From and r.To.
 func (a *App) MetricsIn(r core.MetricsRange) (core.Metrics, error) { return ok(a.hub.MetricsIn(r)) }
 

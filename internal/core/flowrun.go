@@ -62,6 +62,27 @@ type FlowRunOptions struct {
 	// Reuse: steps that do not run again but give the output they gave in
 	// an earlier run (trying a changed step: the steps before it are reused)
 	Reuse map[string]ReusedStep `json:"reuse,omitempty"`
+	// Secrets: the values of secret inputs. Kept in memory for the run only;
+	// Inputs holds flow.SecretMask in their place, so the values never reach
+	// the screen, run history or saved results.
+	Secrets map[string]string `json:"-"`
+	// SaveSecrets: secret inputs whose typed value is also saved in the
+	// system keychain (at the input's keychain entry) for later runs.
+	SaveSecrets []string `json:"saveSecrets,omitempty"`
+	// prompt: secret inputs asked in a dialog once the run has started
+	prompt []flow.Input
+}
+
+// values: the inputs the steps get, secrets included.
+func (o FlowRunOptions) values() map[string]string {
+	out := make(map[string]string, len(o.Inputs)+len(o.Secrets))
+	for k, v := range o.Inputs {
+		out[k] = v
+	}
+	for k, v := range o.Secrets {
+		out[k] = v
+	}
+	return out
 }
 
 // ReusedStep is an earlier run's result of a step.
@@ -243,10 +264,27 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 		if err != nil {
 			return FlowRunState{}, err
 		}
-		o.Inputs[in.Name] = v
-		if in.Required && strings.TrimSpace(o.Inputs[in.Name]) == "" && (o.ForEach == nil || o.ForEach.Input != in.Name) {
+		if in.Type == "secret" {
+			if v, err = h.secretInput(in, v, &o); err != nil {
+				return FlowRunState{}, err
+			}
+		}
+		if in.Required && strings.TrimSpace(v) == "" && (o.ForEach == nil || o.ForEach.Input != in.Name) && !(in.Type == "secret" && in.SecretSource() == "prompt") {
 			return FlowRunState{}, fmt.Errorf("%s is required", firstNonEmpty(in.Label, in.Name))
 		}
+		if in.Type == "secret" {
+			if o.ForEach != nil && o.ForEach.Input == in.Name {
+				return FlowRunState{}, fmt.Errorf("%s is a secret: a run cannot repeat once per line of it", firstNonEmpty(in.Label, in.Name))
+			}
+			if o.Secrets == nil {
+				o.Secrets = map[string]string{}
+			}
+			o.Secrets[in.Name] = v
+			if v != "" {
+				v = flow.SecretMask
+			}
+		}
+		o.Inputs[in.Name] = v
 	}
 	if o.ForEach != nil && o.ForEach.Filter != "" {
 		if _, err := regexp.Compile(o.ForEach.Filter); err != nil {
@@ -263,6 +301,9 @@ func (h *Hub) startFlow(root string, f *flow.Flow, o FlowRunOptions, trial *Flow
 	h.mu.RUnlock()
 	if o.Model != "" {
 		model = o.Model
+	}
+	for _, v := range o.Secrets { // hidden from every output, event and saved file
+		h.Store.Redactor().Add(v)
 	}
 	runID := workflow.NewRunID()
 	fr := &flowRun{flow: f, decide: make(chan FlowDecision, 1), done: make(chan struct{}), t0: time.Now()}
@@ -530,6 +571,11 @@ func (h *Hub) execFlow(ctx context.Context, root string, fr *flowRun) {
 		}
 		fr.update(func(st *FlowRunState) { st.Status = "running" })
 	}
+	if err := h.promptSecrets(ctx, fr); err != nil {
+		final, reason = "failed", err.Error()
+		return
+	}
+	o = fr.st.Options
 
 	items, err := flowItems(o)
 	if err != nil {
@@ -541,10 +587,7 @@ func (h *Hub) execFlow(ctx context.Context, root string, fr *flowRun) {
 	failed := false
 	for pass := 1; pass <= passes; pass++ {
 		for i, item := range items {
-			inputs := map[string]string{}
-			for k, v := range o.Inputs {
-				inputs[k] = v
-			}
+			inputs := o.values()
 			label := ""
 			if item != nil {
 				inputs[o.ForEach.Input] = *item
@@ -1079,7 +1122,7 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 	d.Input = in
 	switch n.Type {
 	case "start":
-		b, _ := json.MarshalIndent(d.Inputs, "", "  ")
+		b, _ := json.MarshalIndent(f.MaskSecrets(d.Inputs), "", "  ") // secrets: through {{inputs.name}} only
 		return string(b), u, nil
 	case "tool":
 		// the previous steps' output as a file, for {{input_file}} and
@@ -1101,7 +1144,10 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 		if req := strings.TrimSpace(flow.Render(n.Instruction, d)); req != "" {
 			// described in words: the agent investigates and builds the rest
 			actx, acancel := context.WithTimeout(ctx, 10*time.Minute)
-			got, w, au, err := h.aiToolArgs(actx, root, fr, n, req, args, d)
+			// the agent sees secrets masked; the fixed values that hold one go
+			// back in after it answers
+			red := h.Store.Redactor()
+			got, w, au, err := h.aiToolArgs(actx, root, fr, n, red.String(req), redactAny(h, args), d)
 			acancel()
 			u.Add(au)
 			if err != nil {
@@ -1112,9 +1158,15 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 					got[k] = expandInputFile(flow.Render(s, d), d.InputFile)
 				}
 			}
+			for k, v := range args {
+				if s, ok := v.(string); ok && red.String(s) != s {
+					got[k] = v
+				}
+			}
 			args, why = got, w
 		}
-		fr.update(func(st *FlowRunState) { s := fr.step(n.ID); s.Args, s.Why = args, why })
+		shown := redactAny(h, args) // the step as recorded: secrets masked
+		fr.update(func(st *FlowRunState) { s := fr.step(n.ID); s.Args, s.Why = shown, why })
 		out, err := h.flowTool(ctx, root, fr, n.ID, n.Tool, args, toolRunTimeout(fr.st.Options), flowInput{d.Input, d.InputFile})
 		u.ToolCalls++
 		if err != nil {
@@ -1871,4 +1923,118 @@ func (h *Hub) aiStepPrompt(f *flow.Flow, n *flow.Node, d flow.Data, parents int)
 		prompt += "\n\nReply with only JSON in this shape, with no explanation and no code fences:\n" + n.OutputSchema.Compact()
 	}
 	return prompt + h.aiSuffix(f, d)
+}
+
+// secretInput gets a secret input's value: what was typed in the run form
+// (saved to the keychain when asked), else from where the input says.
+func (h *Hub) secretInput(in flow.Input, typed string, o *FlowRunOptions) (string, error) {
+	label, src, ref := firstNonEmpty(in.Label, in.Name), in.SecretSource(), in.KeychainFor()
+	if typed != "" {
+		if slices.Contains(o.SaveSecrets, in.Name) {
+			if err := h.SaveToKeychain(ref, typed); err != nil {
+				return "", fmt.Errorf("%s: %v", label, err)
+			}
+		}
+		return typed, nil
+	}
+	fromKeychain := func() (string, bool) {
+		if !KeychainAvailable() {
+			return "", false
+		}
+		return kcGetRef(ref)
+	}
+	switch src {
+	case "keychain":
+		if v, ok := fromKeychain(); ok {
+			return v, nil
+		}
+		return "", fmt.Errorf("%s: nothing found in %s. Type it in the run form (tick “Save to Keychain” to keep it), or add it with %s", label, describeRef(ref), keychainApp())
+	case "env":
+		if v, ok := lookupEnv(in.Env); ok && v != "" {
+			return v, nil
+		}
+		return "", fmt.Errorf("%s: the environment variable %s is not set", label, in.Env)
+	case "auto":
+		if v, ok := fromKeychain(); ok {
+			return v, nil
+		}
+		if in.Env != "" {
+			if v, ok := lookupEnv(in.Env); ok && v != "" {
+				return v, nil
+			}
+		}
+		if in.Required {
+			where := describeRef(ref)
+			if in.Env != "" {
+				where += " or $" + in.Env
+			}
+			return "", fmt.Errorf("%s: not found in %s; type it in the run form", label, where)
+		}
+	case "prompt":
+		o.prompt = append(o.prompt, in)
+	}
+	return "", nil
+}
+
+// promptSecrets asks for the run's "prompt" secrets in a dialog (or on the
+// terminal, headless), once the run has started; a value remembered for
+// this session is used without asking.
+func (h *Hub) promptSecrets(ctx context.Context, fr *flowRun) error {
+	o := fr.st.Options
+	if len(o.prompt) == 0 {
+		return nil
+	}
+	key := func(in flow.Input) string { return "flow:" + fr.flow.ID + ":" + in.Name }
+	var ask []extension.Secret
+	vals := map[string]string{}
+	h.mu.RLock()
+	for _, in := range o.prompt {
+		if v := h.secrets[key(in)]; v != "" {
+			vals[in.Name] = v
+			continue
+		}
+		ask = append(ask, extension.Secret{Name: in.Name, Desc: firstNonEmpty(strings.TrimSpace(in.Label+" "+in.Description), in.Name), Source: "ask"})
+	}
+	asker := h.askSecrets
+	h.mu.RUnlock()
+	if len(ask) > 0 {
+		if asker == nil {
+			asker = h.askThroughUI
+		}
+		h.flowPublish(fr, "flow.secrets", fmt.Sprintf("Waiting for %d secret value(s)", len(ask)), nil)
+		got, err := asker(withFlowStep(ctx, fr.st.ID, "start"), SecretRequest{Tool: fr.flow.Name, Secrets: ask, Reason: "The flow " + fr.flow.Name + " needs these to run."})
+		if err != nil {
+			return err
+		}
+		h.mu.Lock()
+		for _, s := range ask {
+			if v := got[s.Name]; v != "" {
+				vals[s.Name] = v
+				if h.secrets[s.Name] == v { // "remember for this session": kept for this flow's input, not as a tool secret
+					h.secrets[key(flow.Input{Name: s.Name})] = v
+					delete(h.secrets, s.Name)
+				}
+			}
+		}
+		h.mu.Unlock()
+	}
+	for _, in := range o.prompt {
+		if vals[in.Name] == "" && in.Required {
+			return fmt.Errorf("%s was not provided", firstNonEmpty(in.Label, in.Name))
+		}
+	}
+	fr.update(func(st *FlowRunState) {
+		if st.Options.Secrets == nil {
+			st.Options.Secrets = map[string]string{}
+		}
+		for k, v := range vals {
+			h.Store.Redactor().Add(v)
+			st.Options.Secrets[k] = v
+			if v != "" {
+				st.Options.Inputs[k] = flow.SecretMask
+			}
+		}
+		st.Options.prompt = nil
+	})
+	return nil
 }

@@ -1304,3 +1304,16 @@ pre .file-link, .tool-result .file-link { text-decoration-style: solid; }
 .metrics-range .seg { flex-wrap: wrap; align-self: flex-start; max-width: 100%; }
 .metrics-range-row { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .metrics-range-row input[type="number"] { width: 6em; }
+
+/* Run flows › a secret input */
+.fr-secret { display: flex; gap: 6px; align-items: center; }
+.fr-input .fr-secret input { flex: 1; width: auto; font-family: var(--font-mono); }
+.fr-secret-src { font-size: .92em; }
+.fr-secret-src.ok { color: var(--ok, #1a7f37); }
+.fr-secret-src.warn { color: var(--warn, #9a6700); }
+.fr-secret-save { font-size: .92em; }
+.fl-secret { display: flex; flex-direction: column; gap: 6px; }
+.fl-secret-kc { align-items: center; gap: 8px; }
+.fl-secret-kc input { flex: 1; min-width: 0; }
+select.fl-secret-pick { width: auto; padding: 0 4px; font-size: .85em; }
+.ok-text { color: var(--ok); }

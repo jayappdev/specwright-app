@@ -77,14 +77,89 @@ func (f *Flow) EstimatedMinutes() int {
 type Input struct {
 	Name        string   `json:"name"`  // used as {{inputs.name}}
 	Label       string   `json:"label"` // shown to the user
-	Type        string   `json:"type"`  // text | multiline | number | boolean | choice | multichoice | file | files | clipboard
+	Type        string   `json:"type"`  // text | multiline | secret | number | boolean | choice | multichoice | file | files | clipboard
 	Required    bool     `json:"required,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Files       []string `json:"files,omitempty"`   // default files (workspace paths)
 	Options     []string `json:"options,omitempty"` // for choice and multichoice
 	Accept      string   `json:"accept,omitempty"`  // for file inputs, e.g. ".pdf,image/*"
 	Description string   `json:"description,omitempty"`
+	// Secret inputs only: where the value comes from (see SecretSources).
+	// The flow file keeps only where to look, never the value.
+	Source   string       `json:"source,omitempty"`
+	Keychain *KeychainRef `json:"keychain,omitempty"` // source keychain / auto
+	Env      string       `json:"env,omitempty"`      // source env / auto: the environment variable
 }
+
+// SecretSources: where a secret input's value comes from.
+//
+//	ask       typed in the run form, masked (the default)
+//	keychain  read from the system keychain when the run starts
+//	env       read from an environment variable (CI, headless runs)
+//	auto      keychain, then the environment variable, else the run form
+//	prompt    asked in a dialog once the run has started (scheduled and
+//	          headless runs ask when they get there)
+var SecretSources = []string{"ask", "keychain", "env", "auto", "prompt"}
+
+// DefaultKeychainService is the keychain service of SpecWright's entries.
+const DefaultKeychainService = "SpecWright"
+
+// KeychainRef names a keychain entry: a password stored under a service
+// and account (Kind "generic", the default), or an internet password stored
+// for a server (Kind "internet", macOS; Service is the server, e.g.
+// github.com).
+type KeychainRef struct {
+	Service string `json:"service,omitempty"`
+	Account string `json:"account,omitempty"`
+	Kind    string `json:"kind,omitempty"` // generic | internet
+}
+
+// Normalized fills in the defaults: SpecWright's service, and account as
+// the account when none is given.
+func (r KeychainRef) Normalized(account string) KeychainRef {
+	r.Service, r.Account, r.Kind = strings.TrimSpace(r.Service), strings.TrimSpace(r.Account), strings.TrimSpace(r.Kind)
+	if r.Service == "" {
+		r.Service = DefaultKeychainService
+	}
+	if r.Account == "" {
+		r.Account = account
+	}
+	if r.Kind != "internet" {
+		r.Kind = ""
+	}
+	return r
+}
+
+// Describe names the entry for people.
+func (r KeychainRef) Describe() string {
+	if r.Kind == "internet" {
+		return "Keychain internet password · " + r.Service + " / " + r.Account
+	}
+	return "Keychain · " + r.Service + " / " + r.Account
+}
+
+// KeychainFor is the keychain entry of a secret input.
+func (in Input) KeychainFor() KeychainRef {
+	var r KeychainRef
+	if in.Keychain != nil {
+		r = *in.Keychain
+	}
+	return r.Normalized(in.Name)
+}
+
+// SecretSource is a secret input's source (default: ask).
+func (in Input) SecretSource() string {
+	if in.Source == "" {
+		return "ask"
+	}
+	return in.Source
+}
+
+// EnvRE is a valid environment variable name.
+var EnvRE = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// PasswordParamRE: a tool parameter that most likely takes a password.
+var PasswordParamRE = regexp.MustCompile(`(?i)(pass(word|wd|phrase)?|secret|token|api[_-]?key|private[_-]?key|credential|auth)`)
 
 // Context is text and files every AI step and tool in the flow is given.
 type Context struct {
@@ -187,7 +262,7 @@ var (
 	NodeTypes   = []string{"start", "tool", "ai", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
 	MergeModes  = []string{"concat", "json-object", "json-array", "template"}
 	Formats     = []string{"md", "txt", "html", "csv", "json"}
-	InputTypes  = []string{"text", "multiline", "number", "boolean", "choice", "multichoice", "file", "files", "clipboard"}
+	InputTypes  = []string{"text", "multiline", "secret", "number", "boolean", "choice", "multichoice", "file", "files", "clipboard"}
 	ActionTypes = []string{"save", "tool", "clipboard", "show"}
 )
 
@@ -369,6 +444,21 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 		}
 		if (in.Type == "choice" || in.Type == "multichoice") && len(in.Options) == 0 {
 			add("start", "error", "Input %q is a choice but has no options.", in.Name)
+		}
+		if in.Type == "secret" {
+			if in.Default != "" {
+				add("start", "error", "Input %q is a secret: remove its default value, which would be saved in the flow file.", in.Name)
+			}
+			src := in.SecretSource()
+			if !contains(SecretSources, src) {
+				add("start", "error", "Secret %q: unknown source %q (use one of: %s).", in.Name, src, strings.Join(SecretSources, ", "))
+			}
+			if (src == "env" || (src == "auto" && in.Env != "")) && !EnvRE.MatchString(in.Env) {
+				add("start", "error", "Secret %q reads an environment variable: give a valid name (letters, digits and _), e.g. %s.", in.Name, strings.ToUpper(in.Name))
+			}
+			if k := in.Keychain; k != nil && k.Kind == "internet" && strings.TrimSpace(k.Service) == "" {
+				add("start", "error", "Secret %q reads a Keychain internet password: name the server (e.g. github.com).", in.Name)
+			}
 		}
 	}
 	toolByName := map[string]ToolInfo{}
@@ -672,6 +762,47 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				case "clipboard", "show":
 				default:
 					add(n.ID, "error", "%s: unknown action %q.", label(n), a.Type)
+				}
+			}
+		}
+	}
+	is = append(is, secretIssues(f)...)
+	return is
+}
+
+// secretIssues warns where a secret could leak: into an AI prompt (it is
+// sent to the model), or a password typed into a tool's arguments (it is
+// saved in the flow file).
+func secretIssues(f *Flow) []Issue {
+	var is []Issue
+	secret := map[string]bool{}
+	for _, in := range f.Inputs {
+		if in.Type == "secret" {
+			secret[in.Name] = true
+		}
+	}
+	uses := func(tpl string) string {
+		for _, m := range varRE.FindAllStringSubmatch(tpl, -1) {
+			if h, r, ok := strings.Cut(strings.TrimSpace(m[1]), "."); ok && h == "inputs" && secret[strings.SplitN(r, ".", 2)[0]] {
+				return strings.SplitN(r, ".", 2)[0]
+			}
+		}
+		return ""
+	}
+	for _, n := range f.Nodes {
+		switch n.Type {
+		case "ai":
+			if s := uses(n.Prompt); s != "" {
+				is = append(is, Issue{Node: n.ID, Level: "warning", Message: fmt.Sprintf("%s sends the secret %q to the AI model. Give secrets to tools instead.", label(n), s)})
+			}
+		case "tool":
+			if s := uses(n.Instruction); s != "" {
+				is = append(is, Issue{Node: n.ID, Level: "warning", Message: fmt.Sprintf("%s: the description sends the secret %q to the AI model. Put {{inputs.%s}} into the argument that needs it instead; the AI does not see it there.", label(n), s, s)})
+			}
+			for k, v := range n.Args {
+				v = strings.TrimSpace(v)
+				if v != "" && PasswordParamRE.MatchString(k) && !varRE.MatchString(v) {
+					is = append(is, Issue{Node: n.ID, Level: "warning", Message: fmt.Sprintf("%s › %s: this looks like a password typed into the flow file. Use a Secret input (asked when the flow runs, or read from the Keychain) and put {{inputs.<name>}} here.", label(n), k)})
 				}
 			}
 		}
@@ -1109,6 +1240,32 @@ func titles(f *Flow, ids []string) []string {
 		if n := f.Node(id); n != nil {
 			out = append(out, label(*n))
 		}
+	}
+	return out
+}
+
+// SecretMask stands for a secret input's value wherever it is shown or kept:
+// run history, the Input step's output, saved results.
+const SecretMask = "••••••••"
+
+// IsSecret reports whether the flow's input name is a secret.
+func (f *Flow) IsSecret(name string) bool {
+	for _, in := range f.Inputs {
+		if in.Name == name {
+			return in.Type == "secret"
+		}
+	}
+	return false
+}
+
+// MaskSecrets returns inputs with every secret input's value masked.
+func (f *Flow) MaskSecrets(inputs map[string]string) map[string]string {
+	out := make(map[string]string, len(inputs))
+	for k, v := range inputs {
+		if v != "" && f.IsSecret(k) {
+			v = SecretMask
+		}
+		out[k] = v
 	}
 	return out
 }

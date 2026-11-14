@@ -113,7 +113,7 @@ npm --prefix frontend run build
 wails build
 ```
 
-On macOS, build with `scripts/build-mac.sh` instead (see below).
+On macOS, build with `scripts/build-mac.sh` instead (see below). On Windows, use `scripts\build-windows.ps1` (see below).
 
 Run `wails dev` for development. To use the UI in a browser with the mock backend, run `npm --prefix frontend run dev` and open http://localhost:5173.
 
@@ -133,6 +133,22 @@ scripts/build-mac.sh
 ```
 
 To sign an existing build without rebuilding, run `scripts/build-mac.sh --sign`. To pick a certificate yourself, set `SPECWRIGHT_SIGN_IDENTITY` to its name. After the first signed build, macOS asks one last time; old SpecWright entries under System Settings › Privacy & Security › Files and Folders can be removed.
+
+### Building on Windows
+
+Install [Go](https://go.dev/dl/), [Node.js](https://nodejs.org/) and the Wails CLI (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1`, the version in `go.mod`). Then, in PowerShell:
+
+```powershell
+scripts\build-windows.ps1
+```
+
+It checks the tools are installed, builds `build\bin\SpecWright.exe` and restores the `frontend\dist` placeholder. From cmd, or by double-clicking, run `scripts\build-windows.cmd` (same options). Options:
+
+- `-Installer`: also build an installer with NSIS (`winget install NSIS.NSIS`). It installs the WebView2 runtime where it is missing (Windows 10 and 11 have it).
+- `-Arch arm64`: for Windows on ARM.
+- `-SignOnly`: sign the existing build without rebuilding.
+
+Signing is optional. It stops SmartScreen warning about an unknown publisher once your certificate has a reputation. Secrets in Credential Manager work whether or not the app is signed. To sign, give a certificate from your store by thumbprint (`-CertThumbprint`, or `$env:SPECWRIGHT_SIGN_CERT`), or a `.pfx` file (`-PfxPath`, with its password in `$env:SPECWRIGHT_SIGN_PFX_PASSWORD`). Signing uses `signtool.exe` from the Windows SDK and timestamps the signature, by default with DigiCert's public server (`$env:SPECWRIGHT_TIMESTAMP_URL` to change it).
 
 Headless example (the mock agent needs no CLI):
 
@@ -176,7 +192,18 @@ Tools › Flow designer strings tools together into flows, stored as `.codegen/f
 - **Decisions:** a **Decision** step checks the data from the step before and sends the flow down a path. Each path has a condition, and the connections out of the decision are each put on a path (click a connection to choose it), or on **Otherwise**, which is taken when no path matches. The steps on the paths not taken are skipped ("not on the path the flow took"), and steps where the paths meet again (a merge, an output) run with what the taken path produced. Paths are checked in order; the decision takes the first that matches, or every one that matches. The data passes on unchanged, and the run shows the path taken. Decisions work inside loops too, per item.
 - **Conditions** (decisions and filters) are groups of rules joined by *all of*, *any of* or *none of*, and a rule can be a group itself, so conditions nest to any depth. A rule compares a field — a path into the data: `status`, `customer.address.city`, `items[0].sku`, `items[*].qty` — with =, ≠, >, ≥, <, ≤, contains, starts / ends with, matches a pattern, is one of, is between, is empty, exists, is true, or a count / length. Numbers compare as numbers and everything else as text (so ISO dates compare correctly); a list matches when any element does, or every element when ticked; text comparisons can ignore case. Values can use variables, and `{{this.<field>}}` compares two fields of the same data.
 - **Filter** keeps (or drops) the rows that match a condition, optionally dropping repeated rows, sorting (`-total` for high to low) and keeping at most N. **Aggregate** groups rows (*Group by* `region, customer.tier`) and calculates values: count, distinct count, sum, average, min, max, median, first, last, list, distinct values, join as text. In window mode every row is kept with values over its group added — row number, rank, dense rank, running sum / count / average, the previous or next row's value (lag / lead), % of total, bucket (ntile), and any of the group values — like SQL's `OVER (PARTITION BY … ORDER BY …)`. Both read a JSON array (or an object holding one), CSV with a header line, or one row per line, and write a JSON array; a list path like `items[*].qty` sums or counts nested values.
-- **Inputs:** text, long text, number, yes/no, choice, multiple choice (checkboxes; the ticked options reach the flow one per line, ready for a Loop), file, files and clipboard, with defaults (including pasted, dropped or picked files).
+- **Inputs:** text, long text, number, yes/no, choice, multiple choice (checkboxes; the ticked options reach the flow one per line, ready for a Loop), file, files and clipboard, with defaults (including pasted, dropped or picked files). A **secret** (password, API key, token) is masked as it is typed and never saved: it has no default, and the run state, run history, step outputs and saved results show `••••••••` or `[REDACTED]`. Steps get the value only through `{{inputs.name}}` (for example in a tool's arguments); the Inputs step's own output masks it, so it does not reach an AI step by accident. It lives in memory for the run only, so trying a step fix after restarting the app asks you to run the flow again.
+
+  Where a secret comes from is set on the input (the flow file keeps only where to look, never the value):
+
+  - **Ask in the run form** (default): typed when the flow runs, masked, with Show/Hide.
+  - **System Keychain:** read when the run starts, nothing to type. By default SpecWright's own entry (service `SpecWright`, account = the input's name); any other entry works too: a password saved under another service and account, or an internet password saved for a server (e.g. by Safari). macOS asks once before reading an entry another app saved; the prompt names `security` (the command SpecWright reads the Keychain with). Choose **Always Allow** so later runs don't ask, even after SpecWright is rebuilt. The designer can check the entry and save a value into it. When nothing is found, the run form asks, with **Save to Keychain** for later runs.
+  - **On Windows** the same source reads and writes **Windows Credential Manager** (Control Panel › Credential Manager › Windows Credentials). SpecWright's entries are generic credentials named `service/account`, e.g. `SpecWright/github-token`; to read one another program saved (git, cmdkey), give its *Internet or network address* as the service. Windows has no internet passwords, so that option is macOS only. On Linux it is the Secret Service (`secret-tool`).
+  - **Environment variable:** for headless and CI runs.
+  - **Keychain, then environment, else ask.**
+  - **Ask in a dialog during the run:** asked once the run has started (scheduled runs ask when they start; headless runs ask on the terminal). "Remember for this session" keeps it until the app quits.
+
+  To use a secret in a tool step, pick **🔒 Secret…** next to the argument (shown for arguments that look like passwords, and for text arguments once the flow has a secret), or choose **+ New secret input**. The designer warns when a secret is sent to an AI step, and when something that looks like a password is typed into a tool's arguments. When the AI fills in a tool's arguments, it sees secrets masked; the real values go back in before the tool runs. Saving to the Keychain never puts the value on a command line, where other programs could see it.
 - **Context and skills:** free text plus files, and skill files from the project's libraries or attached.
 - **Outputs:** md, txt, html, csv or json (content is converted: JSON → CSV/Markdown table, Markdown → HTML, …), with actions: save to a project file, call a tool, copy, show. Several outputs per flow.
 - **Checks and previews:** the flow is validated as you edit (missing tools or arguments, unknown variables, steps used before they run, loops, unsafe save paths); merges, transforms and outputs can be previewed with sample data.

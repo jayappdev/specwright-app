@@ -695,6 +695,7 @@ export function createMockBackend(methods) {
     const tools = [...extensions(), ...flowBuiltins()], inputs = new Set(f.inputs.map((i) => i.name)), ids = new Set(f.nodes.map((n) => n.id));
     if (!f.name?.trim()) add("", "error", "Give the flow a name.");
     if (!f.nodes.some((n) => n.type === "output")) add("", "warning", "Add an output so the flow produces something.");
+    for (const i of f.inputs) if (i.type === "secret" && i.default) add("start", "error", `Input "${i.name}" is a secret: remove its default value, which would be saved in the flow file.`);
     const { names: stepAlias } = stepNames(f), byID = (h) => { const id = stepAlias[h], s = id && f.nodes.find((x) => x.id === id); return s ? ` Steps are referred to by their id: use "${id}" (the id of ${s.title || id}).` : ""; };
     const check = (n, what, tpl) => { const anc = flowAnc(f, n.id); for (const v of flowVars(tpl)) { const [h, r = ""] = [v.split(".")[0], v.split(".").slice(1).join(".")]; const name = r.split(".")[0];
       if (h === "inputs" && !inputs.has(name)) add(n.id, "error", `${what} uses {{${v}}}, but there is no input called "${name}".`);
@@ -845,6 +846,11 @@ export function createMockBackend(methods) {
 
   // --- flow runs (browser preview: simulated executor with the same events and decisions) ---
   const kcStore = {};
+  const kcOther = {}; // other services' items, by "kind service/account"
+  const kcNorm = (ref = {}, account = "") => ({ service: (ref?.service || "").trim() || "SpecWright", account: (ref?.account || "").trim() || account, kind: ref?.kind === "internet" ? "internet" : "" });
+  const kcWhere = (r) => (r.kind === "internet" ? "Keychain internet password · " : "Keychain · ") + r.service + " / " + r.account;
+  const kcGetRef = (r) => (r.service === "SpecWright" && !r.kind ? kcStore[r.account] : kcOther[`${r.kind} ${r.service}/${r.account}`]);
+  const kcSetRef = (r, v) => { if (r.service === "SpecWright" && !r.kind) kcStore[r.account] = v; else kcOther[`${r.kind} ${r.service}/${r.account}`] = v; };
   const flowLive = new Map();
   // loops (mirrors internal/flow/loop.go)
   const splitItems = (src, n) => {
@@ -918,7 +924,9 @@ export function createMockBackend(methods) {
     flowLive.set(id, lr);
     const evs = (db.events[id] = []);
     const pub = (type, summary, data = {}) => { const e = { seq: ++lr.seq, ts: now(), run_id: id, type, summary, dt: Date.now() - t0, ...data }; evs.push(e); emit(e); return e; };
-    const state = () => pub("flow.state", st.status, { state: clone(st), flow: f.id });
+    const secretVals = Object.values(runSecrets.get(o) || {}).filter((v) => v.length >= 4);
+    lr.redact = (x) => { if (!secretVals.length) return clone(x); let s = JSON.stringify(x); for (const v of secretVals) s = s.split(JSON.stringify(v).slice(1, -1)).join("[REDACTED]"); return JSON.parse(s); };
+    const state = () => pub("flow.state", st.status, { state: lr.redact(st), flow: f.id });
     const stepsFresh = () => flowOrder(f).map((nid) => { const n = f.nodes.find((x) => x.id === nid); return { id: n.id, title: n.title || n.id, type: n.type, tool: n.tool, status: "pending", attempts: 0, durationMs: 0, notes: [], usage: {} }; });
     db.runs.unshift({ id, workspace: db.root, workflow: f.id, step: "flow", agent, model: st.model, state: "running", started: st.started, usage: {}, kind: o.trial ? "flow-trial" : "flow", title: f.name + (o.trial ? " (trial)" : ""), ask: Object.entries(o.inputs || {}).filter(([, v]) => v).map(([k, v]) => `${k}: ${String(v).slice(0, 300)}`).join("\n") });
     const R = (tpl, d) => render(tpl, d);
@@ -983,7 +991,7 @@ export function createMockBackend(methods) {
       const parents = d.live || f.edges.filter((e) => e.to === n.id).map((e) => e.from), input = parents.map((p) => d.steps[p] ?? "").join("\n\n");
       d.input = input; lr.curInput = input;
       switch (n.type) {
-        case "start": return JSON.stringify(d.inputs, null, 2);
+        case "start": return JSON.stringify(maskSecrets(f, d.inputs), null, 2);
         case "tool": {
           let args = Object.fromEntries(Object.entries(n.args || {}).map(([k, v]) => [k, R(v, d)]).filter(([, v]) => v.trim() || !(n.instruction || "").trim()));
           let why = "";
@@ -1071,7 +1079,7 @@ export function createMockBackend(methods) {
         st.items = items.length;
         let failed = false;
         for (let pass = 1; pass <= st.passes; pass++) for (let i = 0; i < items.length; i++) {
-          const inputs = { ...o.inputs }; if (items[i] != null) inputs[o.forEach.input] = items[i];
+          const inputs = { ...o.inputs, ...(runSecrets.get(o) || {}) }; if (items[i] != null) inputs[o.forEach.input] = items[i];
           Object.assign(st, { pass, item: i + 1, itemLabel: items[i] != null ? String(items[i]).slice(0, 60) : "", status: "running", steps: stepsFresh() });
           if (st.passes > 1 || items.length > 1) pub("flow.pass", [st.passes > 1 ? `Run ${pass} of ${st.passes}` : "", items.length > 1 ? `item ${i + 1} of ${items.length}` : ""].filter(Boolean).join(" · ") + (st.itemLabel ? ": " + st.itemLabel : ""));
           state();
@@ -1166,11 +1174,15 @@ export function createMockBackend(methods) {
     return clone(st);
   };
   const blobs = new Map(); // attachments, kept in memory for previews
+  const runSecrets = new WeakMap(); // run options → secret input values (like FlowRunOptions.Secrets: never in the state)
+  const SECRET_MASK = "••••••••";
+  const maskSecrets = (f, inputs) => Object.fromEntries(Object.entries(inputs || {}).map(([k, v]) => [k, v && f.inputs.some((i) => i.name === k && i.type === "secret") ? SECRET_MASK : v]));
   // mirrors core.flowInputValue
   const inputValue = (i, text, files) => {
     const label = i.label || i.name;
     files = [...new Set(files.map((p) => p.trim()).filter(Boolean))];
     for (const p of files) if (!(p in db.files) && !p.startsWith(".codegen/attachments/")) throw new Error(`${label}: the file ${p} was not found`);
+    if (i.type === "secret") { if (/[\r\n]/.test(text)) throw new Error(`${label} must be on one line`); return text; }
     if (!text.trim() && !files.length) { text = i.default || ""; files = i.files || []; }
     const t = text.trim();
     if (i.type === "number") { if (t && isNaN(Number(t))) throw new Error(`${label} must be a number, not "${t}"`); return t; }
@@ -1586,10 +1598,28 @@ export function createMockBackend(methods) {
       const f = db.flows[id]; if (!f) throw new Error(`no flow "${id}"`);
       const errs = validateFlow(f).filter((i) => i.level === "error"); if (errs.length) throw new Error("fix the flow first: " + errs.map((i) => i.message).join(" "));
       o = { ...o, inputs: { ...(o.inputs || {}) } };
-      for (const i of f.inputs) { o.inputs[i.name] = inputValue(i, o.inputs[i.name] || "", (o.files || {})[i.name] || []); if (i.required && !o.inputs[i.name].trim() && o.forEach?.input !== i.name) throw new Error(`${i.label || i.name} is required`); }
+      const secrets = {};
+      for (const i of f.inputs) {
+        o.inputs[i.name] = inputValue(i, o.inputs[i.name] || "", (o.files || {})[i.name] || []);
+        if (i.required && i.type !== "secret" && !o.inputs[i.name].trim() && o.forEach?.input !== i.name) throw new Error(`${i.label || i.name} is required`);
+        if (i.type === "secret") {
+          const label = i.label || i.name, src = i.source || "ask", r = kcNorm(i.keychain, i.name);
+          if (o.forEach?.input === i.name) throw new Error(`${label} is a secret: a run cannot repeat once per line of it`);
+          let v = o.inputs[i.name];
+          if (v && (o.saveSecrets || []).includes(i.name)) kcSetRef(r, v);
+          if (!v && (src === "keychain" || src === "auto")) v = kcGetRef(r) || "";
+          if (!v && src === "keychain") throw new Error(`${label}: nothing found in ${kcWhere(r)}. Type it in the run form (tick “Save to Keychain” to keep it), or add it with Keychain Access`);
+          if (!v && src === "env") throw new Error(`${label}: the environment variable ${i.env} is not set`);
+          if (!v && src === "auto" && i.required) throw new Error(`${label}: not found in ${kcWhere(r)}${i.env ? " or $" + i.env : ""}; type it in the run form`);
+          if (!v && i.required && src === "ask") throw new Error(`${label} is required`);
+          if (!v && src === "prompt") v = "prompted-in-preview"; // the desktop app asks in a dialog once the run starts
+          secrets[i.name] = v; o.inputs[i.name] = v ? SECRET_MASK : "";
+        }
+      }
+      runSecrets.set(o, secrets);
       return startFlowRun(clone(f), o);
     },
-    async FlowRun(id) { const l = flowLive.get(id); if (l) return clone(l.st); const st = [...(db.events[id] || [])].reverse().find((e) => e.type === "flow.state")?.state; if (!st) throw new Error(`no flow run "${id}"`); return clone({ ...st, status: ["running", "review", "scheduled"].includes(st.status) ? "interrupted" : st.status }); },
+    async FlowRun(id) { const l = flowLive.get(id); if (l) return l.redact ? l.redact(l.st) : clone(l.st); const st = [...(db.events[id] || [])].reverse().find((e) => e.type === "flow.state")?.state; if (!st) throw new Error(`no flow run "${id}"`); return clone({ ...st, status: ["running", "review", "scheduled"].includes(st.status) ? "interrupted" : st.status }); },
     async FlowRuns(limit) { return clone(db.runs.filter((r) => r.step === "flow" && !r.archived && r.workspace === db.root).slice(0, limit || 100)); },
     async DecideFlow(id, d) { const l = flowLive.get(id); if (!l?.decide) throw new Error("the run is not waiting for a review"); l.decide(d); },
     async StopFlowRun(id) { const l = flowLive.get(id); if (!l) throw new Error(`run ${id} is not live`); l.stop = true; if (l.decide) l.decide({ action: "stop" }); },
@@ -1600,6 +1630,17 @@ export function createMockBackend(methods) {
       return [...out.values()];
     },
     async KeychainAvailable() { return true; },
+    // keychain items: SpecWright's own (service "SpecWright", by name) live in kcStore
+    async CheckKeychain(ref) { const r = kcNorm(ref); return { available: true, found: !!kcGetRef(r), where: kcWhere(r) }; },
+    async SaveToKeychain(ref, value) { const r = kcNorm(ref); if (!r.account || !value) throw new Error("an account and a value are needed"); if (/[\r\n]/.test(value)) throw new Error("a value saved in the keychain must be on one line"); kcSetRef(r, value); },
+    async FlowSecretStatus(id) {
+      const f = db.flows[id]; if (!f) throw new Error(`no flow "${id}"`);
+      return f.inputs.filter((i) => i.type === "secret").map((i) => {
+        const src = i.source || "ask", r = kcNorm(i.keychain, i.name), kcHas = !!kcGetRef(r), envHas = false; // the browser preview has no environment
+        const where = src === "env" ? "$" + (i.env || "") : src === "auto" && !kcHas && i.env ? kcWhere(r) + " or $" + i.env : kcWhere(r);
+        return { name: i.name, source: src, found: src === "keychain" ? kcHas : src === "env" ? envHas : src === "auto" ? kcHas || envHas : false, where: src === "ask" || src === "prompt" ? "" : where };
+      });
+    },
     async SaveSecretToKeychain(name, value) { if (!name || !value) throw new Error("a name and a value are needed"); kcStore[name] = value; },
     async RemoveSecretFromKeychain(name) { delete kcStore[name]; },
     async RunResults(id) { const r = db.runs.find((x) => x.id === id); if (!r) throw new Error(`no run ${id}`); const dir = r.results || resultsDir(id); const files = Object.keys(db.files).filter((p) => p.startsWith(dir + "/")).map((p) => p.slice(dir.length + 1)).sort(); return { id, dir, abs: db.root + "/" + dir, files, ready: files.length > 0 }; },

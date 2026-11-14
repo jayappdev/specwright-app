@@ -508,9 +508,14 @@ func (h *Hub) TryStepFix(fix StepFix) (FlowRunState, error) {
 			trial.Reused = append(trial.Reused, id)
 		}
 	}
-	o := FlowRunOptions{Inputs: base.Options.Inputs, Review: "none", Model: base.Options.Model, TimeoutMinutes: base.Options.TimeoutMinutes, StepTimeoutSeconds: base.Options.StepTimeoutSeconds, Reuse: reuse}
+	o := FlowRunOptions{Inputs: base.Options.Inputs, Secrets: base.Options.Secrets, Review: "none", Model: base.Options.Model, TimeoutMinutes: base.Options.TimeoutMinutes, StepTimeoutSeconds: base.Options.StepTimeoutSeconds, Reuse: reuse}
 	if o.Inputs == nil {
 		o.Inputs = map[string]string{}
+	}
+	for _, in := range f.Inputs { // secret values live only as long as the app keeps the run in memory
+		if in.Type == "secret" && o.Inputs[in.Name] == flow.SecretMask && o.Secrets[in.Name] == "" {
+			return FlowRunState{}, fmt.Errorf("the run's secret input %s is no longer available (secrets are not saved): run the flow again, then try the change", firstNonEmpty(in.Label, in.Name))
+		}
 	}
 	return h.startFlow(root, f, o, trial)
 }

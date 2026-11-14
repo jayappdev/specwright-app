@@ -8,7 +8,7 @@ import { ModelPicker } from "../ModelPicker.jsx";
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
-import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, isCopilot, refreshExtensions } from "../store.js";
+import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, isCopilot, refreshExtensions, kcName, isWindows } from "../store.js";
 import { Icon, Pill } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { StepIcon, openFlowInDesigner } from "./Flows.jsx";
@@ -45,8 +45,10 @@ async function loadFlow(id) {
     r.flow = await backend.LoadFlow(id);
     r.flowId = id;
     r.inputs = {}; r.files = {};
-    for (const i of r.flow.inputs) { r.inputs[i.name] = i.default || ""; r.files[i.name] = (i.files || []).map((p) => ({ path: p, name: p.split("/").pop(), kind: /\.pdf$/i.test(p) ? "pdf" : /\.(png|jpe?g|gif|webp)$/i.test(p) ? "image" : "text", size: 0 })); }
+    for (const i of r.flow.inputs) { r.inputs[i.name] = i.type === "secret" ? "" : i.default || ""; r.files[i.name] = (i.files || []).map((p) => ({ path: p, name: p.split("/").pop(), kind: /\.pdf$/i.test(p) ? "pdf" : /\.(png|jpe?g|gif|webp)$/i.test(p) ? "image" : "text", size: 0 })); }
     r.creds = await backend.FlowCredentials(id).catch(() => []);
+    r.secretStatus = Object.fromEntries(((await backend.FlowSecretStatus(id).catch(() => [])) || []).map((s) => [s.name, s]));
+    r.typeSecret = {}; r.saveSecret = {}; r.reveal = {};
   } catch (e) { toast(errMsg(e)); }
   update();
 }
@@ -71,13 +73,15 @@ async function start() {
     if (["file", "files", "clipboard", "multiline"].includes(i.type) && paths.length) files[i.name] = paths;
     if (["file", "files"].includes(i.type) && paths.length) inputs[i.name] = "";
   }
-  const opts = { inputs, files, review: o.review, repeat: +o.repeat || 1, timeoutMinutes: +o.timeoutMinutes || 0, stepTimeoutSeconds: +o.stepTimeoutSeconds || 0, skip: o.skip, stopAfter: o.stopAfter, model: o.model.trim() };
+  const saveSecrets = f.inputs.filter((i) => i.type === "secret" && r.saveSecret?.[i.name] && inputs[i.name]).map((i) => i.name);
+  const opts = { inputs, files, saveSecrets, review: o.review, repeat: +o.repeat || 1, timeoutMinutes: +o.timeoutMinutes || 0, stepTimeoutSeconds: +o.stepTimeoutSeconds || 0, skip: o.skip, stopAfter: o.stopAfter, model: o.model.trim() };
   if (o.forEach.input) opts.forEach = { input: o.forEach.input, split: o.forEach.split, filter: o.forEach.filter, max: +o.forEach.max || 100 };
   if (o.startAt) opts.startAt = new Date(o.startAt).toISOString();
   try {
     const st = await backend.RunFlow(f.id, opts);
     S.flowRuns[st.id] = st; S.loaded[st.id] = true; S.events[st.id] ||= [];
     r.runId = st.id; r.decision = {};
+    if (saveSecrets.length) { for (const n of saveSecrets) { r.saveSecret[n] = false; r.typeSecret[n] = false; r.inputs[n] = ""; } backend.FlowSecretStatus(f.id).then((l) => { r.secretStatus = Object.fromEntries((l || []).map((x) => [x.name, x])); update(); }, () => {}); }
     r.runs = [{ id: st.id, workflow: f.id, state: st.status, started: st.started, usage: {} }, ...r.runs];
     update();
   } catch (e) { toast(errMsg(e)); }
@@ -90,6 +94,31 @@ async function decide(action, extra = {}) {
 
 // --- setup ------------------------------------------------------------------------
 
+// A secret: where its value comes from (the run form, the Keychain, an
+// environment variable, or a dialog once the run starts). Typed values are
+// masked, with a button to look at them; the browser is asked not to
+// remember or autofill them. The saved value itself never comes here.
+function SecretField({ i, v, set }) {
+  const r = frs(), shown = !!(r.reveal ||= {})[i.name], src = i.source || "ask", st = r.secretStatus?.[i.name];
+  const kcRef = { service: i.keychain?.service || "SpecWright", account: i.keychain?.account || i.name };
+  const canSave = r.keychain && (src === "keychain" || src === "auto") && i.keychain?.kind !== "internet";
+  const sep = isWindows() ? "/" : " / ";
+  const typing = src === "ask" || (src !== "prompt" && (!st?.found || (r.typeSecret ||= {})[i.name]));
+  const masked = <div className="fr-secret">
+    <input type={shown ? "text" : "password"} value={v} autoComplete="new-password" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore data-lpignore="true"
+      aria-label={i.label || i.name} placeholder={st?.found ? "Type a value for this run only" : "Typed values are hidden"} onChange={(e) => set(e.target.value.replace(/[\r\n]/g, ""))} />
+    <button type="button" className="btn secondary small" aria-pressed={shown} aria-label={shown ? "Hide the value" : "Show the value"} onClick={() => { r.reveal[i.name] = !shown; update(); }}>{shown ? "Hide" : "Show"}</button>
+  </div>;
+  if (src === "prompt") return <div className="fr-secret-src muted">🔒 Asked in a dialog when the run starts (also for scheduled runs).</div>;
+  return <>
+    {src !== "ask" && <div className={"fr-secret-src " + (st?.found ? "ok" : "warn")}>{st?.found ? "🔑 " : "⚠ "}
+      {st?.found ? <>Taken from <b>{st.where}</b></> : <>Not found in <b>{st?.where || `${kcName()} · ${kcRef.service} / ${kcRef.account}`}</b>{i.required ? ": type it below" : ""}</>}
+      {st?.found && <> · <button type="button" className="link" onClick={() => { r.typeSecret[i.name] = !r.typeSecret[i.name]; if (!r.typeSecret[i.name]) set(""); update(); }}>{r.typeSecret[i.name] ? "Use the saved value" : "Type a different value for this run"}</button></>}</div>}
+    {typing && masked}
+    {typing && canSave && <label className="check fr-secret-save"><input type="checkbox" checked={!!(r.saveSecret ||= {})[i.name]} onChange={(e) => { r.saveSecret[i.name] = e.target.checked; update(); }} /> Save to {kcName()} ({kcRef.service}{sep}{kcRef.account}) for later runs</label>}
+  </>;
+}
+
 // One input, by its type: text, long text (with attachments), number, yes/no,
 // choice, one file, several files, or the clipboard (text, images, files).
 function InputField({ i }) {
@@ -100,6 +129,7 @@ function InputField({ i }) {
   let field, simple = true;
   switch (i.type) {
     case "multiline": simple = false; field = <DropZone list={list}><textarea rows={5} value={v} onChange={(e) => set(e.target.value)} onPaste={onPasteAttach(list)} /><AttachBar list={list} insertText={append} /></DropZone>; break;
+    case "secret": simple = false; field = <SecretField i={i} v={v} set={set} />; break;
     case "number": field = <input type="number" step="any" value={v} onChange={(e) => set(e.target.value)} />; break;
     case "boolean": field = <label className="check"><input type="checkbox" checked={v === "true"} onChange={(e) => set(e.target.checked ? "true" : "false")} /> Yes</label>; break;
     case "multichoice": {
@@ -167,7 +197,7 @@ function Options() {
         <label className="field"><span className="muted">Pause for review</span><select value={o.review} onChange={(e) => set("review", e.target.value)}>
           <option value="ai">After AI steps and marked steps</option><option value="each">After every step</option><option value="marked">Only steps marked for review</option><option value="none">Never</option></select></label>
         <label className="field"><span className="muted">Run the whole flow</span><div className="fr-inline"><input type="number" min="1" max="50" value={o.repeat} onChange={(e) => set("repeat", e.target.value)} style={{ width: 70 }} /> time(s)</div></label>
-        <label className="field"><span className="muted">Run once per item of</span><select value={o.forEach.input} onChange={(e) => { o.forEach.input = e.target.value; update(); }}><option value="">— no, run once —</option>{f.inputs.map((i) => <option key={i.name} value={i.name}>{i.label || i.name}</option>)}</select></label>
+        <label className="field"><span className="muted">Run once per item of</span><select value={o.forEach.input} onChange={(e) => { o.forEach.input = e.target.value; update(); }}><option value="">— no, run once —</option>{f.inputs.filter((i) => i.type !== "secret").map((i) => <option key={i.name} value={i.name}>{i.label || i.name}</option>)}</select></label>
         {o.forEach.input && <>
           <label className="field"><span className="muted">Items are</span><select value={o.forEach.split} onChange={(e) => { o.forEach.split = e.target.value; update(); }}><option value="lines">One per line</option><option value="json">A JSON array</option><option value="csv">CSV rows</option></select></label>
           <label className="field"><span className="muted">Only items matching (pattern)</span><input value={o.forEach.filter} placeholder="e.g. ^ORD- or error|fail" style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => { o.forEach.filter = e.target.value; update(); }} /></label>
