@@ -201,11 +201,7 @@ func TestFlowRunCredentials(t *testing.T) {
 	_, _ = h.SaveFlow(*f)
 
 	// keychain first
-	store := map[string]string{}
-	oldL, oldS := keychainLookup, keychainStore
-	keychainLookup = func(n string) (string, bool) { v, ok := store[n]; return v, ok }
-	keychainStore = func(n, v string) error { store[n] = v; return nil }
-	t.Cleanup(func() { keychainLookup, keychainStore = oldL, oldS })
+	store := stubKeychain(t)
 	creds, _ := h.FlowCredentials("tok")
 	if len(creds) != 1 || creds[0].Name != "FLOW_TEST_TOKEN" || creds[0].Via != "ask" {
 		t.Fatalf("%+v", creds)
@@ -226,7 +222,7 @@ func TestFlowRunCredentials(t *testing.T) {
 	}
 
 	// no keychain entry: the run stops and asks, tagged with the run id
-	delete(store, "FLOW_TEST_TOKEN")
+	delete(store, "SpecWright/FLOW_TEST_TOKEN")
 	kcForget("FLOW_TEST_TOKEN")
 	h.mu.Lock()
 	delete(h.secrets, "FLOW_TEST_TOKEN")

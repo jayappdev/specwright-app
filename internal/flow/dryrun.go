@@ -100,6 +100,9 @@ func DryRunFlow(f *Flow, test DryTest, tools map[string]DryTool) DryResult {
 		}
 		inputs[in.Name] = v
 		res.Inputs[in.Name] = v
+		if in.Type == "secret" {
+			res.Inputs[in.Name] = SecretMask
+		}
 	}
 	d := Data{Inputs: inputs, Steps: map[string]string{}, Files: map[string]string{}, Branches: map[string][]string{}, Flow: f.Name}
 	x.run(order, &d, map[string]string{})
@@ -351,7 +354,7 @@ func (x *dryRun) exec(n *Node, d Data, live []string) (string, bool, error) {
 	}
 	switch n.Type {
 	case "start":
-		b, _ := json.MarshalIndent(d.Inputs, "", "  ")
+		b, _ := json.MarshalIndent(x.f.MaskSecrets(d.Inputs), "", "  ")
 		return string(b), false, nil
 	case "tool":
 		t, ok := x.tools[n.Tool]
@@ -426,6 +429,8 @@ func sampleInput(in Input) string {
 		}
 	case "file", "files":
 		return "README.md"
+	case "secret":
+		return "sample-secret-value"
 	}
 	return "sample " + firstNonEmptyStr(in.Label, in.Name)
 }

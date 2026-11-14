@@ -34,6 +34,12 @@ func flowInputValue(root string, in flow.Input, text string, files []string) (st
 			paths = append(paths, p)
 		}
 	}
+	if in.Type == "secret" { // as typed: no default, no trimming, no files
+		if strings.ContainsAny(text, "\r\n") {
+			return "", fmt.Errorf("%s must be on one line", label)
+		}
+		return text, nil
+	}
 	if strings.TrimSpace(text) == "" && len(paths) == 0 {
 		text, paths = in.Default, in.Files
 	}
