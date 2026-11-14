@@ -21,6 +21,12 @@
         <string>10.13.0</string>
         <key>NSHighResolutionCapable</key>
         <string>true</string>
+        <key>NSDocumentsFolderUsageDescription</key>
+        <string>SpecWright opens, reads and writes the project folders you choose, and reopens your last project at launch.</string>
+        <key>NSDesktopFolderUsageDescription</key>
+        <string>SpecWright opens, reads and writes the project folders you choose, and reopens your last project at launch.</string>
+        <key>NSDownloadsFolderUsageDescription</key>
+        <string>SpecWright opens, reads and writes the project folders you choose, and reopens your last project at launch.</string>
         <key>NSHumanReadableCopyright</key>
         <string>{{.Info.Copyright}}</string>
         {{if .Info.FileAssociations}}

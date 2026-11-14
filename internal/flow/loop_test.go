@@ -229,3 +229,63 @@ func TestSplitItemsFromJSONInput(t *testing.T) {
 		t.Errorf("%s (%s, field %q): got %q, want %q", c.src, c.split, c.field, got, c.want)
 	}
 }
+
+func TestJoinTextKeepsMarkdownWhole(t *testing.T) {
+	rows := []ItemResult{{Item: "a", Output: "| AMZN | 265.58 |\n"}, {Item: "b", Output: "| MSFT | 401.10 |"}}
+	head := "| Ticker | Price |\n|---|---|"
+	got, _ := Gather(Node{Mode: "concat"}, append([]ItemResult{{Item: "h", Output: head}}, rows...), Data{})
+	if got != head+"\n| AMZN | 265.58 |\n| MSFT | 401.10 |" {
+		t.Fatalf("%q", got)
+	}
+	got, _ = Gather(Node{Mode: "concat"}, []ItemResult{{Output: "- one"}, {Output: "- two"}, {Output: "Some text"}, {Output: "More text"}}, Data{})
+	if got != "- one\n- two\n\nSome text\n\nMore text" {
+		t.Fatalf("%q", got)
+	}
+	if got, _ := Gather(Node{Mode: "concat", Separator: ", "}, rows, Data{}); !strings.Contains(got, "|, |") {
+		t.Fatalf("a chosen separator is kept: %q", got)
+	}
+	m, _ := Merge(Node{Mode: "concat"}, []string{"a", "b"}, Data{Steps: map[string]string{"a": head + "\n| X | 1 |\n", "b": "| Y | 2 |"}}, nil)
+	if m != head+"\n| X | 1 |\n| Y | 2 |" {
+		t.Fatalf("%q", m)
+	}
+	// already joined with blank lines: the HTML still has one table
+	h := MarkdownToHTML(head + "\n| X | 1 |\n\n| Y | 2 |\n\nAfter")
+	if strings.Count(h, "<table>") != 1 || strings.Count(h, "<tr>") != 3 || !strings.Contains(h, "<p>After</p>") {
+		t.Fatal(h)
+	}
+}
+
+func TestTableRowsStayOneLine(t *testing.T) {
+	d := Data{Item: "AMZN", ItemCount: 1, Input: "265.58\n", Steps: map[string]string{"q": "price 265.58\nchange -0.7% | flat\n"}}
+	if got := Render("| {{item}} | {{input}} |", d); got != "| AMZN | 265.58 |" {
+		t.Fatalf("%q", got)
+	}
+	if got := Render("| {{item}} | {{q.buffer_output}} |", d); got != `| AMZN | price 265.58<br>change -0.7% \| flat |` {
+		t.Fatalf("%q", got)
+	}
+	// not a table row: values as they are
+	if got := Render("Price: {{input}}", d); got != "Price: 265.58\n" {
+		t.Fatalf("%q", got)
+	}
+	if got := Render("{{q.buffer_output}}\n| a | b |", d); got != "price 265.58\nchange -0.7% | flat\n\n| a | b |" {
+		t.Fatalf("%q", got)
+	}
+	g, _ := Gather(Node{Mode: "template", Template: "| {{item}} | {{input}} |"}, []ItemResult{{Item: "AMZN", Output: "a\nb"}, {Item: "MSFT", Output: "c"}}, Data{})
+	if g != "| AMZN | a<br>b |\n| MSFT | c |" {
+		t.Fatalf("%q", g)
+	}
+	h := MarkdownToHTML("| T | V |\n|---|---|\n" + g)
+	if strings.Count(h, "<tr>") != 3 {
+		t.Fatal(h)
+	}
+}
+
+func TestMarkdownTableCells(t *testing.T) {
+	h := MarkdownToHTML("| a | b |\n|---|---|\n| x<br>y | z \\| w |")
+	if !strings.Contains(h, "<td>x<br>y</td>") || !strings.Contains(h, "<td>z | w</td>") || strings.Count(h, "<td>") != 2 {
+		t.Fatal(h)
+	}
+	if h := MarkdownToHTML("text <script>x</script>"); strings.Contains(h, "<script>") {
+		t.Fatal("still escaped:", h)
+	}
+}

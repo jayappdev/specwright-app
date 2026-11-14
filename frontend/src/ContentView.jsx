@@ -7,6 +7,7 @@ import { S, update, toast } from "./store.js";
 import { Icon } from "./ui.jsx";
 import { mdRender } from "./markdown.js";
 import { highlight } from "./highlight.js";
+import { CopyButton } from "./CopyButton.jsx";
 import { FileLink, Linkify } from "./FileLinks.jsx";
 
 const EXT = { html: "html", json: "json", csv: "csv", md: "md", txt: "txt" };
@@ -102,7 +103,7 @@ export function ContentView({ text, name = "", format, title = "Result", files =
         <span className="cv-files">{shown.map((f) => <FileLink key={f.path} path={f.path}>{f.label || f.path.split("/").pop()}</FileLink>)}</span>
         <span className="cv-actions">
           {t.trim() && <button className="link" title="Open in the preview panel" onClick={() => openContentPreview(title, t, fmt)}><Icon.files /> Open in preview</button>}
-          {t.trim() && <button className="link" onClick={() => navigator.clipboard?.writeText(t).then(() => toast("Copied."), () => toast("Copy failed."))}>Copy</button>}
+          <CopyButton text={t} format={fmt} name={name} />
         </span>
       </div>
       {!t.trim() ? <p className="muted cv-empty">{empty}</p> : mode === "preview" && canPreview(fmt) ? <RenderPreview text={t} format={fmt} /> : <pre className="code cv-pre"><Linkify text={t} /></pre>}

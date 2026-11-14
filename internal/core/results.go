@@ -553,6 +553,9 @@ func (h *Hub) RecentRuns(limit int) ([]RunDigest, error) {
 	}
 	out := make([]RunDigest, 0, len(runs))
 	for _, r := range runs {
+		if r.Archived {
+			continue
+		}
 		out = append(out, RunDigest{ID: r.ID, Kind: kindOf(r), Title: firstNonEmpty(r.Title, firstLine(r.Ask), r.Step), Ask: r.Ask, State: r.State, Started: r.Started, Ended: r.Ended,
 			Agent: r.Agent, Model: r.Model, Usage: r.Usage, Parents: r.Parents, Results: r.Results, Workflow: r.Workflow})
 	}

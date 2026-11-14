@@ -83,6 +83,7 @@ export function ToolTile({ t, active, onOpen, action, compact }) {
       <div className="tt-top"><ToolIcon t={t} size={compact ? 34 : 42} /><Status t={t} /></div>
       <b className="tt-name">{t.name}</b>
       {t.desc && <small className="tt-desc">{t.desc}</small>}
+      {t.tags?.length > 0 && <span className="tt-tags">{t.tags.map((x) => <span key={x} className="tt-tag">#{x}</span>)}</span>}
       {!compact && <div className="tt-foot"><span className="muted">{toolCategory(t).name}{(t.params || []).length ? ` · ${t.params.length} parameter${t.params.length === 1 ? "" : "s"}` : ""}{(t.secrets || []).length ? ` · ${t.secrets.length} secret${t.secrets.length === 1 ? "" : "s"}` : ""}</span>{action}</div>}
     </div>
   );

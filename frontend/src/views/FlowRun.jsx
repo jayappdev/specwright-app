@@ -19,6 +19,7 @@ import { AiProgress } from "../AiProgress.jsx";
 import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../Attachments.jsx";
 import { FileLink, Linkify } from "../FileLinks.jsx";
 import { mdRender } from "../markdown.js";
+import { CopyButton } from "../CopyButton.jsx";
 
 const frs = () => (S.frun ||= { flows: null, flowId: "", flow: null, creds: [], keychain: false, runs: [], runId: "", inputs: {}, files: {}, opts: defaultOpts(), secretVals: {}, showOpts: false, tab: "refine", decision: {} });
 const defaultOpts = () => ({ review: "ai", repeat: 1, forEach: { input: "", split: "lines", filter: "", max: 100 }, timeoutMinutes: 0, stepTimeoutSeconds: 0, startAt: "", skip: [], stopAfter: "", model: "" });
@@ -287,7 +288,7 @@ const canFix = (st, s) => !LIVE.includes(st.status) && s.type !== "start" && ["f
 
 function openFix(st, s) {
   const r = frs();
-  r.fix = r.fix?.runId === st.id && r.fix?.stepId === s.id ? null : { runId: st.id, stepId: s.id, prompt: "", model: r.fix?.model || "", busy: false, res: null, error: "" };
+  r.fix = r.fix?.runId === st.id && r.fix?.stepId === s.id ? null : { runId: st.id, stepId: s.id, prompt: "", expected: "", model: r.fix?.model || "", busy: false, res: null, error: "" };
   update();
 }
 
@@ -298,7 +299,7 @@ function StepFixPanel({ st, s }) {
   const set = (k, v) => { fx[k] = v; update(); };
   const suggest = async () => {
     Object.assign(fx, { busy: true, error: "", res: null }); update();
-    try { fx.res = await backend.FixFlowStep({ runId: st.id, stepId: s.id, prompt: fx.prompt, model: fx.model }); }
+    try { fx.res = await backend.FixFlowStep({ runId: st.id, stepId: s.id, prompt: fx.prompt, expected: fx.expected, model: fx.model }); }
     catch (e) { fx.error = errMsg(e); }
     fx.busy = false; update();
   };
@@ -319,6 +320,13 @@ function StepFixPanel({ st, s }) {
       It sees the step, what reached it in this run{failed ? ", its error" : ", its result"} and how the steps after it use it. Nothing is saved until you try the change and apply it.</p>
     <textarea rows={2} value={fx.prompt} placeholder={failed ? "Optional: what you know about the problem, e.g. the API now returns a list under data." : "e.g. keep only the open items, sort by date, and give JSON with id and title."} onChange={(e) => set("prompt", e.target.value)}
       onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) suggest(); }} />
+    <details className="fr-fix-expect" open={!!fx.expected}><summary className="muted">What should it give instead? (optional: an example of the right output)</summary>
+      <textarea rows={4} value={fx.expected} style={{ fontFamily: "var(--font-mono)" }} placeholder={'e.g. | Ticker | Price |\n|---|---|\n| AMZN | 265.58 |'} onChange={(e) => set("expected", e.target.value)} /></details>
+    {(() => { // what the AI is given, from this run
+      const f = frs().flow, parents = (f?.edges || []).filter((e) => e.to === s.id).map((e) => st.steps.find((x) => x.id === e.from)).filter(Boolean);
+      const size = (x) => (x.output ? `${x.output.length.toLocaleString()} characters${x.truncated ? "+" : ""}` : x.iterations ? "per loop item" : "no output");
+      return <p className="muted fl-help">The AI is given: this step's definition; {parents.length ? parents.map((x) => `the output of ${x.title} (${size(x)})`).join(", ") : "nothing connected into it"}; {s.error ? "its error" : `its output (${size(s)})`}{s.args ? " and the arguments it ran with" : ""}; how the steps after it use it{fx.expected.trim() ? "; and your example of the right output" : ""}. Long outputs are given by their start and end, with their JSON shape.</p>;
+    })()}
     <div className="ai-model"><span className="muted">Model</span><ModelPicker value={fx.model} onChange={(v) => set("model", v)} label="Model for the fix" />
       <button className="btn primary" disabled={fx.busy} onClick={suggest}>{fx.busy ? "Working on it…" : fx.res ? "Suggest again" : failed ? "Suggest a fix" : "Suggest an improvement"}</button>
       <button className="link" onClick={() => { r.fix = null; update(); }}>Cancel</button></div>
@@ -361,7 +369,7 @@ function Outputs({ st }) {
         <details key={k} className="fr-out" open={o.show || k === st.outputs.length - 1}>
           <summary><b>{o.title}</b> <span className="badge">{o.format.toUpperCase()}</span>{o.item && <span className="muted"> · {o.item}</span>}
             {o.saved?.map((p) => <span key={p}> · <FileLink path={p}>{p}</FileLink></span>)}{o.copied && <span className="badge badge-ok">copied</span>}{o.tools?.map((t) => <span key={t} className="badge badge-info">sent to {t}</span>)}
-            <button className="link" onClick={(e) => { e.preventDefault(); navigator.clipboard?.writeText(o.content).then(() => toast("Copied."), () => toast("Copy failed.")); }}>Copy</button></summary>
+            <CopyButton text={o.content} format={o.format === "txt" ? "" : o.format} /></summary>
           {o.errors?.map((e, j) => <div key={j} className="banner error">{e}</div>)}
           <ContentView title={o.title} text={o.content} format={o.format === "txt" ? undefined : o.format} files={(o.saved || []).map((p) => ({ label: p.split("/").pop(), path: p }))} />
         </details>))}

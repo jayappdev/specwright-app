@@ -5,6 +5,7 @@ import { Pill } from "../ui.jsx";
 import { RunPanel } from "./Workflow.jsx";
 import { Icon } from "../ui.jsx";
 import { continueInPlayground } from "./Playground.jsx";
+import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHousekeeping.jsx";
 
 const KIND = { playground: "Prompt", workflow: "Workflow", flow: "Flow" };
 const kindOf = (r) => r.kind || (r.step === "flow" ? "flow" : r.workflow === "playground" ? "playground" : "workflow");
@@ -35,25 +36,28 @@ async function select(id) {
 
 export function History() {
   const h = S.history;
-  useEffect(() => { backend.Runs(200).then((r) => { h.runs = r || []; update(); if (!h.sel && h.runs[0]) select(h.runs[0].id); }, (e) => toast(errMsg(e))); return stop; }, [S.ws?.root]);
+  useEffect(() => { backend.Runs(500).then((r) => { h.runs = r || []; update(); const first = h.runs.find((x) => !x.archived); if (!h.sel && first) select(first.id); }, (e) => toast(errMsg(e))); return stop; }, [S.ws?.root]);
   const run = h.runs.find((r) => r.id === h.sel), evs = S.events[h.sel] || [];
   const shown = evs.slice(0, h.pos);
   return (
     <div className="hist">
       <nav className="ftree" aria-label="Run history"><h1 style={{ padding: "0 14px 8px" }}>History</h1>
         {!h.runs.length && <p className="muted" style={{ padding: "0 14px" }}>No runs recorded{S.ws ? " for this project" : ""} yet.</p>}
-        {h.runs.map((r) => (
+        {h.runs.length > 0 && <RunListBar area="history" runs={h.runs} />}
+        {visibleRuns("history", h.runs, (r) => (r.title || "") + " " + (r.ask || "") + " " + (r.workflow || "") + " " + (r.step || "")).map(([g, list]) => <RunGroup key={g || "-"} area="history" name={g} count={list.length}>
+        {list.map((r) => (
           <button key={r.id} className={"run-item" + (r.id === h.sel ? " active" : "")} onClick={() => select(r.id)}>
+            <PickBox area="history" id={r.id} />
             <span className="run-item-top"><span className="hist-title"><span className={"pg-turn-kind k-" + kindOf(r)}>{KIND[kindOf(r)]}</span> <b>{r.title || (kindOf(r) === "flow" ? r.workflow : r.step)}</b></span><Pill s={r.state} /></span>
             <small>{new Date(r.started).toLocaleString()} · {r.agent}{r.model ? " · " + r.model : ""}</small>
             <small>{fmtK(r.usage.input_tokens + r.usage.output_tokens)} tokens · {r.usage.tool_calls} tools · {r.usage.files_created + r.usage.files_modified} files{r.usage.cost_usd ? ` · $${r.usage.cost_usd.toFixed(3)}` : ""}{r.usage.premium_requests ? ` · ${r.usage.premium_requests} premium` : ""}</small>
           </button>
-        ))}
+        ))}</RunGroup>)}
       </nav>
       <div className="fview">
         {run ? <div className="replay">
           <header className="view-head"><h1>Replay · {run.title || run.step}</h1><span className="muted">{run.id}{run.reason ? " · " + run.reason : ""}</span>
-            <div className="head-controls"><button className="btn secondary" onClick={() => continueInPlayground([run.id])}><Icon.history /> Continue in the playground</button></div></header>
+            <div className="head-controls"><RunActions area="history" runs={h.runs} run={run} /><button className="btn secondary" onClick={() => continueInPlayground([run.id])}><Icon.history /> Continue in the playground</button></div></header>
           {run.ask && <div className="pg-you"><span className="pg-you-tag">{kindOf(run) === "flow" ? "Inputs" : kindOf(run) === "workflow" ? "Input" : "You"}</span><div>{run.ask}</div></div>}
           <div className="replay-bar card">
             <button className="btn primary" onClick={() => (h.playing ? (stop(), update()) : play())}>{h.playing ? "Pause" : h.pos >= evs.length ? "Replay" : "Play"}</button>

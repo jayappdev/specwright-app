@@ -4,6 +4,7 @@ import { S, update } from "../store.js";
 import { resolveTheme, applyAppearance, ALL_THEMES, ALL_SKINS } from "../theme.js";
 import { FAMILIES, ANDROID_SEEDS, UI_FONTS, CODE_FONTS } from "../palettes.js";
 import { agentLabel } from "./Setup.jsx";
+import { HousekeepingCard } from "../RunHousekeeping.jsx";
 
 export function Appearance() {
   const a = S.appearance, cur = resolveTheme(a.theme);
@@ -49,6 +50,7 @@ export function Appearance() {
         <div className="font-preview"><span>SpecWright turns specs into working code — 0123456789</span><code>func (o Order) Total() float64 {"{"} return o.Price {"}"}</code></div>
         <label className="field inline" style={{ marginTop: 10 }}><span>Text size {a.fontSize}px</span><input type="range" min="11" max="18" value={a.fontSize} aria-label="Text size" onChange={(e) => set("fontSize", +e.target.value)} /></label>
         <p className="muted" style={{ marginTop: 6 }}>Roboto, Roboto Mono, Mona Sans, Inter and JetBrains Mono ship with the app (SIL Open Font License), so they work offline.</p></div>
+      <HousekeepingCard />
       <div className="card"><h3>Account</h3>
         <p>Agent: <b>{agentLabel()}</b>{S.setup.source ? ` · ${S.setup.source}` : ""}{cli?.version ? ` · ${cli.version}` : ""}</p>
         <div className="field inline"><span>App-wide model</span><ModelPicker value={S.setup.model || ""} inherit="" label="Model" onChange={(v) => { S.setup.model = v; update(); backend.SetAgent(S.setup.provider === "skipped" ? "mock" : S.setup.provider, "", v).catch(() => {}); }} /></div>

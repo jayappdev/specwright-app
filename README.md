@@ -43,6 +43,18 @@ SpecWright is a desktop app that turns a written spec into working code. Its def
 - **Agents and builds:** an optional switch also applies the proxy and registries to Spec Kit agent runs and "Compile project" (Maven through `MAVEN_ARGS`).
 - **What each language needs:** `npm` for Node.js, `python3` for Python, `go` for Go, and `mvn` plus a JDK for Java.
 
+### Copying results
+
+Every viewer — step and tool results, flow outputs, the Playground's answer, the file preview and Project files — has a copy icon. A click copies the content in its most useful form, and ▾ lists the others: HTML and Markdown as **formatted rich text** (pastes with its formatting into mail, documents and chat; plain text goes along for plain editors), or as source / text only; SVG as a **picture** (PNG) or its code; JSON rows and CSV as a **table** for spreadsheets, or as raw text; images as the image; anything else as text. Where the system clipboard refuses the modern API, text and rich HTML are copied the classic way.
+
+### Finding and tagging tools
+
+The Tools list has a search box (name, description or `#tag`), **Group by Source / Tag**, and tag chips that filter the list. Open a tool to add or remove its tags (built-in, managed, project, global and Copilot extension tools alike); tags are this user's, kept in the app's data folder, and do not change a tool or its approval.
+
+### Archiving runs
+
+The Playground and History lists have a search box, **Active / Archived**, groups (collapsible headings) and **Select** to archive, restore or group several runs at once; the open run has **Archive** / **Restore** and **Group…**. Archived runs are hidden, not deleted. **Appearance › Housekeeping** sets after how many days finished runs are archived automatically — separately for Playground prompts and for History (workflow steps and flow runs); 0 is never. It applies on save, at start and every 6 hours; running runs are never archived. Archived flow runs also leave the Run flows list.
+
 ### Built-in tools
 
 16 agent tools compiled into the app (`internal/builtin`), so no one can modify them. Each is exposed as its own MCP tool by agentbridge and attached to every workflow step and playground prompt:
@@ -101,7 +113,26 @@ npm --prefix frontend run build
 wails build
 ```
 
+On macOS, build with `scripts/build-mac.sh` instead (see below).
+
 Run `wails dev` for development. To use the UI in a browser with the mock backend, run `npm --prefix frontend run dev` and open http://localhost:5173.
+
+### Signing the macOS app
+
+`wails build` signs the app ad-hoc, so every build has a new code hash. macOS then treats each build as a new app and asks again for the Documents folder (and the keychain). `scripts/build-mac.sh` builds the app and signs it with a stable certificate, so macOS remembers what you allowed across rebuilds.
+
+You need one certificate, created once. Either:
+
+- **Apple Development (free):** in Xcode › Settings › Accounts, sign in with your Apple ID, then Manage Certificates › + › Apple Development.
+- **Self-signed:** in Keychain Access › Certificate Assistant › Create a Certificate, set Name to `SpecWright Local`, Identity Type to Self Signed Root and Certificate Type to Code Signing.
+
+Then build:
+
+```bash
+scripts/build-mac.sh
+```
+
+To sign an existing build without rebuilding, run `scripts/build-mac.sh --sign`. To pick a certificate yourself, set `SPECWRIGHT_SIGN_IDENTITY` to its name. After the first signed build, macOS asks one last time; old SpecWright entries under System Settings › Privacy & Security › Files and Folders can be removed.
 
 Headless example (the mock agent needs no CLI):
 

@@ -84,6 +84,9 @@ func (a *App) SetDiagram(kind, rel string) error   { return a.hub.SetDiagram(kin
 func (a *App) Compile() (core.BuildResult, error)  { return ok(a.hub.Compile()) }
 func (a *App) Metrics() (core.Metrics, error)      { return ok(a.hub.Metrics()) }
 
+// MetricsIn: the metrics of the ledger entries between r.From and r.To.
+func (a *App) MetricsIn(r core.MetricsRange) (core.Metrics, error) { return ok(a.hub.MetricsIn(r)) }
+
 // PickFolder shows the native folder dialog and opens the chosen workspace.
 func (a *App) PickFolder() (core.WorkspaceState, error) {
 	dir, err := runtime.OpenDirectoryDialog(a.ctx, runtime.OpenDialogOptions{Title: "Choose the project folder", CanCreateDirectories: true})
@@ -267,7 +270,9 @@ func (a *App) FlowShapes(f flow.Flow, samples map[string]string) map[string]flow
 func (a *App) ParseSchema(text string) (*flow.Schema, error) { return ok(flow.ParseSchema(text)) }
 
 // DesignFlows asks the AI designer for flow options (new, or improvements of a flow).
-func (a *App) DesignFlows(r core.DesignRequest) (core.DesignResult, error) { return ok(a.hub.DesignFlows(r)) }
+func (a *App) DesignFlows(r core.DesignRequest) (core.DesignResult, error) {
+	return ok(a.hub.DesignFlows(r))
+}
 
 // SaveFlowVersion saves a flow as a new version of another.
 func (a *App) SaveFlowVersion(baseID string, f flow.Flow) (core.FlowState, error) {
@@ -275,13 +280,44 @@ func (a *App) SaveFlowVersion(baseID string, f flow.Flow) (core.FlowState, error
 }
 
 // FixFlowStep asks the AI for a changed definition of one step of a run.
-func (a *App) FixFlowStep(r core.StepFixRequest) (core.StepFix, error) { return ok(a.hub.FixFlowStep(r)) }
+func (a *App) FixFlowStep(r core.StepFixRequest) (core.StepFix, error) {
+	return ok(a.hub.FixFlowStep(r))
+}
 
 // TryStepFix runs a trial of a changed step on an unsaved copy of the flow.
 func (a *App) TryStepFix(f core.StepFix) (core.FlowRunState, error) { return ok(a.hub.TryStepFix(f)) }
 
 // ApplyStepFix writes a trial's changed steps into the saved flow.
-func (a *App) ApplyStepFix(runID string) (core.FlowState, error) { return ok(a.hub.ApplyStepFix(runID)) }
+func (a *App) ApplyStepFix(runID string) (core.FlowState, error) {
+	return ok(a.hub.ApplyStepFix(runID))
+}
+
+// ArchiveRuns archives (or restores) runs.
+func (a *App) ArchiveRuns(ids []string, archived bool) (int, error) {
+	return ok(a.hub.ArchiveRuns(ids, archived))
+}
+
+// GroupRuns puts runs in a group ("" removes them from it).
+func (a *App) GroupRuns(ids []string, group string) error { return a.hub.GroupRuns(ids, group) }
+
+// RunGroups lists the groups runs use.
+func (a *App) RunGroups() []string { return val(a.hub.RunGroups()) }
+
+// Housekeeping returns the auto-archive settings.
+func (a *App) Housekeeping() core.HousekeepingSettings { return val(a.hub.Housekeeping()) }
+
+// SaveHousekeeping stores the auto-archive settings and applies them.
+func (a *App) SaveHousekeeping(s core.HousekeepingSettings) (core.HousekeepingSettings, error) {
+	return ok(a.hub.SaveHousekeeping(s))
+}
+
+// ToolTags returns every tool's tags.
+func (a *App) ToolTags() map[string][]string { return val(a.hub.ToolTags()) }
+
+// SetToolTags replaces one tool's tags.
+func (a *App) SetToolTags(tool string, tags []string) (map[string][]string, error) {
+	return ok(a.hub.SetToolTags(tool, tags))
+}
 
 // FlowOps lists the designer's transformations, merge modes and formats.
 func (a *App) FlowOps() map[string]any { return val(a.hub.FlowOps()) }

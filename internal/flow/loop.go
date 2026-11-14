@@ -308,7 +308,7 @@ func Gather(n Node, results []ItemResult, d Data) (string, error) {
 		for i, r := range results {
 			parts[i] = ok(r)
 		}
-		return strings.Join(parts, sep), nil
+		return JoinText(parts, sep), nil
 	case "sections":
 		var b strings.Builder
 		for i, r := range results {
@@ -350,7 +350,7 @@ func Gather(n Node, results []ItemResult, d Data) (string, error) {
 			di.Item, di.ItemIndex, di.ItemCount, di.Input = r.Item, i+1, len(results), ok(r)
 			parts[i] = Render(n.Template, di)
 		}
-		return strings.Join(parts, sep), nil
+		return JoinText(parts, sep), nil
 	}
 	return "", fmt.Errorf("unknown gather mode %q", n.Mode)
 }
@@ -383,4 +383,56 @@ func firstNonEmptyStr(v ...string) string {
 		}
 	}
 	return ""
+}
+
+var (
+	mdTableRow = regexp.MustCompile(`^\s*\|.*\|\s*$`)
+	mdListItem = regexp.MustCompile(`^\s*([-*+]|\d+[.)])\s+\S`)
+)
+
+// JoinText joins parts with sep. Joined with a blank line (the default),
+// Markdown would fall apart where one part ends with a table row or a
+// list item and the next starts with one — each row of a table gathered
+// from a loop would become its own paragraph — so there the parts are
+// joined with a single line break, keeping the table or list whole.
+func JoinText(parts []string, sep string) string {
+	if strings.Trim(sep, " \t") != "\n\n" && sep != "\n" {
+		return strings.Join(parts, sep)
+	}
+	var b strings.Builder
+	prev := ""
+	for i, p := range parts {
+		if sep == "\n\n" {
+			p = strings.TrimRight(p, "\n")
+		}
+		if i > 0 {
+			last, first := lastLine(prev), firstLine(p)
+			if (mdTableRow.MatchString(last) && mdTableRow.MatchString(first)) || (mdListItem.MatchString(last) && mdListItem.MatchString(first)) {
+				b.WriteString("\n")
+			} else {
+				b.WriteString(sep)
+			}
+		}
+		b.WriteString(p)
+		if strings.TrimSpace(p) != "" {
+			prev = p
+		}
+	}
+	return b.String()
+}
+
+func lastLine(s string) string {
+	s = strings.TrimRight(s, "\n ")
+	if i := strings.LastIndexByte(s, '\n'); i >= 0 {
+		return s[i+1:]
+	}
+	return s
+}
+
+func firstLine(s string) string {
+	s = strings.TrimLeft(s, "\n")
+	if i := strings.IndexByte(s, '\n'); i >= 0 {
+		return s[:i]
+	}
+	return s
 }
