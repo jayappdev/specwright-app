@@ -113,7 +113,7 @@ npm --prefix frontend run build
 wails build
 ```
 
-On macOS, build with `scripts/build-mac.sh` instead (see below).
+On macOS, build with `scripts/build-mac.sh` instead (see below). On Windows, use `scripts\build-windows.ps1` (see below).
 
 Run `wails dev` for development. To use the UI in a browser with the mock backend, run `npm --prefix frontend run dev` and open http://localhost:5173.
 
@@ -133,6 +133,22 @@ scripts/build-mac.sh
 ```
 
 To sign an existing build without rebuilding, run `scripts/build-mac.sh --sign`. To pick a certificate yourself, set `SPECWRIGHT_SIGN_IDENTITY` to its name. After the first signed build, macOS asks one last time; old SpecWright entries under System Settings › Privacy & Security › Files and Folders can be removed.
+
+### Building on Windows
+
+Install [Go](https://go.dev/dl/), [Node.js](https://nodejs.org/) and the Wails CLI (`go install github.com/wailsapp/wails/v2/cmd/wails@v2.17.1`, the version in `go.mod`). Then, in PowerShell:
+
+```powershell
+scripts\build-windows.ps1
+```
+
+It checks the tools are installed, builds `build\bin\SpecWright.exe` and restores the `frontend\dist` placeholder. From cmd, or by double-clicking, run `scripts\build-windows.cmd` (same options). Options:
+
+- `-Installer`: also build an installer with NSIS (`winget install NSIS.NSIS`). It installs the WebView2 runtime where it is missing (Windows 10 and 11 have it).
+- `-Arch arm64`: for Windows on ARM.
+- `-SignOnly`: sign the existing build without rebuilding.
+
+Signing is optional. It stops SmartScreen warning about an unknown publisher once your certificate has a reputation. Secrets in Credential Manager work whether or not the app is signed. To sign, give a certificate from your store by thumbprint (`-CertThumbprint`, or `$env:SPECWRIGHT_SIGN_CERT`), or a `.pfx` file (`-PfxPath`, with its password in `$env:SPECWRIGHT_SIGN_PFX_PASSWORD`). Signing uses `signtool.exe` from the Windows SDK and timestamps the signature, by default with DigiCert's public server (`$env:SPECWRIGHT_TIMESTAMP_URL` to change it).
 
 Headless example (the mock agent needs no CLI):
 
@@ -182,6 +198,7 @@ Tools › Flow designer strings tools together into flows, stored as `.codegen/f
 
   - **Ask in the run form** (default): typed when the flow runs, masked, with Show/Hide.
   - **System Keychain:** read when the run starts, nothing to type. By default SpecWright's own entry (service `SpecWright`, account = the input's name); any other entry works too: a password saved under another service and account, or an internet password saved for a server (e.g. by Safari). macOS asks once before reading an entry another app saved; the prompt names `security` (the command SpecWright reads the Keychain with). Choose **Always Allow** so later runs don't ask, even after SpecWright is rebuilt. The designer can check the entry and save a value into it. When nothing is found, the run form asks, with **Save to Keychain** for later runs.
+  - **On Windows** the same source reads and writes **Windows Credential Manager** (Control Panel › Credential Manager › Windows Credentials). SpecWright's entries are generic credentials named `service/account`, e.g. `SpecWright/github-token`; to read one another program saved (git, cmdkey), give its *Internet or network address* as the service. Windows has no internet passwords, so that option is macOS only. On Linux it is the Secret Service (`secret-tool`).
   - **Environment variable:** for headless and CI runs.
   - **Keychain, then environment, else ask.**
   - **Ask in a dialog during the run:** asked once the run has started (scheduled runs ask when they start; headless runs ask on the terminal). "Remember for this session" keeps it until the app quits.

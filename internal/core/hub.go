@@ -11,6 +11,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"slices"
 	"sort"
 	"strings"
@@ -177,6 +178,8 @@ type Info struct {
 	// Runtimes are the tool languages installed here, in priority order
 	// (Node.js → Go → Java → Bash); "Auto" uses the first.
 	Runtimes []string `json:"runtimes"`
+	// OS is the operating system (darwin, windows, linux): where secrets are kept is named after it.
+	OS string `json:"os"`
 }
 
 // Info reports versions, agents and the open workspace.
@@ -193,7 +196,7 @@ func (h *Hub) Info() Info {
 	h.mu.RLock()
 	defer h.mu.RUnlock()
 	return Info{Version: Version, Workspace: h.root, Agent: h.agentName, Model: h.model, HasToken: h.token != "", Agents: sts,
-		StoreDir: h.Store.Dir(), Node: node, Languages: workflow.Languages, LangOrder: workflow.LanguageOrder, Runtimes: Runtimes()}
+		StoreDir: h.Store.Dir(), Node: node, Languages: workflow.Languages, LangOrder: workflow.LanguageOrder, Runtimes: Runtimes(), OS: runtime.GOOS}
 }
 
 // SetAgent chooses the agent CLI. A token, if given, is kept in memory for

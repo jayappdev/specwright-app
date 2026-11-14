@@ -14,8 +14,8 @@ import (
 )
 
 // The system keychain stores secret values the user chose to keep between
-// sessions: the macOS Keychain (security) or the Secret Service on Linux
-// (secret-tool, from libsecret). SpecWright's own entries use the service
+// sessions: the macOS Keychain (security), the Secret Service on Linux
+// (secret-tool, from libsecret) or Windows Credential Manager (wincred.go). SpecWright's own entries use the service
 // "SpecWright" and the secret's name as the account. A flow's secret input
 // can also read any other entry by service (or, for internet passwords, the
 // server) and account; macOS asks the first time before the security
@@ -45,6 +45,11 @@ var keychainRead = func(ref flow.KeychainRef) (string, bool) {
 			return "", false
 		}
 		cmd = exec.CommandContext(ctx, "secret-tool", "lookup", "service", ref.Service, "account", ref.Account)
+	case "windows":
+		if ref.Kind == "internet" {
+			return "", false
+		}
+		return wincredRead(ref)
 	default:
 		return "", false
 	}
@@ -88,6 +93,11 @@ var keychainWrite = func(ref flow.KeychainRef, value string) error {
 		cmd := exec.CommandContext(ctx, "secret-tool", "store", "--label", label, "service", ref.Service, "account", ref.Account)
 		cmd.Stdin = strings.NewReader(value)
 		return run(cmd)
+	case "windows":
+		if ref.Kind == "internet" {
+			return errors.New("Windows has no internet passwords: use a service and account")
+		}
+		return wincredWrite(ref, value)
 	}
 	return errors.New("the system keychain is not supported on " + runtime.GOOS)
 }
@@ -110,6 +120,8 @@ var keychainRemove = func(ref flow.KeychainRef) error {
 		return run(exec.CommandContext(ctx, "security", "delete-generic-password", "-s", ref.Service, "-a", ref.Account))
 	case "linux":
 		return run(exec.CommandContext(ctx, "secret-tool", "clear", "service", ref.Service, "account", ref.Account))
+	case "windows":
+		return wincredDelete(ref)
 	}
 	return errors.New("the system keychain is not supported on " + runtime.GOOS)
 }
@@ -139,8 +151,18 @@ func KeychainAvailable() bool {
 	case "linux":
 		_, err := exec.LookPath("secret-tool")
 		return err == nil
+	case "windows":
+		return true // Credential Manager is part of Windows
 	}
 	return false
+}
+
+// describeRef names a keychain entry the way this computer calls it.
+func describeRef(ref flow.KeychainRef) string {
+	if runtime.GOOS == "windows" {
+		return wincredDescribe(ref)
+	}
+	return ref.Describe()
 }
 
 // kcGet is keychainRead with a short cache: the UI asks for secret status
@@ -209,7 +231,7 @@ type KeychainStatus struct {
 // CheckKeychain reports whether ref has a value.
 func (h *Hub) CheckKeychain(ref flow.KeychainRef) KeychainStatus {
 	ref = ref.Normalized("")
-	st := KeychainStatus{Available: KeychainAvailable(), Where: ref.Describe()}
+	st := KeychainStatus{Available: KeychainAvailable(), Where: describeRef(ref)}
 	if st.Available && ref.Account != "" {
 		_, st.Found = kcGetRef(ref)
 	}
@@ -226,7 +248,7 @@ func (h *Hub) SaveToKeychain(ref flow.KeychainRef, value string) error {
 	h.Store.Redactor().Add(value)
 	defer kcForgetRef(ref)
 	if err := keychainWrite(ref, value); err != nil {
-		return fmt.Errorf("could not save to %s: %v", ref.Describe(), err)
+		return fmt.Errorf("could not save to %s: %v", describeRef(ref), err)
 	}
 	return nil
 }
@@ -284,4 +306,15 @@ func (h *Hub) FlowSecretStatus(id string) ([]SecretInputState, error) {
 		out = append(out, st)
 	}
 	return out, nil
+}
+
+// keychainApp is the app people use to manage the keychain here.
+func keychainApp() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "Credential Manager (Control Panel)"
+	case "linux":
+		return "your keyring app (e.g. Passwords and Keys)"
+	}
+	return "Keychain Access"
 }

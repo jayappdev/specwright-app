@@ -202,6 +202,9 @@ export function totals() {
   return t;
 }
 export const isCopilot = () => S.setup.provider === "copilot";
+// What this computer calls its keychain: Keychain (macOS), Credential Manager (Windows), keyring (Linux).
+export const isWindows = () => S.info?.os === "windows" || (!S.info?.os && /Win/.test(navigator.platform || ""));
+export const kcName = () => (isWindows() ? "Credential Manager" : S.info?.os === "linux" ? "keyring" : "Keychain");
 export const fmtK = (n) => n >= 1000 ? (n / 1000).toFixed(n >= 10000 ? 0 : 1) + "k" : String(n);
 export const fmtMs = (ms) => ms < 1000 ? ms + " ms" : (ms / 1000).toFixed(1) + " s";
 export const fmtCredits = (u) => isCopilot() ? `${u.premium} premium req` : `$${u.usd.toFixed(u.usd < 1 ? 3 : 2)}`;

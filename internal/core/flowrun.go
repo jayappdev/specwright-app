@@ -1948,7 +1948,7 @@ func (h *Hub) secretInput(in flow.Input, typed string, o *FlowRunOptions) (strin
 		if v, ok := fromKeychain(); ok {
 			return v, nil
 		}
-		return "", fmt.Errorf("%s: nothing found in %s. Type it in the run form (tick “Save to Keychain” to keep it), or add it with Keychain Access", label, ref.Describe())
+		return "", fmt.Errorf("%s: nothing found in %s. Type it in the run form (tick “Save to Keychain” to keep it), or add it with %s", label, describeRef(ref), keychainApp())
 	case "env":
 		if v, ok := lookupEnv(in.Env); ok && v != "" {
 			return v, nil
@@ -1964,7 +1964,7 @@ func (h *Hub) secretInput(in flow.Input, typed string, o *FlowRunOptions) (strin
 			}
 		}
 		if in.Required {
-			where := ref.Describe()
+			where := describeRef(ref)
 			if in.Env != "" {
 				where += " or $" + in.Env
 			}

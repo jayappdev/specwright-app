@@ -8,7 +8,7 @@ import { ModelPicker } from "../ModelPicker.jsx";
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
-import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, isCopilot, refreshExtensions } from "../store.js";
+import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, isCopilot, refreshExtensions, kcName, isWindows } from "../store.js";
 import { Icon, Pill } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { StepIcon, openFlowInDesigner } from "./Flows.jsx";
@@ -102,6 +102,7 @@ function SecretField({ i, v, set }) {
   const r = frs(), shown = !!(r.reveal ||= {})[i.name], src = i.source || "ask", st = r.secretStatus?.[i.name];
   const kcRef = { service: i.keychain?.service || "SpecWright", account: i.keychain?.account || i.name };
   const canSave = r.keychain && (src === "keychain" || src === "auto") && i.keychain?.kind !== "internet";
+  const sep = isWindows() ? "/" : " / ";
   const typing = src === "ask" || (src !== "prompt" && (!st?.found || (r.typeSecret ||= {})[i.name]));
   const masked = <div className="fr-secret">
     <input type={shown ? "text" : "password"} value={v} autoComplete="new-password" autoCorrect="off" autoCapitalize="off" spellCheck={false} data-1p-ignore data-lpignore="true"
@@ -111,10 +112,10 @@ function SecretField({ i, v, set }) {
   if (src === "prompt") return <div className="fr-secret-src muted">🔒 Asked in a dialog when the run starts (also for scheduled runs).</div>;
   return <>
     {src !== "ask" && <div className={"fr-secret-src " + (st?.found ? "ok" : "warn")}>{st?.found ? "🔑 " : "⚠ "}
-      {st?.found ? <>Taken from <b>{st.where}</b></> : <>Not found in <b>{st?.where || `Keychain · ${kcRef.service} / ${kcRef.account}`}</b>{i.required ? ": type it below" : ""}</>}
+      {st?.found ? <>Taken from <b>{st.where}</b></> : <>Not found in <b>{st?.where || `${kcName()} · ${kcRef.service} / ${kcRef.account}`}</b>{i.required ? ": type it below" : ""}</>}
       {st?.found && <> · <button type="button" className="link" onClick={() => { r.typeSecret[i.name] = !r.typeSecret[i.name]; if (!r.typeSecret[i.name]) set(""); update(); }}>{r.typeSecret[i.name] ? "Use the saved value" : "Type a different value for this run"}</button></>}</div>}
     {typing && masked}
-    {typing && canSave && <label className="check fr-secret-save"><input type="checkbox" checked={!!(r.saveSecret ||= {})[i.name]} onChange={(e) => { r.saveSecret[i.name] = e.target.checked; update(); }} /> Save to Keychain ({kcRef.service} / {kcRef.account}) for later runs</label>}
+    {typing && canSave && <label className="check fr-secret-save"><input type="checkbox" checked={!!(r.saveSecret ||= {})[i.name]} onChange={(e) => { r.saveSecret[i.name] = e.target.checked; update(); }} /> Save to {kcName()} ({kcRef.service}{sep}{kcRef.account}) for later runs</label>}
   </>;
 }
 

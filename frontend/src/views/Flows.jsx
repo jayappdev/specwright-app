@@ -10,7 +10,7 @@ import { useEffect, useRef, useState } from "react";
 import { openFlowRunner } from "./FlowRun.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { backend } from "../backend.js";
-import { S, update, toast, errMsg, saveText, refreshExtensions } from "../store.js";
+import { S, update, toast, errMsg, saveText, refreshExtensions, kcName, isWindows } from "../store.js";
 import { Icon } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { ToolIcon } from "../ToolTile.jsx";
@@ -403,9 +403,9 @@ function renameNode(n, id) {
 
 const SECRET_SOURCES = [
   ["ask", "Ask in the run form", "Typed when the flow runs, masked."],
-  ["keychain", "System Keychain", "Read from the Keychain when the run starts; nothing to type."],
+  ["keychain", () => `System ${kcName()}`, () => `Read from the ${kcName()} when the run starts; nothing to type.`],
   ["env", "Environment variable", "For headless and CI runs."],
-  ["auto", "Keychain, then environment, else ask", "Uses whichever has a value; asks in the run form if none does."],
+  ["auto", () => `${kcName()}, then environment, else ask`, "Uses whichever has a value; asks in the run form if none does."],
   ["prompt", "Ask in a dialog during the run", "Asked once the run has started: also scheduled runs, and on the terminal when headless."],
 ];
 export const PASSWORD_PARAM = /(pass(word|wd|phrase)?|secret|token|api[_-]?key|private[_-]?key|credential|auth)/i;
@@ -418,31 +418,32 @@ function SecretSourceEditor({ i }) {
   const set = (patch) => { Object.assign(i, patch); setSt(null); changed(); };
   const setK = (patch) => { i.keychain = k; Object.assign(k, patch); for (const x of ["service", "account", "kind"]) if (!k[x]) delete k[x]; if (!Object.keys(k).length) delete i.keychain; setSt(null); changed(); };
   const check = async () => { try { setSt(await backend.CheckKeychain(ref())); } catch (e) { toast(errMsg(e)); } };
-  const save = async () => { try { await backend.SaveToKeychain(ref(), val); setVal(""); toast(`Saved in the Keychain (${ref().service} / ${ref().account}).`); check(); } catch (e) { toast(errMsg(e)); } };
+  const save = async () => { try { await backend.SaveToKeychain(ref(), val); setVal(""); toast(`Saved in the ${kcName()} (${ref().service} / ${ref().account}).`); check(); } catch (e) { toast(errMsg(e)); } };
   const usesKc = src === "keychain" || src === "auto", usesEnv = src === "env" || src === "auto";
   return <div className="fl-secret">
-    <Field label="Where the value comes from"><select value={src} onChange={(e) => set({ source: e.target.value === "ask" ? undefined : e.target.value })}>{SECRET_SOURCES.map(([v, l]) => <option key={v} value={v}>{l}</option>)}</select></Field>
-    <p className="muted fl-help">{SECRET_SOURCES.find(([v]) => v === src)?.[2]} Never saved in the flow: run history, step outputs and results show <code className="inline-code" data-nofile>••••••••</code>. Tools get it through <code className="inline-code" data-nofile>{`{{inputs.${i.name}}}`}</code> in their arguments; AI steps should not use it.</p>
+    <Field label="Where the value comes from"><select value={src} onChange={(e) => set({ source: e.target.value === "ask" ? undefined : e.target.value })}>{SECRET_SOURCES.map(([v, l]) => <option key={v} value={v}>{typeof l === "function" ? l() : l}</option>)}</select></Field>
+    <p className="muted fl-help">{(() => { const h = SECRET_SOURCES.find(([v]) => v === src)?.[2]; return typeof h === "function" ? h() : h; })()} Never saved in the flow: run history, step outputs and results show <code className="inline-code" data-nofile>••••••••</code>. Tools get it through <code className="inline-code" data-nofile>{`{{inputs.${i.name}}}`}</code> in their arguments; AI steps should not use it.</p>
     {usesKc && <>
       <div className="fl-row">
-        <Field label="Keychain item" hint={k.kind === "internet" ? "An internet password saved for a server (e.g. by Safari)" : "A password saved under a service and account"}><select value={k.kind || ""} onChange={(e) => setK({ kind: e.target.value })}><option value="">Password (service + account)</option><option value="internet">Internet password (server + account)</option></select></Field>
+        {isWindows() ? <p className="muted fl-help">Credential Manager › Windows Credentials. SpecWright's entries are named <code className="inline-code" data-nofile>service/account</code>; to read one another program saved, put its <b>Internet or network address</b> under Service.</p>
+          : <Field label="Keychain item" hint={k.kind === "internet" ? "An internet password saved for a server (e.g. by Safari)" : "A password saved under a service and account"}><select value={k.kind || ""} onChange={(e) => setK({ kind: e.target.value })}><option value="">Password (service + account)</option><option value="internet">Internet password (server + account)</option></select></Field>}
       </div>
       <div className="fl-row">
         <Field label={k.kind === "internet" ? "Server" : "Service"}><input value={k.service || ""} placeholder={k.kind === "internet" ? "github.com" : "SpecWright"} onChange={(e) => setK({ service: e.target.value.trim() })} /></Field>
         <Field label="Account"><input value={k.account || ""} placeholder={i.name} onChange={(e) => setK({ account: e.target.value.trim() })} /></Field>
       </div>
       <div className="fl-row fl-secret-kc">
-        <button type="button" className="btn secondary small" onClick={check}>Check the Keychain</button>
+        <button type="button" className="btn secondary small" onClick={check}>Check the {kcName()}</button>
         {st && <span className={st.found ? "ok-text" : "muted"}>{!st.available ? "No keychain on this computer" : st.found ? `✓ Found: ${st.where}` : `Nothing in ${st.where} yet`}</span>}
       </div>
       {k.kind !== "internet" && <div className="fl-row fl-secret-kc">
-        <input type="password" value={val} autoComplete="new-password" data-1p-ignore data-lpignore="true" placeholder="Save a value now (optional)" aria-label="Value to save in the Keychain" onChange={(e) => setVal(e.target.value.replace(/[\r\n]/g, ""))} />
-        <button type="button" className="btn secondary small" disabled={!val} onClick={save}>Save to Keychain</button>
+        <input type="password" value={val} autoComplete="new-password" data-1p-ignore data-lpignore="true" placeholder="Save a value now (optional)" aria-label={`Value to save in the ${kcName()}`} onChange={(e) => setVal(e.target.value.replace(/[\r\n]/g, ""))} />
+        <button type="button" className="btn secondary small" disabled={!val} onClick={save}>Save to {kcName()}</button>
       </div>}
-      {k.kind !== "internet" && (k.service || "SpecWright") !== "SpecWright" && <p className="muted fl-help">macOS asks once before reading an item another app saved (the prompt names <code className="inline-code" data-nofile>security</code>): choose <b>Always Allow</b> so later runs don't ask.</p>}
-      {k.kind === "internet" && <p className="muted fl-help">macOS asks once before reading it (the prompt names <code className="inline-code" data-nofile>security</code>): choose <b>Always Allow</b> so later runs don't ask.</p>}
+      {!isWindows() && k.kind !== "internet" && (k.service || "SpecWright") !== "SpecWright" && <p className="muted fl-help">macOS asks once before reading an item another app saved (the prompt names <code className="inline-code" data-nofile>security</code>): choose <b>Always Allow</b> so later runs don't ask.</p>}
+      {!isWindows() && k.kind === "internet" && <p className="muted fl-help">macOS asks once before reading it (the prompt names <code className="inline-code" data-nofile>security</code>): choose <b>Always Allow</b> so later runs don't ask.</p>}
     </>}
-    {usesEnv && <Field label="Environment variable" hint={src === "auto" ? "Optional: tried when the Keychain has nothing" : undefined}><input value={i.env || ""} placeholder={i.name.toUpperCase()} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => set({ env: e.target.value.replace(/[^A-Za-z0-9_]/g, "") || undefined })} /></Field>}
+    {usesEnv && <Field label="Environment variable" hint={src === "auto" ? `Optional: tried when the ${kcName()} has nothing` : undefined}><input value={i.env || ""} placeholder={i.name.toUpperCase()} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => set({ env: e.target.value.replace(/[^A-Za-z0-9_]/g, "") || undefined })} /></Field>}
   </div>;
 }
 
@@ -457,11 +458,11 @@ function SecretPick({ args, p }) {
       const base = p.name.toLowerCase().replace(/[^a-z0-9_]/g, "_").replace(/^_+|_+$/g, "") || "secret";
       name = base; let k = 2; while (flow.inputs.some((i) => i.name === name)) name = base + "_" + k++;
       flow.inputs.push({ name, label: p.name.replace(/[_-]+/g, " ").replace(/^./, (c) => c.toUpperCase()), type: "secret", required: true });
-      toast(`Added the secret input “${name}”. Choose where its value comes from under Inputs (run form, Keychain, environment, or a dialog).`);
+      toast(`Added the secret input “${name}”. Choose where its value comes from under Inputs (run form, ${kcName()}, environment, or a dialog).`);
     }
     args[p.name] = `{{inputs.${name}}}`; changed();
   };
-  return <select className="fl-use fl-secret-pick" value="" aria-label={`Use a secret for ${p.name}`} title="Fill this argument from a secret (asked at run time or read from the Keychain)" onChange={(e) => pick(e.target.value)}>
+  return <select className="fl-use fl-secret-pick" value="" aria-label={`Use a secret for ${p.name}`} title={`Fill this argument from a secret (asked at run time or read from the ${kcName()})`} onChange={(e) => pick(e.target.value)}>
     <option value="">🔒 Secret…</option>{secrets.map((i) => <option key={i.name} value={i.name}>{i.label || i.name}</option>)}<option value="+new">+ New secret input</option></select>;
 }
 
