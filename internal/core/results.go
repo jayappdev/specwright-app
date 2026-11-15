@@ -17,6 +17,11 @@ import (
 	"codegen/internal/store"
 )
 
+// patterns compiled once (not on every call)
+var (
+	runIDDate = regexp.MustCompile(`^(\d{4})(\d{2})(\d{2})-`) // the date at the start of a run id
+)
+
 // Run results: every run (workflow steps, playground prompts, Files › Ask
 // AI, flows) gets an id of its start date and time plus a UUID, and when it
 // ends its results are written to a folder in the project:
@@ -40,7 +45,7 @@ const ResultsDir = ".codegen/runs"
 // runResultsDir is the workspace-relative folder of a run.
 func runResultsDir(id string, started time.Time) string {
 	day := started.Format("2006-01-02")
-	if m := regexp.MustCompile(`^(\d{4})(\d{2})(\d{2})-`).FindStringSubmatch(id); m != nil {
+	if m := runIDDate.FindStringSubmatch(id); m != nil {
 		day = m[1] + "-" + m[2] + "-" + m[3]
 	}
 	return ResultsDir + "/" + day + "/" + id
@@ -461,8 +466,10 @@ func (h *Hub) WriteRunResults(id string) error {
 	r.Results = dir
 	b, _ := json.MarshalIndent(r, "", "  ")
 	write("run.json", string(b))
-	_ = h.Store.SaveRun(r)
 	write("summary.md", h.summaryMD(r, d, len(calls)))
+	// the run record says where its results are: save it last, so a reader
+	// that sees Results set finds every file written
+	_ = h.Store.SaveRun(r)
 	h.Bus.Publish(bus.Event{Type: "results.saved", RunID: id, Summary: dir, Data: map[string]any{"dir": dir}})
 	return werr
 }
