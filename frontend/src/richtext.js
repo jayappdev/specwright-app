@@ -4,8 +4,12 @@
 // 1. lists (one level of nesting), > quotes and line breaks. Anything else
 // pasted in is reduced to this subset, so no scripts or styles survive.
 
-const esc = (s) => s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
-const safeUrl = (u) => (/^(https?:|mailto:|#|\.{0,2}\/|[\w.-]+(\/|$))/i.test(u.trim()) && !/^\s*javascript:/i.test(u) ? u.trim() : "#");
+const esc = (s) =>
+  s.replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" })[c]);
+const safeUrl = (u) =>
+  /^(https?:|mailto:|#|\.{0,2}\/|[\w.-]+(\/|$))/i.test(u.trim()) && !/^\s*javascript:/i.test(u)
+    ? u.trim()
+    : "#";
 
 function inline(s) {
   // protect code spans first so their content is not formatted
@@ -24,7 +28,12 @@ export function mdToHtml(md = "") {
   const lines = String(md).replace(/\r\n?/g, "\n").split("\n");
   const out = [];
   let para = [];
-  const flush = () => { if (para.length) { out.push(`<p>${para.map(inline).join("<br>")}</p>`); para = []; } };
+  const flush = () => {
+    if (para.length) {
+      out.push(`<p>${para.map(inline).join("<br>")}</p>`);
+      para = [];
+    }
+  };
   for (let i = 0; i < lines.length; i++) {
     const l = lines[i];
     if (/^```/.test(l)) {
@@ -35,7 +44,11 @@ export function mdToHtml(md = "") {
       continue;
     }
     const h = l.match(/^(#{1,4})\s+(.*)$/);
-    if (h) { flush(); out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`); continue; }
+    if (h) {
+      flush();
+      out.push(`<h${h[1].length}>${inline(h[2])}</h${h[1].length}>`);
+      continue;
+    }
     if (/^\s*>\s?/.test(l)) {
       flush();
       const body = [];
@@ -52,19 +65,30 @@ export function mdToHtml(md = "") {
       for (; i < lines.length; i++) {
         const m = lines[i].match(/^(\s*)([-*+]|\d+[.)])\s+(.*)$/);
         if (m && m[1].length < 2) items.push({ text: m[3], kids: [] });
-        else if (m && items.length) items[items.length - 1].kids.push({ text: m[3], ordered: /\d/.test(m[2]) });
-        else if (/^\s{2,}\S/.test(lines[i]) && items.length) items[items.length - 1].text += "\n" + lines[i].trim();
+        else if (m && items.length)
+          items[items.length - 1].kids.push({ text: m[3], ordered: /\d/.test(m[2]) });
+        else if (/^\s{2,}\S/.test(lines[i]) && items.length)
+          items[items.length - 1].text += "\n" + lines[i].trim();
         else break;
       }
       i--;
       const tag = ordered ? "ol" : "ul";
-      out.push(`<${tag}>${items.map((it) => {
-        const kids = it.kids.length ? `<${it.kids[0].ordered ? "ol" : "ul"}>${it.kids.map((k) => `<li>${inline(k.text)}</li>`).join("")}</${it.kids[0].ordered ? "ol" : "ul"}>` : "";
-        return `<li>${it.text.split("\n").map(inline).join("<br>")}${kids}</li>`;
-      }).join("")}</${tag}>`);
+      out.push(
+        `<${tag}>${items
+          .map((it) => {
+            const kids = it.kids.length
+              ? `<${it.kids[0].ordered ? "ol" : "ul"}>${it.kids.map((k) => `<li>${inline(k.text)}</li>`).join("")}</${it.kids[0].ordered ? "ol" : "ul"}>`
+              : "";
+            return `<li>${it.text.split("\n").map(inline).join("<br>")}${kids}</li>`;
+          })
+          .join("")}</${tag}>`,
+      );
       continue;
     }
-    if (!l.trim()) { flush(); continue; }
+    if (!l.trim()) {
+      flush();
+      continue;
+    }
     para.push(l);
   }
   flush();
@@ -76,18 +100,53 @@ export function mdToHtml(md = "") {
 function inlineMd(node) {
   let s = "";
   for (const n of node.childNodes) {
-    if (n.nodeType === 3) { s += n.nodeValue.replace(/\u00a0/g, " "); continue; }
+    if (n.nodeType === 3) {
+      s += n.nodeValue.replace(/\u00a0/g, " ");
+      continue;
+    }
     if (n.nodeType !== 1) continue;
-    const t = n.tagName.toLowerCase(), inner = () => inlineMd(n);
-    const wrap = (m) => { const v = inner(); return v.trim() ? m + v.trim() + m + (/\s$/.test(v) ? " " : "") : v; };
+    const t = n.tagName.toLowerCase(),
+      inner = () => inlineMd(n);
+    const wrap = (m) => {
+      const v = inner();
+      return v.trim() ? m + v.trim() + m + (/\s$/.test(v) ? " " : "") : v;
+    };
     switch (t) {
-      case "b": case "strong": s += wrap("**"); break;
-      case "i": case "em": s += wrap("*"); break;
-      case "code": s += "`" + n.textContent + "`"; break;
-      case "a": { const v = inner().trim(); const href = n.getAttribute("href") || ""; s += href && href !== v ? `[${v}](${safeUrl(href)})` : v; break; }
-      case "br": s += "\n"; break;
-      case "span": case "font": case "u": case "mark": case "small": case "sup": case "sub": s += inner(); break;
-      default: { const w = n.ownerDocument.createElement("div"); w.appendChild(n.cloneNode(true)); const v = block(w).trim(); s += v ? "\n" + v + "\n" : ""; }
+      case "b":
+      case "strong":
+        s += wrap("**");
+        break;
+      case "i":
+      case "em":
+        s += wrap("*");
+        break;
+      case "code":
+        s += "`" + n.textContent + "`";
+        break;
+      case "a": {
+        const v = inner().trim();
+        const href = n.getAttribute("href") || "";
+        s += href && href !== v ? `[${v}](${safeUrl(href)})` : v;
+        break;
+      }
+      case "br":
+        s += "\n";
+        break;
+      case "span":
+      case "font":
+      case "u":
+      case "mark":
+      case "small":
+      case "sup":
+      case "sub":
+        s += inner();
+        break;
+      default: {
+        const w = n.ownerDocument.createElement("div");
+        w.appendChild(n.cloneNode(true));
+        const v = block(w).trim();
+        s += v ? "\n" + v + "\n" : "";
+      }
     }
   }
   return s;
@@ -95,14 +154,17 @@ function inlineMd(node) {
 
 function listMd(n, depth) {
   const ordered = n.tagName.toLowerCase() === "ol";
-  let k = 0, out = [];
+  let k = 0,
+    out = [];
   for (const li of n.children) {
     if (li.tagName.toLowerCase() !== "li") continue;
     k++;
     const nested = [...li.children].filter((c) => /^(ul|ol)$/i.test(c.tagName));
     const clone = li.cloneNode(true);
     [...clone.children].forEach((c) => /^(ul|ol)$/i.test(c.tagName) && c.remove());
-    const text = inlineMd(clone).trim().replace(/\n+/g, "\n" + "  ".repeat(depth + 1));
+    const text = inlineMd(clone)
+      .trim()
+      .replace(/\n+/g, "\n" + "  ".repeat(depth + 1));
     out.push("  ".repeat(depth) + (ordered ? `${k}. ` : "- ") + text);
     for (const sub of nested) out.push(listMd(sub, depth + 1));
   }
@@ -114,24 +176,41 @@ const BLOCK = /^(ul|ol|pre|blockquote|h[1-6]|div|p|section|article|hr)$/i;
 function block(node) {
   const parts = [];
   let run = "";
-  const push = (b) => { if (run.trim()) parts.push(run.trim()); run = ""; if (b != null && b.trim()) parts.push(b); };
+  const push = (b) => {
+    if (run.trim()) parts.push(run.trim());
+    run = "";
+    if (b != null && b.trim()) parts.push(b);
+  };
   for (const n of node.childNodes) {
-    if (n.nodeType === 3) { run += n.nodeValue.replace(/\u00a0/g, " "); continue; }
+    if (n.nodeType === 3) {
+      run += n.nodeValue.replace(/\u00a0/g, " ");
+      continue;
+    }
     if (n.nodeType !== 1) continue;
     const t = n.tagName.toLowerCase();
-    if (/^h[1-6]$/.test(t)) push("#".repeat(Math.min(4, +t[1])) + " " + inlineMd(n).trim().replace(/\n/g, " "));
+    if (/^h[1-6]$/.test(t))
+      push("#".repeat(Math.min(4, +t[1])) + " " + inlineMd(n).trim().replace(/\n/g, " "));
     else if (t === "p" || t === "div" || t === "section" || t === "article") {
       // editors wrap lines (and sometimes whole lists) in <div>: keep block structure inside
       if ([...n.children].some((c) => BLOCK.test(c.tagName))) push(block(n));
       else push(inlineMd(n).trim() ? inlineMd(n).trim() : null);
-    }
-    else if (t === "ul" || t === "ol") push(listMd(n, 0));
+    } else if (t === "ul" || t === "ol") push(listMd(n, 0));
     else if (t === "pre") push("```\n" + n.textContent.replace(/\n$/, "") + "\n```");
-    else if (t === "blockquote") push(block(n).split("\n").map((l) => "> " + l).join("\n"));
+    else if (t === "blockquote")
+      push(
+        block(n)
+          .split("\n")
+          .map((l) => "> " + l)
+          .join("\n"),
+      );
     else if (t === "hr") push("---");
     else if (t === "br") run += "\n";
     else if (t === "script" || t === "style") continue;
-    else { const tmp = document.createElement("span"); tmp.appendChild(n.cloneNode(true)); run += inlineMd(tmp); }
+    else {
+      const tmp = document.createElement("span");
+      tmp.appendChild(n.cloneNode(true));
+      run += inlineMd(tmp);
+    }
   }
   push(null);
   return parts.join("\n\n");
@@ -139,7 +218,9 @@ function block(node) {
 
 export function htmlToMd(html) {
   const doc = new DOMParser().parseFromString(`<body>${html}</body>`, "text/html");
-  return block(doc.body).replace(/\n{3,}/g, "\n\n").trim();
+  return block(doc.body)
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 // Pasted HTML → the supported subset (via Markdown, so it is always safe).
@@ -149,22 +230,45 @@ export const sanitizeHtml = (html) => mdToHtml(htmlToMd(html));
 
 // Each rule is a "## <id>" section; its body is the rule's Markdown.
 export function rulesToMd(rules) {
-  return "# Functionality rules\n\n" + rules.map((r) => `## ${r.id}\n\n${(r.text || "").trim() || "_(empty)_"}`).join("\n\n") + "\n";
+  return (
+    "# Functionality rules\n\n" +
+    rules.map((r) => `## ${r.id}\n\n${(r.text || "").trim() || "_(empty)_"}`).join("\n\n") +
+    "\n"
+  );
 }
 
 export function mdToRules(md) {
   const lines = String(md).replace(/\r\n?/g, "\n").split("\n");
   const rules = [];
-  let cur = null, fence = false;
+  let cur = null,
+    fence = false;
   for (const l of lines) {
     if (/^```/.test(l)) fence = !fence;
     const h = !fence && l.match(/^##\s+(.+?)\s*$/);
-    if (h) { cur = { id: h[1].trim(), body: [] }; rules.push(cur); continue; }
+    if (h) {
+      cur = { id: h[1].trim(), body: [] };
+      rules.push(cur);
+      continue;
+    }
     if (cur) cur.body.push(l);
   }
-  if (rules.length) return rules.map((r) => ({ id: r.id, text: r.body.join("\n").trim().replace(/^_\(empty\)_$/, "") }));
+  if (rules.length)
+    return rules.map((r) => ({
+      id: r.id,
+      text: r.body
+        .join("\n")
+        .trim()
+        .replace(/^_\(empty\)_$/, ""),
+    }));
   // older export: "- **R-001** text"
-  return lines.filter((l) => /^\s*-/.test(l)).map((l, k) => { const m = l.match(/\*\*(.+?)\*\*\s*(.*)/); return m ? { id: m[1], text: m[2] } : { id: "R-" + String(k + 1).padStart(3, "0"), text: l.replace(/^\s*-\s*/, "") }; });
+  return lines
+    .filter((l) => /^\s*-/.test(l))
+    .map((l, k) => {
+      const m = l.match(/\*\*(.+?)\*\*\s*(.*)/);
+      return m
+        ? { id: m[1], text: m[2] }
+        : { id: "R-" + String(k + 1).padStart(3, "0"), text: l.replace(/^\s*-\s*/, "") };
+    });
 }
 
 export function rulesToHtmlDoc(rules, title = "Functionality rules") {

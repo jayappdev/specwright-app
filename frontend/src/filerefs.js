@@ -3,7 +3,8 @@
 
 // Extensions treated as files. Kept explicit so that version numbers,
 // domains (proxy.golang.org) and "e.g." never become links.
-const EXT = ("js jsx mjs cjs ts tsx mts cts json jsonc json5 md mdx markdown txt text rst adoc " +
+const EXT = (
+  "js jsx mjs cjs ts tsx mts cts json jsonc json5 md mdx markdown txt text rst adoc " +
   "java kt kts groovy gradle scala sc clj go mod sum work py pyi ipynb rb rs c h cc cpp cxx hpp hh m mm swift " +
   "cs csproj fs vb sln php pl lua r dart ex exs erl hs ml elm zig nim v sv vhd " +
   "xml xsd xsl wsdl yml yaml toml ini cfg conf config properties env plist editorconfig " +
@@ -12,16 +13,24 @@ const EXT = ("js jsx mjs cjs ts tsx mts cts json jsonc json5 md mdx markdown txt
   "html htm xhtml css scss sass less styl vue svelte astro hbs ejs pug twig jinja j2 tpl tmpl " +
   "svg png jpg jpeg gif webp bmp ico tif tiff heic avif " +
   "pdf csv tsv log lock patch diff drawio puml plantuml mmd dot bpmn " +
-  "jar war ear zip tgz gz tar whl class dll so dylib exe wasm").split(/\s+/);
+  "jar war ear zip tgz gz tar whl class dll so dylib exe wasm"
+).split(/\s+/);
 const EXT_RE = EXT.join("|");
-const SPECIAL = "Dockerfile|Makefile|Jenkinsfile|Procfile|Gemfile|Rakefile|Vagrantfile|LICENSE|CODEOWNERS|\\.gitignore|\\.gitattributes|\\.dockerignore|\\.npmrc|\\.env(?:\\.[\\w-]+)?|\\.editorconfig|\\.prettierrc|\\.eslintrc(?:\\.\\w+)?";
+const SPECIAL =
+  "Dockerfile|Makefile|Jenkinsfile|Procfile|Gemfile|Rakefile|Vagrantfile|LICENSE|CODEOWNERS|\\.gitignore|\\.gitattributes|\\.dockerignore|\\.npmrc|\\.env(?:\\.[\\w-]+)?|\\.editorconfig|\\.prettierrc|\\.eslintrc(?:\\.\\w+)?";
 
 // a path: optional ~/, /, ./ or ../ prefix, folders, a name with a known
 // extension (or a special name), then an optional :line[:col] or #Lline
 const PATH_SRC = `(?:~\\/|\\.{1,2}\\/|\\/)?(?:[\\w.@+-]+\\/)*(?:[\\w@+-][\\w.@+-]*\\.(?:${EXT_RE})|(?:${SPECIAL}))(?::(\\d+)(?::\\d+)?|#L(\\d+))?`;
-const PATH_IN_TEXT = new RegExp(`(^|[\\s(\\[{<'"\`=,;:|>])(${PATH_SRC})(?=$|[\\s)\\]}>'"\`,;:!?|]|\\.(?:\\s|$))`, "gi");
+const PATH_IN_TEXT = new RegExp(
+  `(^|[\\s(\\[{<'"\`=,;:|>])(${PATH_SRC})(?=$|[\\s)\\]}>'"\`,;:!?|]|\\.(?:\\s|$))`,
+  "gi",
+);
 // a whole string that is one path (spaces allowed inside, e.g. "Application Support")
-const WHOLE_PATH = new RegExp(`^(?:~\\/|\\.{1,2}\\/|\\/)?(?:[^\\n\`'"<>|*?]+\\/)*(?:[^\\s/\`'"<>|*?][^/\`'"<>|*?\\n]*\\.(?:${EXT_RE})|(?:${SPECIAL}))(?::(\\d+)(?::\\d+)?|#L(\\d+))?$`, "i");
+const WHOLE_PATH = new RegExp(
+  `^(?:~\\/|\\.{1,2}\\/|\\/)?(?:[^\\n\`'"<>|*?]+\\/)*(?:[^\\s/\`'"<>|*?][^/\`'"<>|*?\\n]*\\.(?:${EXT_RE})|(?:${SPECIAL}))(?::(\\d+)(?::\\d+)?|#L(\\d+))?$`,
+  "i",
+);
 
 // "Node.js", "Vue.js": framework names, not files (unless written as a path)
 const NOT_FILE = /^[A-Z][A-Za-z0-9]*\.js$/;
@@ -57,10 +66,12 @@ export function findFileRefs(text) {
   }
   PATH_IN_TEXT.lastIndex = 0;
   while ((m = PATH_IN_TEXT.exec(text))) {
-    const raw = m[2], index = m.index + m[1].length;
+    const raw = m[2],
+      index = m.index + m[1].length;
     if (out.some((o) => index < o.index + o.length && index + raw.length > o.index)) continue;
     const before = text.slice(Math.max(0, index - 8), index);
-    if (/:\/\/[^\s]*$/.test(before) || /[\w.-]$/.test(before) && !/[\s([{<'"`=,;:|>]$/.test(before)) continue; // inside a URL or word
+    if (/:\/\/[^\s]*$/.test(before) || (/[\w.-]$/.test(before) && !/[\s([{<'"`=,;:|>]$/.test(before)))
+      continue; // inside a URL or word
     const ref = parseFileRef(raw);
     if (!ref.path.includes("/") && NOT_FILE.test(ref.path)) continue;
     if (/^\d+(\.\d+)+$/.test(ref.path)) continue;
@@ -68,4 +79,3 @@ export function findFileRefs(text) {
   }
   return out.sort((a, b) => a.index - b.index);
 }
-
