@@ -1,10 +1,14 @@
-/* The app's styles, in cascade order: later files override earlier ones.
+/* The app's styles, in cascade layers: a later layer wins over an earlier
+   one whatever the selectors' specificity. Skins restyle the base and app
+   styles; component and view styles (sizes for a particular place) win over
+   a skin; the shell (layout of the window) wins over everything.
    Colors come only from theme variables (themes.generated.js). */
-@import "./styles/base.css";
-@import "./styles/app.css";
-@import "./styles/skins.css";
-@import "./styles/components.css";
-@import "./styles/flow-designer.css";
-@import "./styles/activity.css";
-@import "./styles/runs.css";
-@import "./styles/shell.css";
+@layer base, app, skins, components, flow-designer, activity, runs, shell;
+@import "./styles/base.css" layer(base);
+@import "./styles/app.css" layer(app);
+@import "./styles/skins.css" layer(skins);
+@import "./styles/components.css" layer(components);
+@import "./styles/flow-designer.css" layer(flow-designer);
+@import "./styles/activity.css" layer(activity);
+@import "./styles/runs.css" layer(runs);
+@import "./styles/shell.css" layer(shell);

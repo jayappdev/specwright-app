@@ -163,8 +163,8 @@ textarea[aria-invalid="true"] {
   width: 18px;
   height: 18px;
 }
-/* html:root beats the skins' own .app widths (Material sets 72px) */
-html:root .app.rail-open {
+/* the shell layer comes after skins, so this beats Material's 72px .app column */
+.app.rail-open {
   grid-template-columns: var(--rail-w, 232px) 1fr;
   position: relative;
 }
@@ -251,7 +251,7 @@ html:root .app.rail-open {
   margin-left: 6px;
 }
 @media (max-width: 760px) {
-  html:root .app.rail-open {
+  .app.rail-open {
     grid-template-columns: 48px 1fr;
   }
   .app.rail-open .activity .activity-text,
