@@ -2,7 +2,7 @@ import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { ProjectPicker } from "../ProjectPicker.jsx";
-import { confirmDialog, askText } from "../Dialog.jsx";
+import { confirmDialog } from "../Dialog.jsx";
 import { Linkify } from "../FileLinks.jsx";
 import { AiProgress } from "../AiProgress.jsx";
 import { EventIcon } from "../EventIcon.jsx";

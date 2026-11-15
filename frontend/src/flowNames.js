@@ -34,7 +34,7 @@ export const stepRef = (_flow, id) => id;
 
 // Moves references by title or tool name ({{find-todos.output_file}}) over
 // to step ids, as loading a flow does (Flow.useStepIDs).
-export function useStepIDs(flow) {
+export function applyStepIDs(flow) {
   const { names } = stepNames(flow), ids = new Set((flow?.nodes || []).map((n) => n.id));
   const fix = (s) => typeof s !== "string" || !s.includes("{{") ? s : s.replace(/\{\{\s*([^{}]+?)\s*\}\}/g, (m, v) => {
     const i = v.indexOf("."), h = i < 0 ? v : v.slice(0, i), r = i < 0 ? "" : v.slice(i + 1);

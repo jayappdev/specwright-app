@@ -35,6 +35,7 @@ export function mdInline(src) {
     .replace(/(^|[^*\w])\*(?=[^\s*])([\s\S]*?[^\s*])\*(?!\*)/g, "$1<em>$2</em>")
     .replace(/(^|[^\w])_(?=[^\s_])([\s\S]*?[^\s_])_(?!\w)/g, "$1<em>$2</em>")
     .replace(/~~(?=\S)([\s\S]*?\S)~~/g, "<del>$1</del>");
+  // eslint-disable-next-line no-control-regex -- NUL marks placeholders that cannot occur in text
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => keep[+i]);
 }
 
@@ -188,5 +189,5 @@ function list(lines, i, out) {
 
 // mdRender: Markdown → safe HTML for display.
 export function mdRender(md = "") {
-  return blocks(String(md).replace(/\r\n?/g, "\n").replace(/^﻿/, "").split("\n"));
+  return blocks(String(md).replace(/\r\n?/g, "\n").replace(/^\ufeff/, "").split("\n"));
 }

@@ -6,7 +6,7 @@ import { Pill } from "../ui.jsx";
 import { RunPanel } from "./Workflow.jsx";
 import { Icon } from "../ui.jsx";
 import { continueInPlayground } from "./Playground.jsx";
-import { ago } from "./FlowRun.jsx";
+import { ago } from "../time.js";
 import { CopyButton } from "../CopyButton.jsx";
 import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHousekeeping.jsx";
 

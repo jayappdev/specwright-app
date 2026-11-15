@@ -2,7 +2,7 @@
 // It mirrors the Go API method-for-method and emits events with the same
 // flattened shape as bus.Event, driven by a scripted agent.
 
-import { stepNames, isStepField, isLoopField, useStepIDs } from "./flowNames.js";
+import { stepNames, isStepField, isLoopField, applyStepIDs } from "./flowNames.js";
 import { shapes as flowShapes, parseSchema, checkPaths, sampleOf, toolOutput } from "./schema.js";
 import { COND_OPS, AGG_FNS, condCheck, condTemplates, filterRows, aggregateRows, aggregateCheck, decide, branchLabel, liveParents } from "./flowRows.js";
 import { BUILTINS } from "./builtins.generated.js";
@@ -636,9 +636,8 @@ export function createMockBackend(methods) {
         opts.push({ title: "Replace the missing tool", summary: `${missing.map((n) => n.tool).join(", ")} is not in this project: the built-in text search does the same job.`, why: "Fixes the flow's problem with a built-in tool; the other steps stay as they are.", flow: { name: base.name, inputs: base.inputs, nodes: fx, edges: clone(base.edges) } });
       }
       const nodes = clone(base.nodes), edges = clone(base.edges), first = nodes.find((n) => n.type === "tool") || nodes.find((n) => n.type !== "start");
-      const after = (id) => edges.filter((e) => e.from === id);
       const v1n = clone(nodes), v1e = clone(edges);
-      if (first) { const outs = after(first.id); v1n.push({ id: "nothing", type: "decision", title: "Anything to report?", mode: "first", branches: [{ id: "some", label: "Something found", when: { match: "all", rules: [{ field: "", op: "not_empty" }] } }] }); v1n.push(out("none", "Nothing to report", "txt"));
+      if (first) { v1n.push({ id: "nothing", type: "decision", title: "Anything to report?", mode: "first", branches: [{ id: "some", label: "Something found", when: { match: "all", rules: [{ field: "", op: "not_empty" }] } }] }); v1n.push(out("none", "Nothing to report", "txt"));
         for (const e of v1e) if (e.from === first.id) e.from = "nothing", e.branch = "some"; v1e.push({ from: first.id, to: "nothing" }, { from: "nothing", to: "none", branch: "else" }); }
       opts.push({ title: "Stop early when there is nothing to report", summary: "Adds a Decision after " + (first?.title || first?.id || "the first step") + " so the rest only runs when it found something.", why: "Deterministic: no extra AI calls, and runs that find nothing finish at once.", flow: { name: base.name, inputs: base.inputs, nodes: v1n, edges: v1e } });
       const v2n = clone(nodes), v2e = clone(edges), ai = v2n.filter((n) => n.type === "ai");
@@ -1147,19 +1146,6 @@ export function createMockBackend(methods) {
           return "";
           };
           await runNodes(order, d, bad);
-          if (false) for (const nid of flowOrder(f)) {
-            if (lr.stop) throw Object.assign(new Error("stopped by you"), { stopped: true });
-            const n = f.nodes.find((x) => x.id === nid), s = stepOf(nid);
-            const blocked = f.edges.some((e) => e.to === nid && bad.has(e.from));
-            if ((o.skip || []).includes(nid) || blocked) { s.status = "skipped"; s.error = blocked ? "a step before it failed" : "skipped by you"; if (blocked) bad.add(nid); d.steps[nid] = ""; state(); continue; }
-            let out;
-            try { out = await runStep(n, d); } catch (e) { if (e.stopped) throw e; bad.add(nid); failed = true; reason = `${s.title} failed: ${e.message}`; continue; }
-            if (wants(n)) out = await review(n, d, out);
-            d.steps[nid] = out;
-            { const ext = /^\s*</.test(out) ? "html" : /^[[{]/.test(String(out).trim()) ? "json" : "txt", rel = resultsDir(id) + "/steps/" + nid + "/output." + ext;
-              db.files[rel] = out; d.files[nid] = db.root + "/" + rel; const ss = st.steps.find((x) => x.id === nid); if (ss) ss.outputFile = rel; }
-            if (o.stopAfter === nid) { st.steps.filter((x) => x.status === "pending").forEach((x) => { x.status = "skipped"; x.error = "the run stops after " + s.title; }); state(); break; }
-          }
         }
         if (failed) final = "failed";
       } catch (e) { final = e.stopped ? "stopped" : "failed"; reason = e.message; }
@@ -1524,7 +1510,7 @@ export function createMockBackend(methods) {
     },
     async FlowOps() { return { ops: FLOW_OPS, mergeModes: ["concat", "json-object", "json-array", "template"], formats: ["md", "txt", "html", "csv", "json"], condOps: COND_OPS, condMatches: ["all", "any", "none"], aggFns: AGG_FNS, aggregateModes: ["group", "window"], rowFormats: ["auto", "json", "csv", "lines"] }; },
     async Flows() { return Object.values(db.flows).map(flowSummary).sort((a, b) => String(b.updated).localeCompare(String(a.updated))); },
-    async LoadFlow(id) { if (!db.flows[id]) throw new Error(`no flow "${id}"`); return useStepIDs(clone(db.flows[id])); },
+    async LoadFlow(id) { if (!db.flows[id]) throw new Error(`no flow "${id}"`); return applyStepIDs(clone(db.flows[id])); },
     async NewFlow(name) { const id = uniqueFlowId(slug(name)); db.flows[id] = { version: 1, id, name: name || "New flow", inputs: [], context: { text: "", files: [] }, skills: [], nodes: [{ id: "start", type: "start", title: "Inputs", x: 40, y: 120 }], edges: [], updated: new Date().toISOString() }; persist(); return clone(db.flows[id]); },
     // the AI designer (scripted here: options built from the project's tools by keywords)
     async DesignFlows(r) { await wait(1200); return designFlows(r); },

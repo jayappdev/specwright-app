@@ -4,7 +4,7 @@ import { EmptyState } from "../ui.jsx";
 import { Pane } from "../Pane.jsx";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { ContentView } from "../ContentView.jsx";
-import { confirmDialog, askText } from "../Dialog.jsx";
+import { confirmDialog } from "../Dialog.jsx";
 import { S, update, toast, errMsg, refreshExtensions, refreshSecrets, refreshSecretsSoon, refreshAdmin } from "../store.js";
 import { Icon, Chip, Pill } from "../ui.jsx";
 import { NeedWorkspace, StatusBadge } from "./Wizard.jsx";

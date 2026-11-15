@@ -5,7 +5,7 @@
 //            edit, change settings and retry), outputs and activity
 //   sidebar  progress and metrics: steps, elapsed time, tokens, credits, tools
 import { ModelPicker } from "../ModelPicker.jsx";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
 import { openFlowGuide } from "./FlowGuide.jsx";
@@ -20,25 +20,13 @@ import { continueInPlayground } from "./Playground.jsx";
 import { ResultsLink } from "../RunResults.jsx";
 import { AiProgress } from "../AiProgress.jsx";
 import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../Attachments.jsx";
-import { FileLink, Linkify } from "../FileLinks.jsx";
-import { mdRender } from "../markdown.js";
+import { FileLink } from "../FileLinks.jsx";
+import { ago } from "../time.js";
 import { CopyButton } from "../CopyButton.jsx";
 
 const frs = () => (S.frun ||= { flows: null, flowId: "", flow: null, creds: [], keychain: false, runs: [], runId: "", inputs: {}, files: {}, opts: defaultOpts(), secretVals: {}, showOpts: false, tab: "refine", decision: {} });
 const defaultOpts = () => ({ review: "ai", repeat: 1, forEach: { input: "", split: "lines", filter: "", max: 100 }, timeoutMinutes: 0, stepTimeoutSeconds: 0, startAt: "", skip: [], stopAfter: "", model: "" });
 const LIVE = ["running", "review", "scheduled"];
-// "just now", "5 min ago", "2 h ago", "yesterday 14:05", then the date
-export function ago(t) {
-  const d = new Date(t), s = (Date.now() - d) / 1000;
-  if (!(s >= 0)) return d.toLocaleString();
-  if (s < 45) return "just now";
-  if (s < 3600) return Math.round(s / 60) + " min ago";
-  if (s < 6 * 3600) return Math.round(s / 3600) + " h ago";
-  const day = (x) => new Date(x).toDateString(), time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
-  if (day(d) === day(Date.now())) return "today " + time;
-  if (day(d) === day(Date.now() - 864e5)) return "yesterday " + time;
-  return d.toLocaleDateString([], { day: "numeric", month: "short" }) + " " + time;
-}
 const STATUS_LABEL = { running: "Running", review: "Waiting for you", scheduled: "Scheduled", done: "Completed", failed: "Failed", stopped: "Stopped", interrupted: "Interrupted", pending: "Pending", skipped: "Skipped" };
 const pill = (s) => ({ review: "paused", scheduled: "pending", interrupted: "failed", stopped: "cancelled", skipped: "pending" }[s] || s);
 
@@ -296,16 +284,6 @@ const estimate = (f) => f.minutesSaved || f.nodes.reduce((m, n) => m + ({ tool: 
 
 // --- run view -----------------------------------------------------------------------
 
-function RenderOutput({ o }) {
-  if (o.format === "html") return <iframe className="fr-html" sandbox="" srcDoc={o.content} title={o.title} />;
-  if (o.format === "md") return <div className="rich md fr-md" dangerouslySetInnerHTML={{ __html: mdRender(o.content) }} />;
-  if (o.format === "csv") {
-    const rows = o.content.trim().split("\n").slice(0, 200).map((l) => l.split(","));
-    return <div className="fr-table"><table className="table"><thead><tr>{rows[0]?.map((c, k) => <th key={k}>{c}</th>)}</tr></thead><tbody>{rows.slice(1).map((r, k) => <tr key={k}>{r.map((c, j) => <td key={j}>{c}</td>)}</tr>)}</tbody></table></div>;
-  }
-  return <pre className="code fr-pre"><Linkify text={o.content} /></pre>;
-}
-
 function Review({ st }) {
   const r = frs(), rv = st.review, d = r.decision, f = r.flow;
   const node = f?.nodes.find((n) => n.id === rv.step);
@@ -442,7 +420,7 @@ function StepFixPanel({ st, s }) {
 
 // A trial run: what changed, and Apply / Discard.
 function TrialBanner({ st }) {
-  const r = frs(), t = st.trial, live = LIVE.includes(st.status);
+  const t = st.trial, live = LIVE.includes(st.status);
   const title = (id) => st.steps.find((x) => x.id === id)?.title || id;
   const apply = async () => {
     try { await backend.ApplyStepFix(st.id); t.applied = true; toast(`Applied to the flow ${st.flowName}.`); update(); } catch (e) { toast(errMsg(e), "error"); }

@@ -3,7 +3,7 @@
 //   bulk        → one document with every rule, edited as rich text or
 //                 Markdown and saved as .md or as rich text (.html)
 import { useEffect, useState } from "react";
-import { confirmDialog, askText } from "../Dialog.jsx";
+import { confirmDialog } from "../Dialog.jsx";
 import { backend } from "../backend.js";
 import { S, update, toast, errMsg, saveProfile } from "../store.js";
 import { RichEditor } from "../RichEditor.jsx";

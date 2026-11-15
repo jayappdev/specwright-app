@@ -15,7 +15,7 @@ import { S, update, toast, errMsg, saveText, refreshExtensions, kcName, isWindow
 import { Icon, Menu, usePopover } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { ToolIcon } from "../ToolTile.jsx";
-import { AttachBar, AttachmentChips, onPasteAttach } from "../Attachments.jsx";
+import { AttachBar, onPasteAttach } from "../Attachments.jsx";
 import { FileLink } from "../FileLinks.jsx";
 import { openFlowGuide, GUIDE_TYPES } from "./FlowGuide.jsx";
 import { paths as schemaPaths, compact, typeName } from "../schema.js";
@@ -1005,7 +1005,7 @@ function branchName(n, id) { return id === "else" ? "Otherwise" : (n?.branches |
 
 // A connection: which path of a Decision it is on.
 function EdgeInspector({ e }) {
-  const f = fl(), a = nodeOf(e.from), b = nodeOf(e.to);
+  const a = nodeOf(e.from), b = nodeOf(e.to);
   if (!a || !b) return null;
   const set = (v) => { e.branch = v; changed(); };
   return <>

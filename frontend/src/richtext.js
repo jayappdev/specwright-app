@@ -16,6 +16,7 @@ function inline(s) {
     .replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>")
     .replace(/(^|[^*\w])\*([^*\s][^*]*)\*/g, "$1<em>$2</em>")
     .replace(/(^|[^_\w])_([^_\s][^_]*)_/g, "$1<em>$2</em>");
+  // eslint-disable-next-line no-control-regex -- NUL marks placeholders that cannot occur in text
   return s.replace(/\u0000(\d+)\u0000/g, (_, i) => `<code>${esc(codes[+i])}</code>`);
 }
 
@@ -75,7 +76,7 @@ export function mdToHtml(md = "") {
 function inlineMd(node) {
   let s = "";
   for (const n of node.childNodes) {
-    if (n.nodeType === 3) { s += n.nodeValue.replace(/ /g, " "); continue; }
+    if (n.nodeType === 3) { s += n.nodeValue.replace(/\u00a0/g, " "); continue; }
     if (n.nodeType !== 1) continue;
     const t = n.tagName.toLowerCase(), inner = () => inlineMd(n);
     const wrap = (m) => { const v = inner(); return v.trim() ? m + v.trim() + m + (/\s$/.test(v) ? " " : "") : v; };
@@ -115,7 +116,7 @@ function block(node) {
   let run = "";
   const push = (b) => { if (run.trim()) parts.push(run.trim()); run = ""; if (b != null && b.trim()) parts.push(b); };
   for (const n of node.childNodes) {
-    if (n.nodeType === 3) { run += n.nodeValue.replace(/ /g, " "); continue; }
+    if (n.nodeType === 3) { run += n.nodeValue.replace(/\u00a0/g, " "); continue; }
     if (n.nodeType !== 1) continue;
     const t = n.tagName.toLowerCase();
     if (/^h[1-6]$/.test(t)) push("#".repeat(Math.min(4, +t[1])) + " " + inlineMd(n).trim().replace(/\n/g, " "));

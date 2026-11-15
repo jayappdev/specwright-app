@@ -3,7 +3,6 @@
 // MCP tools. This view documents each one and lets you try it.
 import { backend } from "../backend.js";
 import { ContentView } from "../ContentView.jsx";
-import { Linkify } from "../FileLinks.jsx";
 import { S, update, toast, errMsg } from "../store.js";
 import { Icon } from "../ui.jsx";
 

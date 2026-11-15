@@ -60,7 +60,7 @@ export function findFileRefs(text) {
     const raw = m[2], index = m.index + m[1].length;
     if (out.some((o) => index < o.index + o.length && index + raw.length > o.index)) continue;
     const before = text.slice(Math.max(0, index - 8), index);
-    if (/:\/\/[^\s]*$/.test(before) || /[\w.-]$/.test(before) && !/[\s(\[{<'"`=,;:|>]$/.test(before)) continue; // inside a URL or word
+    if (/:\/\/[^\s]*$/.test(before) || /[\w.-]$/.test(before) && !/[\s([{<'"`=,;:|>]$/.test(before)) continue; // inside a URL or word
     const ref = parseFileRef(raw);
     if (!ref.path.includes("/") && NOT_FILE.test(ref.path)) continue;
     if (/^\d+(\.\d+)+$/.test(ref.path)) continue;

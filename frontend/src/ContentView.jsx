@@ -3,7 +3,7 @@
 // CSV as tables), links to the saved input and output files, and "Open in
 // preview" for the side panel.
 import { useState } from "react";
-import { S, update, toast } from "./store.js";
+import { S, update } from "./store.js";
 import { Icon } from "./ui.jsx";
 import { mdRender } from "./markdown.js";
 import { highlight } from "./highlight.js";

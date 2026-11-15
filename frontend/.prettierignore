@@ -1,0 +1,6 @@
+# generated files: rebuilt by scripts, not edited by hand
+src/*.generated.js
+dist/
+.dev/
+node_modules/
+wailsjs/

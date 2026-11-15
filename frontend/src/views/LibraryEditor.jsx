@@ -3,7 +3,7 @@
 //   the skill for every project in the app.
 //   Project skills and scripts: anyone; saved as files in the project.
 import { useEffect } from "react";
-import { confirmDialog, askText } from "../Dialog.jsx";
+import { confirmDialog } from "../Dialog.jsx";
 import { backend } from "../backend.js";
 import { S, update, toast, errMsg } from "../store.js";
 import { Icon } from "../ui.jsx";

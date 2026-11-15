@@ -2,10 +2,10 @@
 // read-only for everyone else) with the Tools screen, and manage which
 // admin keys this computer trusts.
 import { useEffect, useState } from "react";
-import { confirmDialog, askText } from "../Dialog.jsx";
+import { confirmDialog } from "../Dialog.jsx";
 import { backend } from "../backend.js";
 import { EmptyState } from "../ui.jsx";
-import { S, update, toast, errMsg, refreshAdmin, refreshExtensions, saveText } from "../store.js";
+import { S, toast, errMsg, refreshAdmin, refreshExtensions, saveText } from "../store.js";
 import { Icon, Card } from "../ui.jsx";
 import { openTool, newManagedTool } from "./Tools.jsx";
 import { loadBuiltins, selectBuiltin } from "./Builtins.jsx";

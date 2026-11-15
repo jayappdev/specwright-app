@@ -242,7 +242,7 @@ export function Playground() {
 // Watching a flow run: its steps, live progress and the full log.
 function FlowWatch({ r, evs }) {
   const st = S.flowRuns[r.id], live = ["running", "review", "scheduled"].includes(st?.status);
-  const u = usageOf(evs);
+
   if (!st) return <div className="card"><span className="spinner" /> Loading the flow run…</div>;
   return <>
     <div className="card run-card pg-flow">
