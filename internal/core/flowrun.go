@@ -296,6 +296,10 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 
 // startFlow starts a run of f (a saved flow, or a trial copy).
 func (h *Hub) startFlow(root string, f *flow.Flow, o FlowRunOptions, trial *FlowTrial) (FlowRunState, error) {
+	// every way to run a flow (Run flows, trials, the built-in tool, headless) passes here
+	if err := h.checkFlowCommands(root, f); err != nil {
+		return FlowRunState{}, err
+	}
 	h.mu.RLock()
 	agentName, model := h.agentName, h.model
 	h.mu.RUnlock()
@@ -1793,6 +1797,10 @@ func (h *Hub) saveImprovement(root string, fr *flowRun, n *flow.Node, kind, text
 			msg = fmt.Sprintf("added the AI step %q after %s", added, firstNonEmpty(cur.Title, cur.ID))
 		}
 	case "command":
+		// the person typed this command in the review panel: it is approved
+		if err := h.approveCommandTexts(root, []string{text}); err != nil {
+			h.flowPublish(fr, "error", "could not approve the saved command: "+err.Error(), map[string]any{"_step": n.ID})
+		}
 		added := insertAfter(f, cur.ID, flow.Node{Type: "transform", Op: "command", Title: "Command after " + firstNonEmpty(cur.Title, cur.ID), Expr: text})
 		msg = fmt.Sprintf("added the command step %q after %s", added, firstNonEmpty(cur.Title, cur.ID))
 	case "settings":

@@ -1519,3 +1519,10 @@ html:root .app.rail-open { grid-template-columns: var(--rail-w, 232px) 1fr; posi
 .fl-node.linking .fl-port.in { border-color: var(--focus); box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 30%, transparent); }
 
 .rail-handle { bottom: 24px; }
+
+/* ---- Run flows: commands to approve ---------------------------------------------- */
+.fr-cmds.needs { border-color: var(--warn); }
+.fr-cmds .card-head svg { width: 16px; height: 16px; color: var(--warn); }
+.fr-cmd-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.fr-cmd-list li { display: grid; grid-template-columns: minmax(120px, auto) 1fr auto; gap: 10px; align-items: center; }
+.fr-cmd { font-family: var(--font-mono); background: var(--code-bg); padding: 4px 8px; border-radius: 4px; overflow-wrap: anywhere; }

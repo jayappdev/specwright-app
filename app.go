@@ -339,6 +339,14 @@ func (a *App) FlowOps() map[string]any { return val(a.hub.FlowOps()) }
 
 // --- flow runs ---
 
+// FlowCommands lists a flow's command steps and whether each is approved.
+func (a *App) FlowCommands(id string) ([]core.FlowCommand, error) { return ok(a.hub.FlowCommands(id)) }
+
+// ApproveFlowCommands approves the commands of these steps for the open project.
+func (a *App) ApproveFlowCommands(id string, steps []string) ([]core.FlowCommand, error) {
+	return ok(a.hub.ApproveFlowCommands(id, steps))
+}
+
 // RunFlow starts a flow run.
 func (a *App) RunFlow(id string, o core.FlowRunOptions) (core.FlowRunState, error) {
 	return ok(a.hub.RunFlow(id, o))

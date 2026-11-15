@@ -62,6 +62,7 @@ async function loadFlow(id) {
     r.inputs = {}; r.files = {};
     for (const i of r.flow.inputs) { r.inputs[i.name] = i.type === "secret" ? "" : i.default || ""; r.files[i.name] = (i.files || []).map((p) => ({ path: p, name: p.split("/").pop(), kind: /\.pdf$/i.test(p) ? "pdf" : /\.(png|jpe?g|gif|webp)$/i.test(p) ? "image" : "text", size: 0 })); }
     r.creds = await backend.FlowCredentials(id).catch(() => []);
+    r.cmds = (await backend.FlowCommands(id).catch(() => [])) || [];
     r.secretStatus = Object.fromEntries(((await backend.FlowSecretStatus(id).catch(() => [])) || []).map((s) => [s.name, s]));
     r.typeSecret = {}; r.saveSecret = {}; r.reveal = {};
   } catch (e) { toast(errMsg(e), "error"); }
@@ -102,7 +103,30 @@ async function start() {
     if (saveSecrets.length) { for (const n of saveSecrets) { r.saveSecret[n] = false; r.typeSecret[n] = false; r.inputs[n] = ""; } backend.FlowSecretStatus(f.id).then((l) => { r.secretStatus = Object.fromEntries((l || []).map((x) => [x.name, x])); update(); }, () => {}); }
     r.runs = [{ id: st.id, workflow: f.id, state: st.status, started: st.started, usage: {} }, ...r.runs];
     update();
-  } catch (e) { toast(errMsg(e), "error"); }
+  } catch (e) {
+    // refused for unapproved commands (they may have changed since the flow was loaded): show the list
+    if (/not approved yet/.test(errMsg(e))) { r.cmds = (await backend.FlowCommands(f.id).catch(() => r.cmds)) || []; update(); document.querySelector(".fr-cmds")?.scrollIntoView({ block: "center" }); }
+    toast(errMsg(e), "error");
+  }
+}
+
+async function approveCommands(steps) {
+  const r = frs();
+  try { r.cmds = (await backend.ApproveFlowCommands(r.flow.id, steps)) || []; update(); toast(steps.length === 1 ? "Command approved for this project." : `${steps.length} commands approved for this project.`); }
+  catch (e) { toast(errMsg(e), "error"); }
+}
+
+// Commands: a flow's "Run a command" steps must be approved for the project before it runs
+function Commands() {
+  const r = frs(), cmds = r.cmds || [], todo = cmds.filter((c) => !c.approved);
+  if (!cmds.length) return null;
+  return <div className={"card fr-cmds" + (todo.length ? " needs" : "")} role="region" aria-label="Commands this flow runs">
+    <div className="card-head"><Icon.warn /><h3>Commands this flow runs</h3>{todo.length ? <span className="badge badge-warn">{todo.length} not approved</span> : <span className="badge badge-ok">approved</span>}</div>
+    <p className="wf-desc">These steps run shell commands in the project folder. Flows can come from files, pasted steps or the AI, so each command must be approved for this project before the flow runs; a changed command needs a new approval.</p>
+    <ul className="fr-cmd-list">{cmds.map((c) => <li key={c.step}><b>{c.title}</b><code className="fr-cmd">$ {c.command}</code>
+      {c.approved ? <span className="badge badge-ok">approved</span> : <button className="btn secondary" onClick={() => approveCommands([c.step])}>Approve</button>}</li>)}</ul>
+    {todo.length > 1 && <div className="row-actions"><button className="btn secondary" onClick={() => approveCommands(todo.map((c) => c.step))}>Approve all {todo.length}</button></div>}
+  </div>;
 }
 
 async function decide(action, extra = {}) {
@@ -260,8 +284,10 @@ function Setup() {
     <div className="card"><div className="card-head"><Icon.inputs /><h3>Inputs</h3><span className="badge">{f.inputs.length}</span></div>
       {f.inputs.length ? <div className="fr-inputs">{f.inputs.map((i) => <InputField key={i.name} i={i} />)}</div> : <p className="muted">This flow asks for nothing.</p>}</div>
     <Credentials />
+    <Commands />
     <Options />
-    <div className="row-actions fr-go"><button className="btn primary fr-run" onClick={start}><Icon.workflow /> {r.opts.startAt ? "Schedule run" : "Run flow"}</button>
+    <div className="row-actions fr-go"><button className="btn primary fr-run" disabled={(r.cmds || []).some((c) => !c.approved)} aria-describedby={(r.cmds || []).some((c) => !c.approved) ? "fr-why" : undefined} onClick={start}><Icon.workflow /> {r.opts.startAt ? "Schedule run" : "Run flow"}</button>
+      {(r.cmds || []).some((c) => !c.approved) && <span id="fr-why" className="muted run-why">Needed first: approve the commands above.</span>}
       <span className="muted">{(() => { const n = f.nodes.filter((x) => !["start", "output"].includes(x.type)).length, o = f.nodes.filter((x) => x.type === "output").length; return `${n} step${n === 1 ? "" : "s"} · ${o} output${o === 1 ? "" : "s"}`; })()} · saves about {estimate(f)} min each run</span></div>
   </>;
 }

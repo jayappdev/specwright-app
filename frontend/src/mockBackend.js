@@ -687,6 +687,7 @@ export function createMockBackend(methods) {
   };
   const flowSummary = (f) => ({ id: f.id, name: f.name, description: f.description, steps: f.nodes.filter((n) => !["start", "output"].includes(n.type)).length, outputs: f.nodes.filter((n) => n.type === "output").length, updated: f.updated, parent: f.parent, revision: f.revision });
   const slug = (n) => (n || "flow").toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 50) || "flow";
+  const flowCmds = (f) => f.nodes.filter((n) => n.type === "transform" && n.op === "command" && (n.expr || "").trim()).map((n) => ({ step: n.id, title: n.title || n.id, command: n.expr, approved: ((db.cmdOK || {})[db.root] || []).includes(n.expr.trim()) }));
   const uniqueFlowId = (id) => { let c = id, k = 2; while (db.flows[c]) c = `${id}-${k++}`; return c; };
   const flowVars = (s) => [...String(s || "").matchAll(/\{\{\s*([^{}]+?)\s*\}\}/g)].map((m) => m[1]);
   const flowAnc = (f, id) => { const seen = new Set(), walk = (n) => f.edges.filter((e) => e.to === n).forEach((e) => { if (!seen.has(e.from)) { seen.add(e.from); walk(e.from); } }); walk(id); return seen; };
@@ -1594,8 +1595,20 @@ export function createMockBackend(methods) {
         return { error: "tools and AI steps run when the flow runs; enter sample output for this step instead" };
       } catch (e) { return { error: e.message }; }
     },
+    // flow commands need approval per project (mirrors internal/core/flowcommands.go)
+    async FlowCommands(id) { const f = db.flows[id]; if (!f) throw new Error(`no flow "${id}"`); return flowCmds(f); },
+    async ApproveFlowCommands(id, steps) {
+      const f = db.flows[id]; if (!f) throw new Error(`no flow "${id}"`);
+      const ok = (db.cmdOK ||= {})[db.root] ||= [];
+      const cmds = flowCmds(f).filter((c) => steps.includes(c.step));
+      if (!cmds.length) throw new Error("no such command step in this flow");
+      for (const c of cmds) if (!ok.includes(c.command.trim())) ok.push(c.command.trim());
+      persist(); return flowCmds(f);
+    },
     async RunFlow(id, o = {}) {
       const f = db.flows[id]; if (!f) throw new Error(`no flow "${id}"`);
+      const todo = flowCmds(f).filter((c) => !c.approved);
+      if (todo.length) throw new Error("this flow runs commands that are not approved yet: " + todo.map((c) => `${c.title} ($ ${c.command})`).join("; ") + ". Review and approve them in Run flows first");
       const errs = validateFlow(f).filter((i) => i.level === "error"); if (errs.length) throw new Error("fix the flow first: " + errs.map((i) => i.message).join(" "));
       o = { ...o, inputs: { ...(o.inputs || {}) } };
       const secrets = {};
