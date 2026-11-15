@@ -1,0 +1,189 @@
+/* In-app dialog; event icons, Activity timeline, Debug. */
+
+/* ---- in-app dialog ------------------------------------------------------------ */
+.dlg-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 90;
+  display: grid;
+  place-items: center;
+  background: rgb(1 4 9 / 0.38);
+  animation: fadein 0.12s ease-out;
+}
+.dlg {
+  width: min(440px, calc(100vw - 32px));
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: calc(var(--radius) + 4px);
+  box-shadow: 0 24px 60px -20px rgb(0 0 0 / 0.5);
+  padding: 18px 20px 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.dlg h3 {
+  margin: 0;
+  font-size: 1.1em;
+}
+.dlg-msg {
+  margin: 0;
+  color: var(--muted);
+}
+.dlg input {
+  width: 100%;
+  padding: 7px 10px;
+}
+.dlg-actions {
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+.btn.primary.danger {
+  background: var(--error);
+  color: #fff;
+}
+
+/* ---- event icons, Activity timeline, Debug ------------------------------------ */
+.ev-ic {
+  flex: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 6px;
+  display: inline-grid;
+  place-items: center;
+  color: var(--ec);
+  background: color-mix(in srgb, var(--ec) 13%, transparent);
+}
+.ev-ic svg {
+  width: 13px;
+  height: 13px;
+}
+.act {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  padding: 5px 12px;
+  position: relative;
+  min-width: 0;
+}
+.act::before {
+  content: "";
+  position: absolute;
+  left: 22.5px;
+  top: 27px;
+  bottom: -5px;
+  width: 1px;
+  background: var(--border);
+}
+.act:last-child::before {
+  display: none;
+}
+.act-body {
+  flex: 1;
+  min-width: 0;
+  padding-top: 2px;
+  overflow-wrap: anywhere;
+}
+.act-time {
+  flex: none;
+  color: var(--faint);
+  font: 0.78em/22px var(--font-mono);
+  font-variant-numeric: tabular-nums;
+}
+.act-tool .act-body {
+  font-family: var(--font-mono);
+  font-size: 0.88em;
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  min-width: 0;
+}
+.act-tool-name {
+  font-weight: 600;
+  flex: none;
+}
+.act-arg {
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.act-state {
+  flex: none;
+  font-size: max(11px, 0.78em);
+  line-height: 22px;
+  padding: 0 8px;
+  border-radius: 999px;
+  color: var(--muted);
+  background: var(--code-bg);
+}
+.act-state.good {
+  color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 12%, transparent);
+}
+.act-state.bad {
+  color: var(--error);
+  background: color-mix(in srgb, var(--error) 12%, transparent);
+}
+.act-say .act-text {
+  white-space: pre-wrap;
+  font-family: var(--font-body);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 12px;
+  line-height: 1.55;
+}
+.act-quiet .act-body {
+  color: var(--muted);
+  font-size: 0.88em;
+}
+.act-usage .act-body {
+  font-family: var(--font-mono);
+}
+.act-fs .act-body {
+  font-size: 0.92em;
+}
+.act-gate .act-body {
+  color: var(--warn);
+}
+.act-bad .act-body {
+  color: var(--error);
+}
+.act-good .act-body {
+  color: var(--ok);
+}
+.act-step .act-body {
+  font-size: 0.95em;
+}
+.transcript-inner > .act:first-child {
+  margin-top: 4px;
+}
+.dbg-type {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.dbg-type .ev-ic {
+  width: 18px;
+  height: 18px;
+  border-radius: 5px;
+}
+.dbg-type .ev-ic svg {
+  width: 11px;
+  height: 11px;
+}
+.dbg-row {
+  grid-template-columns: 34px 70px 170px 1fr 52px 52px;
+}
+.dbg-row:nth-child(even):not(.dbg-headrow) {
+  background: color-mix(in srgb, var(--fg) 2.5%, transparent);
+}
+.pg-tool > summary .ev-ic {
+  width: 20px;
+  height: 20px;
+}

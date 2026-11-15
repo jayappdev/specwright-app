@@ -1,0 +1,411 @@
+/* Skins that change shape and type: Material (Android) and Copilot. */
+
+/* ---- Material skin (Android, Material 3) ------------------------------------
+   Roboto, 4-dp grid, pill buttons, 12-16 px rounded containers that sit on
+   tonal surfaces instead of borders, outlined fields, a navigation rail with
+   a pill-shaped active indicator. */
+:root[data-skin="material"] {
+  --font-ui: "Roboto Variable", Roboto, -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "Roboto Mono Variable", ui-monospace, Menlo, monospace;
+  --radius: 12px;
+  --gap: 16px;
+  --pad: 20px;
+  --row-pad: 8px;
+}
+:root[data-skin="material"] body {
+  letter-spacing: 0.01em;
+}
+:root[data-skin="material"] h1 {
+  font-weight: 400;
+  font-size: 1.6em;
+  letter-spacing: 0;
+}
+:root[data-skin="material"] h3 {
+  font-weight: 500;
+  font-size: 1.1em;
+}
+:root[data-skin="material"] h4 {
+  text-transform: none;
+  letter-spacing: 0.01em;
+  font-weight: 500;
+  font-size: 0.9em;
+}
+:root[data-skin="material"] .card {
+  border: 0;
+  border-radius: 16px;
+  padding: 16px 18px;
+  box-shadow:
+    0 1px 2px rgb(0 0 0 / 0.12),
+    0 1px 3px 1px rgb(0 0 0 / 0.06);
+}
+:root[data-skin="material"] .banner {
+  border: 0;
+  border-radius: 12px;
+  background: var(--select-bg);
+  color: var(--select-fg);
+}
+:root[data-skin="material"] .btn {
+  border-radius: 999px;
+  padding: 8px 22px;
+  font-weight: 500;
+  letter-spacing: 0.02em;
+  min-height: 36px;
+}
+:root[data-skin="material"] .btn.primary {
+  box-shadow: 0 1px 2px rgb(0 0 0 / 0.2);
+}
+:root[data-skin="material"] .btn.primary:hover:not(:disabled) {
+  box-shadow: 0 2px 6px rgb(0 0 0 / 0.25);
+}
+:root[data-skin="material"] .btn.secondary {
+  background: var(--btn2-bg);
+  border-color: transparent;
+}
+:root[data-skin="material"] .chip,
+:root[data-skin="material"] .stepchip {
+  border-radius: 8px;
+  padding: 5px 14px;
+}
+:root[data-skin="material"] .chip[aria-pressed="true"] {
+  border-color: transparent;
+}
+:root[data-skin="material"] input,
+:root[data-skin="material"] select,
+:root[data-skin="material"] textarea {
+  border-radius: 4px;
+  padding: 8px 12px;
+  background: transparent;
+}
+:root[data-skin="material"] input:focus,
+:root[data-skin="material"] select:focus,
+:root[data-skin="material"] textarea:focus {
+  outline: none;
+  border-color: var(--btn-bg);
+  box-shadow: inset 0 0 0 1px var(--btn-bg);
+}
+:root[data-skin="material"] .app {
+  grid-template-columns: 72px 1fr;
+}
+:root[data-skin="material"] .activity {
+  border-right: 0;
+  padding-top: 8px;
+}
+:root[data-skin="material"] .activity-btn {
+  width: 56px;
+  height: 32px;
+  margin: 4px 0;
+  border: 0;
+  border-radius: 999px;
+}
+:root[data-skin="material"] .activity-btn.active {
+  background: var(--select-bg);
+  color: var(--select-fg);
+}
+:root[data-skin="material"] .activity-group {
+  border-top: 0;
+  padding: 4px 0;
+}
+:root[data-skin="material"] .activity-label {
+  font-size: 11px;
+  text-transform: none;
+  letter-spacing: 0.02em;
+  font-weight: 500;
+}
+:root[data-skin="material"] .tree-item,
+:root[data-skin="material"] .run-item {
+  border-radius: 999px;
+  padding: 6px 12px;
+}
+:root[data-skin="material"] .tab[aria-selected="true"] {
+  border-bottom-width: 3px;
+}
+:root[data-skin="material"] .badge,
+:root[data-skin="material"] .pill {
+  font-weight: 500;
+}
+:root[data-skin="material"] .code,
+:root[data-skin="material"] .transcript {
+  border: 0;
+  border-radius: 12px;
+}
+:root[data-skin="material"] .statusbar {
+  border-top: 0;
+}
+
+/* ---- Copilot skin -------------------------------------------------------------
+   Mona Sans, soft rounded panels with a hairline border and a gentle shadow,
+   a gradient primary button (primary → tertiary accent), glowing focus. */
+:root[data-skin="copilot"] {
+  --font-ui: "Mona Sans Variable", -apple-system, "Segoe UI", sans-serif;
+  --font-mono: "JetBrains Mono Variable", ui-monospace, Menlo, monospace;
+  --radius: 10px;
+  --gap: 14px;
+  --pad: 20px;
+  --row-pad: 7px;
+}
+:root[data-skin="copilot"] h1 {
+  font-weight: 650;
+  letter-spacing: -0.015em;
+  font-size: 1.45em;
+}
+:root[data-skin="copilot"] h3 {
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+:root[data-skin="copilot"] .card {
+  border-radius: 14px;
+  box-shadow:
+    0 1px 0 rgb(255 255 255 / 0.03) inset,
+    0 8px 24px -12px rgb(0 0 0 / 0.35);
+}
+:root[data-skin="copilot"] .btn {
+  border-radius: 8px;
+  padding: 6px 16px;
+  font-weight: 600;
+}
+:root[data-skin="copilot"] .btn.primary {
+  background: linear-gradient(135deg, var(--btn-bg), var(--syn-number));
+  color: var(--btn-fg);
+  box-shadow: 0 4px 14px -6px var(--btn-bg);
+}
+:root[data-skin="copilot"] .btn.primary:hover:not(:disabled) {
+  filter: brightness(1.08);
+  background: linear-gradient(135deg, var(--btn-hover), var(--syn-number));
+}
+:root[data-skin="copilot"] input:focus,
+:root[data-skin="copilot"] select:focus,
+:root[data-skin="copilot"] textarea:focus {
+  outline: none;
+  border-color: var(--focus);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 30%, transparent);
+}
+:root[data-skin="copilot"] .activity-btn {
+  border-left: 0;
+  border-radius: 10px;
+  width: 38px;
+  height: 38px;
+  margin: 3px 0;
+}
+:root[data-skin="copilot"] .activity-btn.active {
+  background: color-mix(in srgb, var(--activity-accent) 18%, transparent);
+  color: var(--activity-accent);
+  box-shadow: 0 0 12px -2px color-mix(in srgb, var(--activity-accent) 50%, transparent);
+}
+:root[data-skin="copilot"] .tree-item,
+:root[data-skin="copilot"] .run-item {
+  border-radius: 8px;
+}
+:root[data-skin="copilot"] .chip {
+  border-radius: 8px;
+}
+:root[data-skin="copilot"] .badge {
+  font-weight: 600;
+}
+:root[data-skin="copilot"] .code {
+  border-radius: 10px;
+}
+
+/* Appearance: style samples, font preview, matching-style hint */
+.att-bar {
+  margin-top: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.att-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.att-actions .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 3px;
+  padding-bottom: 3px;
+}
+.att-actions svg {
+  width: 14px;
+  height: 14px;
+}
+.att-hint {
+  font-size: 0.85em;
+}
+.att-list {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.att-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 280px;
+  padding: 4px 6px 4px 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  background: var(--bg);
+}
+.att-chip.saving {
+  opacity: 0.7;
+}
+.att-chip img,
+.att-icon {
+  width: 36px;
+  height: 36px;
+  border-radius: 4px;
+  object-fit: cover;
+  flex: none;
+}
+.att-icon {
+  display: grid;
+  place-items: center;
+  font-size: max(11px, 0.68em);
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background: var(--code-bg);
+  color: var(--muted);
+}
+.att-icon.att-pdf {
+  background: color-mix(in srgb, var(--error) 18%, transparent);
+  color: var(--error);
+}
+.att-icon.att-image {
+  background: color-mix(in srgb, var(--info) 18%, transparent);
+  color: var(--info);
+}
+.att-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  min-width: 0;
+}
+.att-size {
+  color: var(--muted);
+  font-size: max(11px, 0.82em);
+  white-space: nowrap;
+}
+.att-x {
+  background: none;
+  border: 0;
+  color: var(--muted);
+  cursor: pointer;
+  padding: 2px;
+  display: grid;
+}
+.att-x:hover {
+  color: var(--fg);
+}
+.att-zone {
+  transition:
+    box-shadow 0.12s,
+    border-color 0.12s;
+}
+.att-drop-over {
+  border-color: var(--focus) !important;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--focus) 25%, transparent);
+}
+.lib-actions {
+  display: inline-flex;
+  gap: 2px;
+  flex: none;
+  align-self: center;
+}
+.lib-note {
+  display: flex;
+  gap: 6px;
+  align-items: flex-start;
+  font-size: 0.9em;
+  margin: 0 0 8px;
+}
+.lib-note svg {
+  flex: none;
+  margin-top: 3px;
+}
+.row-actions .btn svg {
+  width: 12px;
+  height: 12px;
+  vertical-align: -1px;
+  margin-right: 2px;
+}
+.lib-drawer {
+  width: min(820px, 100%);
+}
+.lib-code {
+  min-height: 360px;
+  flex: 1;
+}
+.style-hint {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.sample-row {
+  display: flex;
+  gap: 6px;
+  margin-top: 6px;
+  align-items: center;
+}
+.sample-btn {
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  font-size: max(11px, 0.8em);
+  font-weight: 600;
+  padding: 2px 12px;
+  border-radius: 6px;
+}
+.sample-chip {
+  border: 1px solid var(--border);
+  font-size: max(11px, 0.8em);
+  padding: 1px 10px;
+  border-radius: 999px;
+  color: var(--muted);
+}
+[data-sample="console"] {
+  font-family: var(--font-mono);
+}
+[data-sample="console"] .sample-btn,
+[data-sample="console"] .sample-chip {
+  border-radius: 0;
+}
+[data-sample="paper"] b {
+  font-family: Georgia, serif;
+}
+[data-sample="paper"] .sample-btn {
+  border-radius: 10px;
+}
+[data-sample="material"] {
+  font-family: "Roboto Variable", Roboto, sans-serif;
+}
+[data-sample="material"] .sample-btn {
+  border-radius: 999px;
+  padding: 3px 14px;
+}
+[data-sample="material"] .sample-chip {
+  border-radius: 8px;
+}
+[data-sample="copilot"] {
+  font-family: "Mona Sans Variable", sans-serif;
+}
+[data-sample="copilot"] .sample-btn {
+  border-radius: 8px;
+  background: linear-gradient(135deg, var(--btn-bg), var(--syn-number));
+}
+.font-preview {
+  margin-top: 10px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.font-preview span {
+  font-size: 1.15em;
+}
+.font-preview code {
+  color: var(--syn-function);
+}
