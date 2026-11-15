@@ -257,13 +257,13 @@ func (h *Hub) DeleteExtension(name string) error {
 
 // SetSecret keeps a secret value in memory for this session.
 func (h *Hub) SetSecret(name, value string) {
-	h.mu.Lock()
+	h.sec.mu.Lock()
 	if value == "" {
-		delete(h.secrets, name)
+		delete(h.sec.values, name)
 	} else {
-		h.secrets[name] = value
+		h.sec.values[name] = value
 	}
-	h.mu.Unlock()
+	h.sec.mu.Unlock()
 	h.Store.Redactor().Add(value)
 }
 
@@ -681,9 +681,9 @@ drain:
 	leak := false
 	all := agentText.String() + res.Text + tr.Output
 	for _, s := range d.Secrets {
-		h.mu.RLock()
-		v := h.resolved[s.Name]
-		h.mu.RUnlock()
+		h.sec.mu.RLock()
+		v := h.sec.resolved[s.Name]
+		h.sec.mu.RUnlock()
 		if v != "" && strings.Contains(all, v) {
 			leak = true
 		}
@@ -695,9 +695,9 @@ drain:
 			ans = strings.TrimSpace(agentText.String())
 		}
 		for _, s := range d.Secrets {
-			h.mu.RLock()
-			v := h.resolved[s.Name]
-			h.mu.RUnlock()
+			h.sec.mu.RLock()
+			v := h.sec.resolved[s.Name]
+			h.sec.mu.RUnlock()
 			if v != "" {
 				ans = strings.ReplaceAll(ans, v, "[REDACTED]")
 			}

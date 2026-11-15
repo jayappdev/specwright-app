@@ -57,6 +57,16 @@ type secretAnswer struct {
 // AskSecretsTimeout is how long a tool call waits for the user.
 var AskSecretsTimeout = 10 * time.Minute
 
+// secretsState holds secret values and prompts, under their own lock so a
+// keychain lookup or a waiting prompt does not hold the hub's lock.
+type secretsState struct {
+	mu       sync.RWMutex
+	values   map[string]string                                               // session values ("remember for this session"), by name
+	resolved map[string]string                                               // values resolved for tool runs, for leak checks
+	pending  map[string]chan secretAnswer                                    // prompts waiting for the UI, by request id
+	ask      func(context.Context, SecretRequest) (map[string]string, error) // non-UI asker (headless)
+}
+
 func envName(s extension.Secret) string {
 	if s.Env != "" {
 		return s.Env
@@ -142,13 +152,13 @@ func UseLoginShellPath() {
 
 // SecretInfo reports, for each secret, where its value would come from.
 func (h *Hub) SecretInfo(secrets []extension.Secret) []SecretState {
-	h.mu.RLock()
-	defer h.mu.RUnlock()
+	h.sec.mu.RLock()
+	defer h.sec.mu.RUnlock()
 	out := make([]SecretState, 0, len(secrets))
 	for _, s := range secrets {
 		st := SecretState{Name: s.Name, Source: firstNonEmpty(s.Source, "auto"), Env: envName(s)}
 		_, st.EnvSet = lookupEnv(st.Env)
-		_, inSession := h.secrets[s.Name]
+		_, inSession := h.sec.values[s.Name]
 		inKeychain := false
 		if !inSession && !st.EnvSet && (st.Source == "auto" || st.Source == "keychain") {
 			_, inKeychain = kcGet(s.Name)
@@ -204,10 +214,10 @@ func (h *Hub) ResolveSecrets(ctx context.Context, e extension.Extension) (map[st
 	vals := map[string]string{}
 	var ask []extension.Secret
 	var missing []string
-	h.mu.RLock()
+	h.sec.mu.RLock()
 	for _, s := range e.Secrets {
 		src := firstNonEmpty(s.Source, "auto")
-		sv, inSession := h.secrets[s.Name]
+		sv, inSession := h.sec.values[s.Name]
 		switch {
 		case (src == "auto" || src == "session" || src == "ask" || src == "keychain") && inSession:
 			vals[s.Name] = sv
@@ -233,8 +243,8 @@ func (h *Hub) ResolveSecrets(ctx context.Context, e extension.Extension) (map[st
 			missing = append(missing, s.Name+" has no value for this session; enter it under Tools › Secrets")
 		}
 	}
-	asker := h.askSecrets
-	h.mu.RUnlock()
+	asker := h.sec.ask
+	h.sec.mu.RUnlock()
 	if len(missing) > 0 {
 		return nil, errors.New(strings.Join(missing, "; "))
 	}
@@ -254,23 +264,23 @@ func (h *Hub) ResolveSecrets(ctx context.Context, e extension.Extension) (map[st
 			}
 		}
 	}
-	h.mu.Lock()
-	if h.resolved == nil {
-		h.resolved = map[string]string{}
+	h.sec.mu.Lock()
+	if h.sec.resolved == nil {
+		h.sec.resolved = map[string]string{}
 	}
 	for k, v := range vals {
 		h.Store.Redactor().Add(v)
-		h.resolved[k] = v
+		h.sec.resolved[k] = v
 	}
-	h.mu.Unlock()
+	h.sec.mu.Unlock()
 	return vals, nil
 }
 
 // SetSecretAsker replaces the UI prompt (the headless runner cannot show one).
 func (h *Hub) SetSecretAsker(f func(context.Context, SecretRequest) (map[string]string, error)) {
-	h.mu.Lock()
-	h.askSecrets = f
-	h.mu.Unlock()
+	h.sec.mu.Lock()
+	h.sec.ask = f
+	h.sec.mu.Unlock()
 }
 
 func (h *Hub) askThroughUI(ctx context.Context, req SecretRequest) (map[string]string, error) {
@@ -278,13 +288,13 @@ func (h *Hub) askThroughUI(ctx context.Context, req SecretRequest) (map[string]s
 	_, _ = rand.Read(b)
 	req.ID = hex.EncodeToString(b)
 	ch := make(chan secretAnswer, 1)
-	h.mu.Lock()
-	if h.pendingSecrets == nil {
-		h.pendingSecrets = map[string]chan secretAnswer{}
+	h.sec.mu.Lock()
+	if h.sec.pending == nil {
+		h.sec.pending = map[string]chan secretAnswer{}
 	}
-	h.pendingSecrets[req.ID] = ch
-	h.mu.Unlock()
-	defer func() { h.mu.Lock(); delete(h.pendingSecrets, req.ID); h.mu.Unlock() }()
+	h.sec.pending[req.ID] = ch
+	h.sec.mu.Unlock()
+	defer func() { h.sec.mu.Lock(); delete(h.sec.pending, req.ID); h.sec.mu.Unlock() }()
 
 	var names []string
 	for _, s := range req.Secrets {
@@ -310,13 +320,13 @@ func (h *Hub) askThroughUI(ctx context.Context, req SecretRequest) (map[string]s
 			return nil, fmt.Errorf("you declined to provide %s", strings.Join(names, ", "))
 		}
 		if a.remember {
-			h.mu.Lock()
+			h.sec.mu.Lock()
 			for k, v := range a.values {
 				if v != "" {
-					h.secrets[k] = v
+					h.sec.values[k] = v
 				}
 			}
-			h.mu.Unlock()
+			h.sec.mu.Unlock()
 		}
 		done(true)
 		return a.values, nil
@@ -331,9 +341,9 @@ func (h *Hub) askThroughUI(ctx context.Context, req SecretRequest) (map[string]s
 
 // AnswerSecrets delivers the user's values for a pending request.
 func (h *Hub) AnswerSecrets(id string, values map[string]string, remember bool) error {
-	h.mu.RLock()
-	ch := h.pendingSecrets[id]
-	h.mu.RUnlock()
+	h.sec.mu.RLock()
+	ch := h.sec.pending[id]
+	h.sec.mu.RUnlock()
 	if ch == nil {
 		return errors.New("that request is no longer waiting (it may have timed out)")
 	}
@@ -350,9 +360,9 @@ func (h *Hub) AnswerSecrets(id string, values map[string]string, remember bool) 
 
 // CancelSecrets declines a pending request; the tool call fails.
 func (h *Hub) CancelSecrets(id string) error {
-	h.mu.RLock()
-	ch := h.pendingSecrets[id]
-	h.mu.RUnlock()
+	h.sec.mu.RLock()
+	ch := h.sec.pending[id]
+	h.sec.mu.RUnlock()
 	if ch == nil {
 		return nil
 	}

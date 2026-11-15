@@ -224,9 +224,9 @@ func TestFlowRunCredentials(t *testing.T) {
 	// no keychain entry: the run stops and asks, tagged with the run id
 	delete(store, "SpecWright/FLOW_TEST_TOKEN")
 	kcForget("FLOW_TEST_TOKEN")
-	h.mu.Lock()
-	delete(h.secrets, "FLOW_TEST_TOKEN")
-	h.mu.Unlock()
+	h.sec.mu.Lock()
+	delete(h.sec.values, "FLOW_TEST_TOKEN")
+	h.sec.mu.Unlock()
 	ch, unsub := h.Bus.Subscribe(256, nil)
 	defer unsub()
 	st, _ = h.RunFlow("tok", FlowRunOptions{Review: "none"})

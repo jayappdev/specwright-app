@@ -53,15 +53,11 @@ type Hub struct {
 	stopWatch context.CancelFunc
 	agentName string
 	model     string
-	token     string // session-only credential, never persisted
-	secrets   map[string]string
-	// secrets resolved for tool runs (for leak checks), pending UI prompts,
-	// and an optional non-UI asker (headless)
-	resolved       map[string]string
-	pendingSecrets map[string]chan secretAnswer
-	flowRuns       map[string]*flowRun // live flow runs
-	resultsWG      sync.WaitGroup      // results folders being written
-	closing        bool                // Close has started: no new results writes
+	token     string              // session-only credential, never persisted
+	sec       secretsState        // session secrets, pending prompts, resolved values (secrets.go)
+	flowRuns  map[string]*flowRun // live flow runs
+	resultsWG sync.WaitGroup      // results folders being written
+	closing   bool                // Close has started: no new results writes
 	// Clipboard copies text for a flow output's "copy" action (set by the
 	// desktop app; nil in headless runs).
 	Clipboard func(string) error
@@ -74,11 +70,10 @@ type Hub struct {
 	tools     *builtin.Box            // built-in agent tools (read_file, edit_file, …)
 	aiShimDir string                  // claude/copilot launchers put first on tools' PATH ("" = off)
 	// Spec Kit download (see speckit.go)
-	sk         skDownload // the Spec Kit download in progress (speckit.go)
-	askSecrets func(context.Context, SecretRequest) (map[string]string, error)
-	perms      permissionState // permission prompts (permissions.go)
-	runs       map[string]*workflow.Run
-	testCalls  chan testCall
+	sk        skDownload      // the Spec Kit download in progress (speckit.go)
+	perms     permissionState // permission prompts (permissions.go)
+	runs      map[string]*workflow.Run
+	testCalls chan testCall
 }
 
 // Options configure New.
@@ -103,7 +98,8 @@ func New(o Options) (*Hub, error) {
 	st.MarkInterrupted()
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{Bus: bus.New(), Store: st, Agents: agent.NewRegistry(), ctx: ctx, cancel: cancel,
-		agentName: o.Agent, secrets: map[string]string{}, runs: map[string]*workflow.Run{}}
+		agentName: o.Agent, runs: map[string]*workflow.Run{}}
+	h.sec.values = map[string]string{}
 	if h.agentName == "" {
 		h.agentName = "claude"
 	}

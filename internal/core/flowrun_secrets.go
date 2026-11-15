@@ -75,16 +75,16 @@ func (h *Hub) promptSecrets(ctx context.Context, fr *flowRun) error {
 	key := func(in flow.Input) string { return "flow:" + fr.flow.ID + ":" + in.Name }
 	var ask []extension.Secret
 	vals := map[string]string{}
-	h.mu.RLock()
+	h.sec.mu.RLock()
 	for _, in := range o.prompt {
-		if v := h.secrets[key(in)]; v != "" {
+		if v := h.sec.values[key(in)]; v != "" {
 			vals[in.Name] = v
 			continue
 		}
 		ask = append(ask, extension.Secret{Name: in.Name, Desc: firstNonEmpty(strings.TrimSpace(in.Label+" "+in.Description), in.Name), Source: "ask"})
 	}
-	asker := h.askSecrets
-	h.mu.RUnlock()
+	asker := h.sec.ask
+	h.sec.mu.RUnlock()
 	if len(ask) > 0 {
 		if asker == nil {
 			asker = h.askThroughUI
@@ -94,17 +94,17 @@ func (h *Hub) promptSecrets(ctx context.Context, fr *flowRun) error {
 		if err != nil {
 			return err
 		}
-		h.mu.Lock()
+		h.sec.mu.Lock()
 		for _, s := range ask {
 			if v := got[s.Name]; v != "" {
 				vals[s.Name] = v
-				if h.secrets[s.Name] == v { // "remember for this session": kept for this flow's input, not as a tool secret
-					h.secrets[key(flow.Input{Name: s.Name})] = v
-					delete(h.secrets, s.Name)
+				if h.sec.values[s.Name] == v { // "remember for this session": kept for this flow's input, not as a tool secret
+					h.sec.values[key(flow.Input{Name: s.Name})] = v
+					delete(h.sec.values, s.Name)
 				}
 			}
 		}
-		h.mu.Unlock()
+		h.sec.mu.Unlock()
 	}
 	for _, in := range o.prompt {
 		if vals[in.Name] == "" && in.Required {
