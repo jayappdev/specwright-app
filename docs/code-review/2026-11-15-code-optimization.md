@@ -2,6 +2,24 @@
 
 Analysis only: no code was changed for this report. It follows up [2026-11-10-maintainability.md](2026-11-10-maintainability.md) (referred to below as "the 11-10 review"), re-measures the code, says which of its items are still open, and adds what has appeared since, including debt from the UI work of 15 Nov.
 
+## Status (branch `feature/ui-improvements`, 2026-11-15)
+
+| Item | State | Commit |
+|---|---|---|
+| C1 | Done: UI work committed on its own branch; the build keeps `dist/.gitkeep`. | `d555633`, `77d2bde`, `1b152fa` |
+| C2 | Done: command steps need approval per project (stored in the app data folder, by command hash); Run flows lists and approves them; test added. | `ab37489` |
+| C3 | Done: store write failures go to a hook, logged and shown as `store.error`; results files report the first failed write; test added. | `bc19172` |
+| H1 | Done (first half): `SpecWright devserver` serves the real backend to the browser preview (`?devbackend=…&token=…`). The mock still exists; cutting it down to fixtures is open. | `1c5a42e` |
+| H2 | Started: permission prompts and the Spec Kit download moved into their own types and locks. The bigger areas (secrets, admin, libraries, flows, results) are open. | `21d2d64` |
+| H3 | Done as files: `flowrun.go` split into six files by concern. Moving it to its own package behind interfaces is open. | `c7cefce` |
+| H4 | Started: Prettier pass (lines over 200 characters 979 → 71); `RunPanel`, `RunSettings` and the AI designer moved out of the big views. Further splits of `Flows.jsx` (4,686 lines), `FlowRun.jsx` and `Tools.jsx` are open. | `8c99aaa`, `03ab88e` |
+| H5 | Done: one notification per task, prefs written only on change, old run events dropped, cheap modal observer. | `52aced1` |
+| H6 | Done: ESLint, Prettier, Vitest (20 tests), Makefile (`make check`), GitHub Actions. CI has not run yet (nothing pushed). | `31e9eb7` |
+| H7 | Done: `shortcuts.js` registry; palette, History and flow canvas use it; shortcuts listed in the palette. Dialog-owned Esc handlers stay with their dialogs. | `2d2045e` |
+| H8 | Done: every `S` field declared in `store.js`; layout flags moved to `S.layout` (old prefs migrated). | `2d2045e` |
+| H9 | Started: `styles.css` split into eight ordered files (built CSS identical). Cascade layers for skins are open. | `2a5bd1c` |
+| L4 (part), L9 (part) | `ago` moved to `time.js`; `RunPanel` key warning fixed. | `31e9eb7`, `03ab88e` |
+
 Priorities:
 - **Critical:** risk of lost work, lost data or a security problem. Do first.
 - **High:** slows every change down or will cause bugs or slowness soon.
