@@ -9,6 +9,7 @@ import (
 	"regexp"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 
 	"codegen/internal/bus"
@@ -37,6 +38,17 @@ type SpecKitSetup struct {
 
 // SpecKitInfo describes the open project's Spec Kit setup and the
 // download on this computer.
+
+// skDownload is the state of the Spec Kit download (one at a time), apart
+// from the hub's lock: it is read by the UI while the download runs.
+type skDownload struct {
+	mu       sync.Mutex
+	running  bool
+	progress string
+	err      string
+	done     chan struct{}
+}
+
 func (h *Hub) SpecKitInfo() speckit.Info {
 	var in speckit.Info
 	if h.Root() != "" {
@@ -44,9 +56,9 @@ func (h *Hub) SpecKitInfo() speckit.Info {
 		in.Project = h.specRel()
 	}
 	in.Available = h.skCache().Latest()
-	h.skMu.Lock()
-	in.Downloading, in.Progress, in.Error = h.skRunning, h.skProgress, h.skErr
-	h.skMu.Unlock()
+	h.sk.mu.Lock()
+	in.Downloading, in.Progress, in.Error = h.sk.running, h.sk.progress, h.sk.err
+	h.sk.mu.Unlock()
 	return in
 }
 
@@ -84,14 +96,14 @@ func (h *Hub) DownloadSpecKit(force bool) speckit.Info {
 // startSpecKitDownload runs one download at a time; done is closed when it
 // ends.
 func (h *Hub) startSpecKitDownload() chan struct{} {
-	h.skMu.Lock()
-	defer h.skMu.Unlock()
-	if h.skRunning {
-		return h.skDone
+	h.sk.mu.Lock()
+	defer h.sk.mu.Unlock()
+	if h.sk.running {
+		return h.sk.done
 	}
-	h.skRunning, h.skErr, h.skProgress = true, "", "Looking up the latest Spec Kit release…"
-	h.skDone = make(chan struct{})
-	done := h.skDone
+	h.sk.running, h.sk.err, h.sk.progress = true, "", "Looking up the latest Spec Kit release…"
+	h.sk.done = make(chan struct{})
+	done := h.sk.done
 	go func() {
 		defer close(done)
 		ctx, cancel := context.WithTimeout(h.ctx, 15*time.Minute)
@@ -99,21 +111,21 @@ func (h *Hub) startSpecKitDownload() chan struct{} {
 		n := h.skNet()
 		v := speckit.LatestRelease(ctx, n)
 		log := func(l string) {
-			h.skMu.Lock()
-			h.skProgress = l
-			h.skMu.Unlock()
+			h.sk.mu.Lock()
+			h.sk.progress = l
+			h.sk.mu.Unlock()
 			h.Bus.Publish(bus.Event{Type: "speckit.download", Summary: l})
 		}
 		err := h.skCache().Download(ctx, v, n, log)
-		h.skMu.Lock()
-		h.skRunning = false
+		h.sk.mu.Lock()
+		h.sk.running = false
 		if err != nil {
-			h.skErr = h.Store.Redactor().String(err.Error())
-			h.skProgress = ""
+			h.sk.err = h.Store.Redactor().String(err.Error())
+			h.sk.progress = ""
 		}
-		h.skMu.Unlock()
+		h.sk.mu.Unlock()
 		if err != nil {
-			h.Bus.Publish(bus.Event{Type: "speckit.download", Summary: "Spec Kit download failed", Data: map[string]any{"error": h.skErr}})
+			h.Bus.Publish(bus.Event{Type: "speckit.download", Summary: "Spec Kit download failed", Data: map[string]any{"error": h.sk.err}})
 		}
 	}()
 	return done
@@ -129,9 +141,9 @@ func (h *Hub) ensureSpecKit() (string, error) {
 	if v := h.skCache().Latest(); v != "" {
 		return v, nil
 	}
-	h.skMu.Lock()
-	msg := h.skErr
-	h.skMu.Unlock()
+	h.sk.mu.Lock()
+	msg := h.sk.err
+	h.sk.mu.Unlock()
 	return "", fmt.Errorf("Spec Kit could not be downloaded: %s (check the proxy under Packages & proxy)", firstNonEmpty(msg, "unknown error"))
 }
 

@@ -74,19 +74,11 @@ type Hub struct {
 	tools     *builtin.Box            // built-in agent tools (read_file, edit_file, …)
 	aiShimDir string                  // claude/copilot launchers put first on tools' PATH ("" = off)
 	// Spec Kit download (see speckit.go)
-	skMu       sync.Mutex
-	skRunning  bool
-	skProgress string
-	skErr      string
-	skDone     chan struct{}
+	sk         skDownload // the Spec Kit download in progress (speckit.go)
 	askSecrets func(context.Context, SecretRequest) (map[string]string, error)
-	// permission prompts: pending UI questions, "allow for this run"
-	// answers by agent process, and an optional non-UI asker (headless)
-	pendingPerms map[string]chan permAnswer
-	permAllowed  map[string]map[string]bool
-	askPerm      func(context.Context, extension.PermissionRequest) extension.PermissionAnswer
-	runs         map[string]*workflow.Run
-	testCalls    chan testCall
+	perms      permissionState // permission prompts (permissions.go)
+	runs       map[string]*workflow.Run
+	testCalls  chan testCall
 }
 
 // Options configure New.
