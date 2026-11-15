@@ -1,5 +1,7 @@
 import { useEffect, useState } from "react";
 import { backend } from "../backend.js";
+import { EmptyState } from "../ui.jsx";
+import { Pane } from "../Pane.jsx";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { ContentView } from "../ContentView.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
@@ -68,7 +70,7 @@ export async function archiveTool(d) {
     S.tb = tbDefaults(); if (S.cx) S.cx.sel = "";
     await refreshExtensions(); loadCopilotExts(true);
     return true;
-  } catch (e) { toast(errMsg(e)); return false; }
+  } catch (e) { toast(errMsg(e), "error"); return false; }
 }
 
 export function newManagedTool(manual) {
@@ -87,7 +89,7 @@ async function generate(refining) {
     tb.draft = d; tb.refine = ""; tb.test = null; tb.stage = "review";
     if (!refining) tb.testPrompt = d.sampleTest || d.testPrompt || "";
     refreshSecrets();
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
   tb.gen = null; update();
 }
 
@@ -139,7 +141,7 @@ async function saveTool() {
       toast(`${rec.name} v${rec.managed?.version || 1} published to all projects, signed by ${rec.managed?.signer || "you"}.`);
       S.tb = { ...tb, editing: rec.name, draft: clone(rec) };
       await refreshExtensions(); refreshAdmin();
-    } catch (e) { toast(errMsg(e)); }
+    } catch (e) { toast(errMsg(e), "error"); }
     return;
   }
   try {
@@ -148,7 +150,7 @@ async function saveTool() {
     toast(rec.status === "in review" ? `${rec.name} submitted to the corporate catalog for review.` : `${rec.name} saved${rec.scriptPath ? " to " + rec.scriptPath : ""} and approved for agents.`);
     S.tb = { ...tb, editing: rec.name, draft: clone(rec) };
     await refreshExtensions();
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }
 
 const DEPS_HINT = { "Node.js": "pg@8.13.1", Python: "psycopg[binary]==3.2.3", Go: "github.com/jackc/pgx/v5@v5.7.1", Java: "org.postgresql:postgresql:42.7.4" };
@@ -268,7 +270,12 @@ export function Tools() {
         {d.status === "needs approval" && <button className="btn primary" onClick={() => approveCopilotTool(d)}>Approve for agents</button>}</div></div>;
   } else if (tb.stage === "review" && d) {
     const npm = d.kind === "npm";
+    // the Review step in tabs, so the script is not 1,700 px down the page
+    const RT = [["overview", "Overview", npm ? null : d.params.length], ["script", npm ? "Command" : "Script"], ["data", "Output shape"], ...(npm ? [] : [["deps", "Dependencies", (d.deps || []).length], ["secrets", "Secrets", (d.secrets || []).length]])];
+    const rt = RT.some(([k]) => k === tb.rtab) ? tb.rtab : "overview";
     body = <><fieldset className="ro-fieldset" disabled={!!tb.ro}>
+      <div className="tabs tl-rtabs" role="tablist" aria-label="Review the tool">{RT.map(([k, l, n]) => <button key={k} type="button" role="tab" className="tab" aria-selected={rt === k} onClick={() => set("rtab", k)}>{l}{n ? <span className="badge">{n}</span> : null}</button>)}</div>
+      {rt === "overview" && <>
       <div className="card"><div className="card-head"><h3>{npm ? "npm script" : "Generated tool"}</h3><span className="badge">revision {d.revision || 1}</span><span className="badge badge-info">{d.lang || "Bash"}</span>{npm && <StatusBadge s={d.status} />}</div>
         <div className="two-col"><label className="field"><span className="muted">Name</span><input value={d.name} disabled={npm} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => setD("name", e.target.value)} /></label>
           <label className="field"><span className="muted">Description (what the agent sees)</span><input value={d.desc} onChange={(e) => setD("desc", e.target.value)} /></label></div>
@@ -284,17 +291,18 @@ export function Tools() {
               <td><button className="link" onClick={() => { d.params.splice(k, 1); update(); }}>Remove</button></td></tr>
           )).flatMap((row, k) => [row, ...(JSON_TYPES.test(d.params[k].type || "") ? [<tr key={"s" + k} className="param-shape"><td colSpan={5}><ShapeEditor label={`Shape of ${d.params[k].name || "this parameter"}`} hint="Example JSON or a JSON Schema. The agent is given its fields, compactly, when it fills this parameter in." value={d.params[k].schema} onChange={(v) => { d.params[k].schema = v; update(); }} /></td></tr>] : [])])}
         </tbody></table><div className="row-actions"><button className="btn secondary" onClick={() => { d.params.push({ name: "", type: "string", required: false, desc: "" }); update(); }}>+ Add parameter</button></div></div>}
-      <OutputShapeCard d={d} test={tb.test} />
-      {!npm && <DepsCard d={d} scope={tb.scope} />}
-      {!npm && <SecretsCard d={d} />}
-      <div className="card"><div className="card-head"><h3>{npm ? "Command" : "Script"}</h3><code className="inline-code">{d.command}</code></div>
+      </>}
+      {rt === "data" && <OutputShapeCard d={d} test={tb.test} />}
+      {rt === "deps" && !npm && <DepsCard d={d} scope={tb.scope} />}
+      {rt === "secrets" && !npm && <SecretsCard d={d} />}
+      {rt === "script" && <div className="card"><div className="card-head"><h3>{npm ? "Command" : "Script"}</h3><code className="inline-code">{d.command}</code></div>
         {!npm && (d.deps?.length ? <p className="muted" style={{ marginBottom: 8 }}>The app writes the command for tools with dependencies: it runs <code className="inline-code">{entryFile(d.lang)}</code> from the tool's folder, with the parameters in order.</p>
           : <label className="field" style={{ marginBottom: 8 }}><span className="muted">Command template</span><input value={d.command} style={{ fontFamily: "var(--font-mono)" }} onChange={(e) => setD("command", e.target.value)} /></label>)}
         <textarea className="editor" rows={12} spellCheck="false" style={{ minHeight: npm ? 60 : 200 }} value={d.script || ""} disabled={npm} onChange={(e) => setD("script", e.target.value)} />
         {!npm && <label className="field" style={{ marginTop: 10 }}><span className="muted">Ask AI to change something</span>
           <div className="setup-input"><input value={tb.refine} placeholder="e.g. add a 30 second timeout, also scan .kt files" onChange={(e) => set("refine", e.target.value)} /><button className="btn secondary" disabled={!!tb.gen} onClick={() => generate(true)}>{tb.gen ? "Updating…" : "Update"}</button></div></label>}
-        {tb.gen && <AiProgress phases={["Reading the change", "Updating the script", "Checking the parameters", "Finishing up"]} />}</div>
-      <div className="row-actions"><button className="btn secondary" onClick={() => set("stage", "describe")}>Back</button><button className="btn primary" onClick={() => set("stage", npm ? "save" : "test")}>{npm ? "Next: approve" : "Next: test with AI"}</button>
+        {tb.gen && <AiProgress phases={["Reading the change", "Updating the script", "Checking the parameters", "Finishing up"]} />}</div>}
+      <div className="row-actions tl-review-actions"><button className="btn secondary" onClick={() => set("stage", "describe")}>Back</button><button className="btn primary" onClick={() => set("stage", npm ? "save" : "test")}>{npm ? "Next: approve" : "Next: test with AI"}</button>
         {tb.editing && !tb.ro && !tb.admin && <><span className="status-spacer" />{d?.kind !== "npm" && d?.scope !== "global" && <button className="btn danger" onClick={() => archiveTool(d)}><Icon.x /> Delete tool</button>}</>}</div>
     </fieldset></>;
   } else if (tb.stage === "test" && d) {
@@ -366,6 +374,7 @@ export function Tools() {
 
   return (
     <div className="files">
+      <Pane k="tools" v="--pane-l" pane=".ftree" min={200} max={560} label="Resize the tool list" />
       <nav className="ftree" aria-label="Tools">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 8px 8px" }}><h1>Tools</h1><button className="btn primary" onClick={() => newTool(false)}>+ New</button></div>
         <ToolFinder />
@@ -376,10 +385,11 @@ export function Tools() {
         <CopilotExtList /></>}
       </nav>
       <div className="fview">
-        {(S.bt?.sel && builtinsVisible() && !S.cx?.sel) ? <ToolTagsBar name={"builtin:" + S.bt.sel} /> : !S.cx?.sel && tb.editing ? <ToolTagsBar name={tb.editing} /> : null}
+        {(S.bt?.sel && builtinsVisible() && !S.cx?.sel) ? <ToolTagsBar name={"builtin:" + S.bt.sel} /> : null}
         {S.cx?.sel ? <CopilotExtView /> : S.bt?.sel && builtinsVisible() ? <BuiltinView /> : <>
         <header className="view-head"><h1>{tb.admin ? (tb.editing ? "Managed tool · " + tb.editing : "New managed tool") : tb.ro ? "Managed tool · " + tb.editing : tb.editing ? (d?.kind === "copilot" ? "Copilot tool · " : "Edit tool · ") + tb.editing : "New tool"}</h1>
           {(tb.admin || tb.ro) && <span className={"badge " + (tb.admin ? "badge-warn" : "")}><Icon.lock /> {tb.admin ? "admin mode" : "read-only"}</span>}</header>
+        {tb.editing && <ToolTagsBar name={tb.editing} />}
         {tb.ro && <ManagedBanner d={d} />}
         {tb.admin && !tb.editing && <div className="banner admin-banner"><Icon.lock /> Admin mode: this tool will be signed and published to every project in the app.</div>}
         <div className="stepstrip">{STAGES.map(([id, l], k) => <span key={id} style={{ display: "contents" }}>
@@ -467,13 +477,13 @@ function FoundTools({ exts }) {
     : [...SRC.map(([s, l]) => [l, items.filter((x) => x.scope === s)]), ["Other", items.filter((x) => !SRC.some(([s]) => s === x.scope))]];
   const shown = groups.filter(([, l]) => l.length);
   return <>{shown.map(([l, list]) => <ToolGrid key={l} title={l} compact tools={list} render={(t) => <ToolTile key={t.key} t={t} compact active={S.tb?.editing === t.name || (t.kind === "builtin" && S.bt?.sel === t.name)} onOpen={t.open} />} />)}
-    {!shown.length && <p className="muted" style={{ padding: "4px 8px" }}>No tools match{q ? ` “${f.q}”` : ""}{f.tag ? ` with #${f.tag}` : ""}.</p>}</>;
+    {!shown.length && <EmptyState compact title={`No tools match${q ? ` “${f.q}”` : ""}${f.tag ? ` with #${f.tag}` : ""}`} actions={[(q || f.tag) && ["Clear the search", () => { f.q = ""; f.tag = ""; update(); }], ["Create a tool", () => newTool(false)]]} />}</>;
 }
 
 // The open tool's tags.
 function ToolTagsBar({ name }) {
   const tags = tagsOf(name), [text, setText] = useState("");
-  const save = async (next) => { try { S.toolTags = await backend.SetToolTags(name, next); update(); } catch (e) { toast(errMsg(e)); } };
+  const save = async (next) => { try { S.toolTags = await backend.SetToolTags(name, next); update(); } catch (e) { toast(errMsg(e), "error"); } };
   const add = () => { const t = text.split(",").map((x) => x.trim().replace(/^#/, "")).filter(Boolean); if (t.length) save([...tags, ...t]); setText(""); };
   return <div className="tt-tagbar"><span className="muted">Tags</span>
     {tags.map((t) => <span key={t} className="tt-tag">#{t}<button className="link" aria-label={"Remove tag " + t} onClick={() => save(tags.filter((x) => x !== t))}>✕</button></span>)}

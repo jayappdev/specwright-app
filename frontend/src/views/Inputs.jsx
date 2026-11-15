@@ -5,6 +5,7 @@ import { ProjectPicker } from "../ProjectPicker.jsx";
 import { NeedWorkspace, WorkspaceBar } from "./Wizard.jsx";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { ToolIcon } from "../ToolTile.jsx";
+import { Icon } from "../ui.jsx";
 
 const CTX_SVG = <svg className="diagram-thumb" viewBox="0 0 320 120" aria-hidden="true"><g fill="none" stroke="currentColor" strokeWidth="1.2" style={{ color: "var(--muted)" }}><rect x="120" y="40" width="80" height="40" rx="6" /><rect x="10" y="10" width="70" height="30" rx="4" /><rect x="10" y="80" width="70" height="30" rx="4" /><rect x="240" y="45" width="70" height="30" rx="4" /><path d="M80 25L120 50M80 95L120 70M200 60h40" /></g></svg>;
 const SEQ_SVG = <svg className="diagram-thumb" viewBox="0 0 320 120" aria-hidden="true"><g fill="none" stroke="currentColor" strokeWidth="1.2" style={{ color: "var(--muted)" }}><path d="M50 22v92M160 22v92M270 22v92" strokeDasharray="3 3" /><path d="M50 45h110M160 65h110M270 85H160M160 100H50" /></g></svg>;
@@ -12,21 +13,21 @@ const DIAGRAM = /\.(drawio|svg|png|puml|plantuml|mmd|md)$/i;
 
 async function setDiagram(kind, rel) {
   try { await backend.SetDiagram(kind, rel); S.ws.profile.diagrams = { ...(S.ws.profile.diagrams || {}) }; if (rel) S.ws.profile.diagrams[kind] = rel; else delete S.ws.profile.diagrams[kind]; update(); }
-  catch (e) { toast(errMsg(e)); }
+  catch (e) { toast(errMsg(e), "error"); }
 }
 
 function DiagramCard({ kind, title, desc, thumb }) {
   const v = S.ws.profile.diagrams?.[kind];
   const candidates = (S.files.list || []).filter((f) => DIAGRAM.test(f) && !f.startsWith(".codegen/") && !f.startsWith("specs/"));
   return (
-    <div className="card"><div className="card-head"><h3>{title}</h3>{v ? <span className="badge badge-ok">attached</span> : <span className="badge">optional</span>}</div>
+    <div className="card" id={"in-" + kind}><div className="card-head"><h3>{title}</h3>{v ? <span className="badge badge-ok">attached</span> : <span className="badge">optional</span>}</div>
       <p className="wf-desc">{desc}</p>
       <div className={"drop" + (v ? " has" : "")}>
         {v ? <>{thumb}<span><code className="inline-code">{v}</code></span><div className="row-actions" style={{ margin: 0 }}><button className="btn secondary" onClick={() => setDiagram(kind, "")}>Remove</button></div></>
           : <>
             <span className="muted">Pick a .drawio, .svg, .png, Mermaid or PlantUML file. Its path is sent with every step that has “Attach input diagrams” on.</span>
             <div className="row-actions" style={{ margin: 0 }}>
-              {backend.kind === "desktop" && <button className="btn secondary" onClick={async () => { try { const rel = await backend.PickDiagram(kind); if (rel) { S.ws.profile.diagrams = { ...(S.ws.profile.diagrams || {}), [kind]: rel }; update(); } } catch (e) { toast(errMsg(e)); } }}>Choose file…</button>}
+              {backend.kind === "desktop" && <button className="btn secondary" onClick={async () => { try { const rel = await backend.PickDiagram(kind); if (rel) { S.ws.profile.diagrams = { ...(S.ws.profile.diagrams || {}), [kind]: rel }; update(); } } catch (e) { toast(errMsg(e), "error"); } }}>Choose file…</button>}
               <select aria-label={"Workspace file for " + title} value="" onChange={(e) => e.target.value && setDiagram(kind, e.target.value)}>
                 <option value="">{candidates.length ? "…or use a file in the workspace" : "No diagram files in the workspace"}</option>
                 {candidates.map((f) => <option key={f} value={f}>{f}</option>)}
@@ -84,11 +85,11 @@ function RunContextCard() {
   </Group>;
   const shared = tools.filter((t) => t.scope !== "project"), mine = tools.filter((t) => t.scope === "project");
   return <>
-    <div className="card ctx-card"><div className="card-head"><h3>AI model</h3><span className="badge">{wf.model || "app default"}</span></div>
+    <div className="card ctx-card" id="in-model"><div className="card-head"><h3>AI model</h3><span className="badge">{wf.model || "app default"}</span></div>
       <p className="wf-desc">Every step of the spec workflow runs with this model. It is the same setting as on Run spec workflow.</p>
       <ModelPicker value={wf.model || ""} label="Model for workflow steps" onChange={(v) => { wf.model = v; save(); }} /></div>
 
-    <div className="card ctx-card"><div className="card-head"><h3>Skills, libraries and rules</h3></div>
+    <div className="card ctx-card" id="in-skills"><div className="card-head"><h3>Skills, libraries and rules</h3></div>
       <p className="wf-desc">What the agent reads before each step. Skills and libraries are the same selection as in the Development wizard.</p>
       {libGroup("global", "global", "Corporate (global) libraries and skills", "No corporate libraries published yet.")}
       {libGroup("project", "project", "Project skills and scripts", "No project skills yet. Add them in the Development wizard.")}
@@ -97,11 +98,16 @@ function RunContextCard() {
         {rules.map((r) => <Pick key={r.id} on={ruleOn(r.id)} title={r.text} onChange={(v) => setRules(v ? [...new Set([...(c.rules || rules.map((x) => x.id)), r.id])] : (c.rules || rules.map((x) => x.id)).filter((x) => x !== r.id))}><span className="ctx-name">{r.id}</span><span className="muted ctx-sub">{(r.text || "").split("\n")[0].slice(0, 60)}</span></Pick>)}
       </Group></div>
 
-    <div className="card ctx-card"><div className="card-head"><h3>Tools</h3>{c.tools && <button className="link" style={{ marginLeft: "auto" }} onClick={() => { delete c.tools; save(); }}>Reset to all approved tools</button>}</div>
+    <div className="card ctx-card" id="in-tools"><div className="card-head"><h3>Tools</h3>{c.tools && <button className="link" style={{ marginLeft: "auto" }} onClick={() => { delete c.tools; save(); }}>Reset to all approved tools</button>}</div>
       <p className="wf-desc">The tools listed in each step's prompt for the agent to use. Unchosen project and global tools can't be called during the workflow. Built-in tools stay available to the agent, and the chosen ones are named in the prompt.</p>
       {(() => { const steps = wf.steps || [], setAll = (v) => { steps.forEach((st) => { st.options.tools = v; }); save(); };
-        return <Group title="Steps that get these tools" count={steps.filter((st) => st.options?.tools).length} total={steps.length} all={() => setAll(true)} none={() => setAll(false)} empty="">
-          {steps.map((st) => <Pick key={st.id} on={!!st.options?.tools} title={st.cmd} onChange={(v) => { st.options.tools = v; save(); }}><span className="ctx-name">{st.title}</span></Pick>)}</Group>; })()}
+        const chosen = [...tools, ...bts].filter((t) => toolOn(t.name)).length, withTools = steps.filter((st) => st.options?.tools).length;
+        return <>
+          {chosen > 0 && steps.length > 0 && !withTools && <div className={"banner ctx-warn" + (c.tools ? " warn" : "")} role="status">{c.tools ? <Icon.warn /> : null}<span>{c.tools ? <><b>No step gets these tools.</b> {chosen} tool{chosen === 1 ? " is" : "s are"} chosen below, but every step has its Tools option off, so none is offered to the agent.</>
+              : <>Tools are off for every step, so the {chosen} approved tool{chosen === 1 ? "" : "s"} below {chosen === 1 ? "is" : "are"} not offered to the agent yet.</>}</span>
+            <button className="btn secondary" onClick={() => setAll(true)}>Give tools to every step</button></div>}
+          <Group title="Steps that get these tools" count={withTools} total={steps.length} all={() => setAll(true)} none={() => setAll(false)} empty="">
+          {steps.map((st) => <Pick key={st.id} on={!!st.options?.tools} title={st.cmd} onChange={(v) => { st.options.tools = v; save(); }}><span className="ctx-name">{st.title}</span></Pick>)}</Group></>; })()}
       {toolGroup("Global tools", shared, "No global or corporate tools.")}
       {toolGroup("Project tools", mine, "No approved project tools. Create or approve them on the Tools screen.")}
       {BUILTIN_GROUPS.map(([g, l]) => { const list = bts.filter((t) => t.lang === g); return list.length ? <div key={g}>{toolGroup("Built-in · " + l, list, "")}</div> : null; })}
@@ -122,7 +128,7 @@ async function refreshSpecKit() {
   if (S.ws?.speckit?.downloading) setTimeout(refreshSpecKit, 1500);
 }
 async function downloadSpecKit(force) {
-  try { S.ws = { ...S.ws, speckit: { ...(S.ws.speckit || {}), ...(await backend.DownloadSpecKit(force)) } }; update(); refreshSpecKit(); } catch (e) { toast(errMsg(e)); }
+  try { S.ws = { ...S.ws, speckit: { ...(S.ws.speckit || {}), ...(await backend.DownloadSpecKit(force)) } }; update(); refreshSpecKit(); } catch (e) { toast(errMsg(e), "error"); }
 }
 
 async function initSpecKit(project, integration) {
@@ -135,7 +141,7 @@ async function initSpecKit(project, integration) {
     const ws = await backend.Workspace();
     S.ws = { ...S.ws, ...ws }; S.wf = ws.workflow;
     toast(`Spec Kit ${r.version} is set up for ${INTEGRATIONS.find((x) => x[0] === r.integration)?.[1] || r.integration}.`);
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
   k.busy = false; update();
 }
 
@@ -152,7 +158,7 @@ function SpecKitCard() {
   const taken = creating && projects.some((x) => x.name === name);
   const newFolder = creating && !!name && name !== cur;
   return (
-    <div className="card sk-card">
+    <div className="card sk-card" id="in-speckit">
       <div className="card-head"><h3>Spec Kit</h3>
         {info.initialized ? <span className="badge badge-ok">{cur ? cur + "/ · " : ""}v{info.version || "?"} · {(info.integrations || [info.integration]).filter(Boolean).join(" + ") || "set up"}</span> : <span className="badge badge-warn">not set up</span>}
         {info.downloading ? <span className="badge badge-info"><span className="spinner" /> downloading</span>
@@ -203,6 +209,22 @@ function SpecKitCard() {
   );
 }
 
+// InputSummary: where each choice stands, as links to its card
+function InputSummary() {
+  const p = S.ws.profile, wf = S.wf, sk = S.ws.speckit || {}, d = p.diagrams || {};
+  const nd = ["context", "sequence"].filter((k) => d[k]).length, steps = wf?.steps || [], withTools = steps.filter((s) => s.options?.tools).length;
+  const skills = (p.global?.length || 0) + (p.project?.length || 0);
+  const jump = (id) => document.getElementById(id)?.scrollIntoView({ block: "start", behavior: "smooth" });
+  const item = (id, ok, label, value) => <button key={id} type="button" className={"in-sum-item" + (ok ? " ok" : "")} onClick={() => jump(id)}><span>{label}</span><b>{value}</b></button>;
+  return <nav className="in-sum" aria-label="Summary of the choices on this page">
+    {item("in-speckit", sk.initialized, "Spec Kit", sk.initialized ? (sk.project || "set up") : "not set up")}
+    {item("in-context", nd > 0, "Diagrams", `${nd} of 2`)}
+    {item("in-model", true, "Model", wf?.model || "app default")}
+    {item("in-skills", skills > 0, "Skills and libraries", `${skills} chosen`)}
+    {item("in-tools", withTools > 0, "Steps with tools", `${withTools} of ${steps.length}`)}
+  </nav>;
+}
+
 export function Inputs() {
   useEffect(() => { if (S.ws) backend.ListFiles().then((l) => { S.files.list = l || []; update(); }).catch(() => {}); }, [S.ws?.root]);
   useEffect(() => { if (S.ws && !S.flowBuiltins) backend.FlowBuiltinTools().then((x) => { S.flowBuiltins = x || []; update(); }).catch(() => {}); }, [S.ws?.root]);
@@ -212,6 +234,7 @@ export function Inputs() {
     <section className="view">
       <header className="view-head"><h1>Choose input</h1><div className="head-controls"><button className="btn primary" onClick={() => { S.view = "workflow"; update(); }}>Next: run spec workflow</button></div></header>
       <p className="wf-desc">Point the agent at the source to read and add diagrams so the spec starts from what the system actually does. Then choose the model, skills, rules and tools every step uses.</p>
+      <InputSummary />
       <div className="card"><div className="card-head"><h3>Workspace folder</h3></div>
         <WorkspaceBar />
         <p className="muted" style={{ marginTop: 8 }}>{S.ws.fileCount} files indexed · {p.lang} · {p.build}. It holds your Spec Kit projects (each in its own folder) and the skills, rules and tools they share in <code className="inline-code">.codegen/</code>. Only this folder is visible to the agent.

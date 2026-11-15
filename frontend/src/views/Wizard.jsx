@@ -39,10 +39,12 @@ export function WorkspaceBar() {
   );
 }
 
+// each section builds rules from its own content: name it, so the three rows do not look like one action repeated
+const BUILD_FROM = { globalMode: "corporate libraries", projectMode: "project skills and scripts", foldersMode: "folder structure" };
 function BuildRow({ modeKey }) {
-  const p = S.ws.profile;
+  const p = S.ws.profile, from = BUILD_FROM[modeKey];
   return (
-    <div className="sub-row"><span><b>Build rules</b> <span className="muted">· incremental adds what changed; bulk reloads everything</span></span>
+    <div className="sub-row"><span><b>Build rules{from ? " from the " + from : ""}</b> <span className="muted">· incremental adds what changed; bulk reloads everything</span></span>
       <span style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
         <Seg value={p[modeKey]} options={[["incremental", "Incremental"], ["bulk", "Bulk load"]]} onChange={(v) => { p[modeKey] = v; update(); saveProfile(); }} />
         <button type="button" className="btn secondary" onClick={async () => { await backend.SaveProfile(p); toast(await call(backend.BuildRules, "wizard." + modeKey, p[modeKey])); }}>Build</button>
@@ -121,16 +123,21 @@ export function Wizard() {
     catch { r = mdToRules(t); }
     setRules(r); toast(`Imported ${r.length} rules.`);
   });
-  const go = (id) => { S.wizSection = id; update(); document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); };
+  // one section at a time (default), or all of them in one scroll ("Show all sections", remembered)
+  const all = !!S.panes["wiz:all"], cur = WIZ.some(([id]) => id === S.wizSection) ? S.wizSection : WIZ[0][0], ci = WIZ.findIndex(([id]) => id === cur);
+  const go = (id) => { S.wizSection = id; update(); if (all) document.getElementById(id)?.scrollIntoView({ behavior: "smooth", block: "start" }); else document.querySelector("main")?.scrollTo({ top: 0 }); };
+  const count = { "w-global": (p.global || []).length, "w-project": (p.project || []).length, "w-rules": p.rules.length, "w-tools": exts.length };
   return (
     <section className="view">
       <header className="view-head"><h1>Development wizard</h1>
         <div className="head-controls"><span className="muted">Profile saved to <code className="inline-code">.codegen/profile.json</code></span><button className="btn primary" onClick={() => { S.view = "inputs"; update(); }}>Next: choose input</button></div></header>
       <div className="wiz">
         <nav className="wiz-nav" aria-label="Wizard sections">
-          {WIZ.map(([id, l], i) => <a key={id} href={"#" + id} className={S.wizSection === id ? "active" : ""} onClick={(e) => { e.preventDefault(); go(id); }}><span className="card-index">{i + 1}</span>{l}</a>)}
+          {WIZ.map(([id, l], i) => <a key={id} href={"#" + id} className={cur === id ? "active" : ""} aria-current={cur === id ? "step" : undefined} onClick={(e) => { e.preventDefault(); go(id); }}><span className="card-index">{i + 1}</span><span className="grow">{l}</span>{count[id] ? <span className="badge">{count[id]}</span> : null}</a>)}
+          <label className="check wiz-all"><input type="checkbox" checked={all} onChange={(e) => { if (e.target.checked) S.panes["wiz:all"] = 1; else delete S.panes["wiz:all"]; update(); }} /> Show all sections</label>
         </nav>
-        <div className="wiz-body">
+        <div className={"wiz-body" + (all ? "" : " one")}>
+          {!all && <style>{`.wiz-body.one > [id]:not(#${cur}) { display: none; }`}</style>}
           <Card id="w-lang" index={1} title="Choose language">
             <div className="chips" role="group" aria-label="Language">{langs.map((l) => <Chip key={l} on={p.lang === l} onClick={() => { p.lang = l; p.build = (builds[l] || [""])[0]; update(); saveProfile(); }}>{l}</Chip>)}</div>
             <div className="row-actions"><label className="field inline"><span>Build tool</span>
@@ -178,6 +185,11 @@ export function Wizard() {
             <div className="row-actions"><button className="btn primary" onClick={() => newTool(false)}>Create a tool with AI</button><button className="btn secondary" onClick={() => newTool(true)}>Write a script myself</button></div>
           </Card>
           <PackagesCard index={7} />
+          {!all && <div className="row-actions wiz-steps">
+            {ci > 0 && <button className="btn secondary" onClick={() => go(WIZ[ci - 1][0])}>← {WIZ[ci - 1][1]}</button>}
+            <span className="status-spacer" />
+            {ci < WIZ.length - 1 ? <button className="btn primary" onClick={() => go(WIZ[ci + 1][0])}>Next: {WIZ[ci + 1][1]} →</button>
+              : <button className="btn primary" onClick={() => { S.view = "inputs"; update(); }}>Next: choose input →</button>}</div>}
         </div>
       </div>
     </section>

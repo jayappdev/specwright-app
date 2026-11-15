@@ -10,7 +10,7 @@ export async function loadPackages() {
   if (loading) return;
   loading = true;
   try { S.pkg = { ...(await backend.PackageSettings()), checks: S.pkg?.checks || null, dirty: false }; update(); }
-  catch (e) { toast(errMsg(e)); }
+  catch (e) { toast(errMsg(e), "error"); }
   finally { loading = false; }
 }
 
@@ -46,9 +46,9 @@ export function PackagesCard({ index }) {
       await backend.SavePackageSettings(s); await loadPackages();
       const sk = await backend.SpecKitInfo().catch(() => null);
       toast("Package settings saved to .codegen/packages.json." + (sk?.downloading ? " Spec Kit is now being downloaded through this proxy." : ""));
-    } catch (e) { toast(errMsg(e)); }
+    } catch (e) { toast(errMsg(e), "error"); }
   };
-  const check = async () => { S.pkg.checks = "running"; update(); try { if (p.dirty) { await backend.SavePackageSettings(s); p.dirty = false; } S.pkg.checks = await backend.CheckRegistries(); } catch (e) { S.pkg.checks = null; toast(errMsg(e)); } update(); };
+  const check = async () => { S.pkg.checks = "running"; update(); try { if (p.dirty) { await backend.SavePackageSettings(s); p.dirty = false; } S.pkg.checks = await backend.CheckRegistries(); } catch (e) { S.pkg.checks = null; toast(errMsg(e), "error"); } update(); };
   const missing = Object.entries({ npm: "Node.js", python3: "Python", go: "Go", mvn: "Java (Maven)" }).filter(([b]) => !p.tools?.[b]).map(([, l]) => l);
   return (
     <Card id="w-packages" index={index} title="Packages & proxy" badge={<span className="badge">{overrides ? `${overrides} override${overrides === 1 ? "" : "s"}` : "inherited"}</span>}>

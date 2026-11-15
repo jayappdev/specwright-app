@@ -1,9 +1,10 @@
 import { useEffect } from "react";
 import { backend } from "../backend.js";
+import { EmptyState } from "../ui.jsx";
 import { S, update, toast, errMsg, saveText, fmtK, isCopilot } from "../store.js";
 import { Pill, Stat } from "../ui.jsx";
 
-const TITLE = { constitution: "Constitution", specify: "Specify", clarify: "Clarify", plan: "Plan", tasks: "Tasks", implement: "Implement" };
+const TITLE = { constitution: "Constitution", specify: "Specify", clarify: "Clarify", plan: "Plan", tasks: "Tasks", analyze: "Analyze", implement: "Implement" };
 
 // Every list and number present, even on a brand-new machine with no runs.
 function normalizeMetrics(m = {}) {
@@ -54,7 +55,7 @@ async function loadMetrics() {
   if (q.from && q.to && q.from >= q.to) { toast("The start time must be before the end time."); return; }
   S.metricsLoading = true; update();
   try { S.metrics = normalizeMetrics(await backend.MetricsIn(q)); S.metricsShown = rangeLabel(r); }
-  catch (e) { toast(errMsg(e)); }
+  catch (e) { toast(errMsg(e), "error"); }
   finally { S.metricsLoading = false; update(); }
 }
 
@@ -111,7 +112,7 @@ export function Metrics() {
       <div className="card"><h3>Hours saved by step</h3><p className="wf-desc">Team estimate of manual effort for each step, credited once per approved step.</p>{m.perStep.map((p) => <div className="bar-row" key={p.step}><span className="bar-label">{TITLE[p.step] || p.step}</span><span className="bar-track"><span className="bar-fill" style={{ width: (p.hours / max) * 100 + "%" }} /></span><span className="bar-value">{p.hours} h</span></div>)}</div>
       <div className="card"><h3>Recent runs</h3>{m.recent.length ? <table className="table"><thead><tr><th>Project</th><th>Last activity</th><th>Steps</th><th>Files</th><th>Hours saved</th><th>Status</th></tr></thead><tbody>
         {m.recent.map((r) => <tr key={r.name + r.at}><td>{r.name}</td><td>{new Date(r.at).toLocaleString()}</td><td>{r.approved}/{r.steps}</td><td>{r.files}</td><td>{r.hours.toFixed(1)}</td><td><Pill s={r.status === "done" ? "done" : r.status === "failed" ? "failed" : "paused"} /></td></tr>)}
-      </tbody></table> : <p className="muted">No runs recorded yet.</p>}</div>
+      </tbody></table> : <EmptyState compact title="No runs in this range" actions={[["Run a workflow step", () => { S.view = "workflow"; update(); }], ["Run a flow", () => { S.view = "flowrun"; update(); }]]}>Metrics fill in as workflow steps and flows run. Try a longer range above if you have older runs.</EmptyState>}</div>
     </section>
   );
 }

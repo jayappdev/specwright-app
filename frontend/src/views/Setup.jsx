@@ -50,7 +50,7 @@ export function Setup() {
       <form className="card setup-card" autoComplete="off" onSubmit={submit}>
         <div className="setup-hero"><span className="hero-glow" aria-hidden="true" /><Logo size={132} className="hero-logo" /></div>
         <h1 style={{ textAlign: "center" }}>Welcome to <span className="brand">SpecWright</span></h1>
-        <p className="wf-desc">SpecWright turns a written spec into working code, step by step, using an AI coding assistant. Pick the agent, then use the credentials its CLI already has on this computer, or paste a token for this session. You can change this later under Appearance › Account.</p>
+        <p className="wf-desc">SpecWright turns a written spec into working code, step by step, using an AI coding assistant. Pick the agent, then use the credentials its CLI already has on this computer, or paste a token for this session. You can change this later under Settings › Agent and model.</p>
         <div className="setup-choices" role="radiogroup" aria-label="Agent" style={{ gridTemplateColumns: "repeat(3, 1fr)" }}>
           {Object.entries(PROVIDERS).map(([id, c]) => (
             <button key={id} type="button" role="radio" aria-checked={provider === id} className={"setup-choice" + (provider === id ? " active" : "")} onClick={() => { setProvider(id); setErr(""); }}>

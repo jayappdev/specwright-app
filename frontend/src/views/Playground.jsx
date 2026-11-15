@@ -7,6 +7,8 @@ import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHo
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
+import { EmptyState } from "../ui.jsx";
+import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, isCopilot, fmtK, fmtMs, fmtCredits } from "../store.js";
 import { Icon, Pill, Stat, Chip } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
@@ -87,7 +89,7 @@ async function run() {
     S.loaded[id] = true; S.events[id] ||= [];
     p.runs.unshift({ id, prompt, title: prompt.split("\n")[0].slice(0, 100), parents, at: new Date().toISOString(), state: "running" });
     p.sel = id; p.parents = []; p.prompt = ""; update();
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }
 
 const promptOf = (r) => r.prompt || r.title || (S.events[r.id] || []).find((e) => e.type === "prompt.compose")?.prompt || "(prompt)";
@@ -136,6 +138,29 @@ function ToolCall({ c, n, runId }) {
   );
 }
 
+// Composer: the prompt box. Full (examples, notes) for a new prompt; compact and
+// docked at the bottom while a run is open, so it stays in reach under long answers.
+function Composer({ compact, box, r, running, anyRunning }) {
+  const p = pg();
+  return (
+    <div className={"card pg-composer" + (compact ? " pg-dock" : "")}>
+          {compact && r?.kind !== "flow" && !running && <label className="check pg-dock-cont"><input type="checkbox" checked={(p.parents || []).includes(r.id)} onChange={(e) => { p.parents = e.target.checked ? [...new Set([...(p.parents || []), r.id])] : (p.parents || []).filter((x) => x !== r.id); update(); }} /> Continue from this run (it goes to the agent as context)</label>}
+          <textarea ref={box} rows={compact ? 2 : 5} value={p.prompt} placeholder={compact ? "Ask a follow-up or a new question…  (⌘/Ctrl + Enter to run)" : "Ask the agent anything about this project…  (⌘/Ctrl + Enter to run)"}
+            onChange={(e) => { p.prompt = e.target.value; update(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); } }} />
+          {p.parents?.length > 0 && <div className="pg-cont"><span className="muted"><Icon.history /> Continuing from:</span>{p.parents.map((id) => <span key={id} className="pg-cont-chip" title={id}>{runTitle(id)}<button aria-label="Remove" onClick={() => { p.parents = p.parents.filter((x) => x !== id); update(); }}><Icon.x /></button></span>)}
+            <span className="muted pg-cont-hint">The earlier questions, answers and results folders go to the agent as context.</span></div>}
+          {!compact && <div className="chips" style={{ marginTop: 8 }}>{EXAMPLES.map((x) => <Chip key={x} onClick={() => { p.prompt = x; update(); box.current?.focus(); }}>{x.split(" ").slice(0, 5).join(" ")}…</Chip>)}</div>}
+          <div className="row-actions">
+            <button className="btn primary" disabled={anyRunning || !p.prompt.trim()} onClick={run}>{anyRunning ? "Running…" : "Run prompt"}</button>
+            {running && <button className="btn secondary" onClick={() => backend.CancelRun(r.id).catch((e) => toast(errMsg(e), "error"))}>Stop</button>}
+            <button className="btn secondary" onClick={() => openPicker()}><Icon.history /> Refer to earlier runs…</button>
+            <label className="check"><input type="checkbox" checked={p.tools} onChange={(e) => { p.tools = e.target.checked; update(); }} /> Also offer project and admin tools</label>
+          </div>
+          {!compact &&           <p className="muted" style={{ margin: "8px 0 0" }}>Runs in <code className="inline-code">{S.ws.root}</code> with the workflow's token and cost budget. The agent can read and edit files there, as in a workflow step. The agent always has SpecWright's built-in tools for reading, searching and editing files and running commands.</p>}
+    </div>
+  );
+}
+
 export function Playground() {
   const p = pg(), box = useRef(null);
   useEffect(() => { loadPast(); }, [S.ws?.root]);
@@ -151,10 +176,11 @@ export function Playground() {
   const anyRunning = p.runs.some((x) => stateOf(S.events[x.id] || []) === "running");
   return (
     <div className="files pg">
+      <Pane k="playground" v="--pane-l" pane=".ftree" min={200} max={560} label="Resize the run list" />
       <nav className="ftree" aria-label="Playground prompts">
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 8px 8px" }}><h1>Playground</h1>
           <button className="btn primary" onClick={() => { p.sel = ""; p.prompt = ""; update(); setTimeout(() => box.current?.focus(), 0); }}>+ New</button></div>
-        {!p.runs.length && <p className="muted" style={{ padding: "4px 8px" }}>Prompts you run appear here.</p>}
+        {!p.runs.length && <EmptyState compact title="No prompts yet">Prompts you run appear here, with their answers, tool calls and files changed. Write one on the right; ⌘Enter / Ctrl+Enter runs it.</EmptyState>}
         {p.runs.length > 0 && <RunListBar area="playground" runs={p.runs} />}
         {visibleRuns("playground", p.runs, (x) => (x.title || "") + " " + (x.prompt || "") + " " + (x.flow || "")).map(([g, list]) => <RunGroup key={g || "-"} area="playground" name={g} count={list.length}>
         {list.map((x) => { const st = stateOf(S.events[x.id] || []), fst = x.kind === "flow" ? S.flowRuns[x.id] : null; return (
@@ -167,20 +193,7 @@ export function Playground() {
       </nav>
       <div className="fview">
         <header className="view-head"><h1>Prompt playground</h1><div className="head-controls head-model"><span className="muted">Agent: {agentLabel()} · {S.ws.name}</span><ModelPicker value={p.model} onChange={(v) => { p.model = v; update(); }} label="Model" /></div></header>
-        <div className="card pg-composer">
-          <textarea ref={box} rows={5} value={p.prompt} placeholder="Ask the agent anything about this project…  (⌘/Ctrl + Enter to run)"
-            onChange={(e) => { p.prompt = e.target.value; update(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); run(); } }} />
-          {p.parents?.length > 0 && <div className="pg-cont"><span className="muted"><Icon.history /> Continuing from:</span>{p.parents.map((id) => <span key={id} className="pg-cont-chip" title={id}>{runTitle(id)}<button aria-label="Remove" onClick={() => { p.parents = p.parents.filter((x) => x !== id); update(); }}><Icon.x /></button></span>)}
-            <span className="muted pg-cont-hint">The earlier questions, answers and results folders go to the agent as context.</span></div>}
-          <div className="chips" style={{ marginTop: 8 }}>{EXAMPLES.map((x) => <Chip key={x} onClick={() => { p.prompt = x; update(); box.current?.focus(); }}>{x.split(" ").slice(0, 5).join(" ")}…</Chip>)}</div>
-          <div className="row-actions">
-            <button className="btn primary" disabled={anyRunning || !p.prompt.trim()} onClick={run}>{anyRunning ? "Running…" : "Run prompt"}</button>
-            {running && <button className="btn secondary" onClick={() => backend.CancelRun(r.id).catch((e) => toast(errMsg(e)))}>Stop</button>}
-            <button className="btn secondary" onClick={() => openPicker()}><Icon.history /> Refer to earlier runs…</button>
-            <label className="check"><input type="checkbox" checked={p.tools} onChange={(e) => { p.tools = e.target.checked; update(); }} /> Also offer project and admin tools</label>
-          </div>
-          <p className="muted" style={{ margin: "8px 0 0" }}>Runs in <code className="inline-code">{S.ws.root}</code> with the workflow's token and cost budget. The agent can read and edit files there, as in a workflow step. The agent always has SpecWright's built-in tools for reading, searching and editing files and running commands.</p>
-        </div>
+        {!r && <Composer box={box} r={null} running={false} anyRunning={anyRunning} />}
 
         {r?.kind === "flow" && <FlowWatch r={r} evs={evs} />}
         {r && r.kind !== "flow" && <>
@@ -220,6 +233,7 @@ export function Playground() {
           <details className="pg-more"><summary className="muted">Full activity, files changed and raw events</summary>
             <RunPanel st={{ id: "playground", cmd: "playground", status: state, lastRun: r.id }} evs={evs} running={running} /></details>
         </>}
+        {r && <Composer compact box={box} r={r} running={running} anyRunning={anyRunning} />}
       </div>
     </div>
   );

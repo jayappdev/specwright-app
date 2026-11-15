@@ -7,6 +7,7 @@ import { useEffect, useRef, useState } from "react";
 import { backend } from "./backend.js";
 import { S, update, toast, errMsg } from "./store.js";
 import { Icon } from "./ui.jsx";
+import { CopyButton } from "./CopyButton.jsx";
 
 const KIND = [
   [/^(Bash|run_command|.*shell.*)$/i, "run a command", "warn"],
@@ -29,7 +30,7 @@ export function PermissionPrompt() {
   const answer = async (decision) => {
     setBusy(true);
     try { await backend.AnswerPermission(req.id, decision, decision === "deny" ? note : ""); }
-    catch (err) { toast(errMsg(err)); }
+    catch (err) { toast(errMsg(err), "error"); }
     done();
   };
   const where = req.run && S.flowRuns[req.run] ? <>The flow <b>{S.flowRuns[req.run].flowName}</b> is waiting.</> : req.step && req.step !== "playground" ? <>The <b>{req.step}</b> step is waiting.</> : <>The AI is waiting for your answer.</>;
@@ -46,7 +47,7 @@ export function PermissionPrompt() {
         </div>
         <div className="perm-what">
           <code className="perm-tool">{req.tool}</code>
-          {req.target && <pre className="perm-target">{req.target}</pre>}
+          {req.target && <div className="perm-target-row"><pre className="perm-target">{req.target}</pre><CopyButton text={req.target} /></div>}
           {input.length > 2 && input !== JSON.stringify({ command: req.target }, null, 2) && (
             <button type="button" className="link-btn" onClick={() => setShowAll(!showAll)}>{showAll ? "Hide details" : "Show all details"}</button>)}
           {showAll && <pre className="perm-input">{input}</pre>}

@@ -1,4 +1,5 @@
 import { backend } from "../backend.js";
+import { Pane } from "../Pane.jsx";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { ProjectPicker } from "../ProjectPicker.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
@@ -76,18 +77,24 @@ async function decide(st, kind) {
     if (kind === "changes") { st.feedback = ""; saveWorkflow(); }
     if (kind === "approve" && S.sel < S.wf.steps.length - 1) S.sel++;
     update();
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }
 
 async function runStep(st) {
   try { await backend.SaveWorkflow(S.wf); const id = await backend.RunStep(st.id); st.lastRun = id; st.status = "running"; S.loaded[id] = true; S.events[id] ||= []; update(); }
-  catch (e) { toast(errMsg(e)); }
+  catch (e) { toast(errMsg(e), "error"); }
+}
+
+function goSetUpSpecKit() {
+  S.view = "inputs"; update();
+  setTimeout(() => document.querySelector(".sk-card")?.scrollIntoView({ block: "start" }), 50);
 }
 
 export function Workflow() {
   if (!S.ws || !S.wf) return <NeedWorkspace what="the workflow" />;
   const wf = S.wf, i = Math.min(S.sel, wf.steps.length - 1), st = wf.steps[i], state = stepState(wf, i), cur = currentStep(wf);
   const allDone = wf.steps.every((s) => s.status === "done");
+  const lcHidden = !!S.panes["wf:lc:c"];
   const editable = !["running", "paused"].includes(state);
   const evs = st.lastRun ? S.events[st.lastRun] || [] : [];
   const gate = state === "paused" ? [...evs].reverse().find((e) => e.type === "gate.wait")?.gate || "approval" : null;
@@ -97,12 +104,16 @@ export function Workflow() {
     [!!st.input.trim(), "Inputs collected"],
     [prov && prov !== "skipped", `Agent: ${agentLabel()}${S.setup.source ? " · " + S.setup.source : ""}`],
   ];
+  // the backend refuses /speckit.* steps until Spec Kit is set up for the project (hub.go RunStep)
+  const needsSpecKit = st.cmd.startsWith("/speckit") && !S.ws.speckit?.initialized;
+  if (st.cmd.startsWith("/speckit")) checks.push([!needsSpecKit, "Spec Kit set up for this project"]);
   const canRun = checks.every((c) => c[0]) && editable;
   const t = totals();
   const opts = st.options;
   const edit = (k, v) => { st[k] = v; update(); saveWorkflow(); };
   return (
     <div className="wf">
+      <Pane k="wf" v="--pane-l" pane=".wf-steps" min={200} max={420} label="Resize the step list" />
       <nav className="wf-steps" aria-label="Spec workflow steps"><h1>{wf.name}</h1>
         {wf.steps.map((s, k) => { const ks = stepState(wf, k); return (
           <button key={s.id} className={"wf-step" + (k === i ? " active" : "")} aria-current={k === cur ? "step" : undefined} onClick={() => { S.sel = k; update(); loadStepEvents(k); }}>
@@ -112,12 +123,14 @@ export function Workflow() {
         <RunSettings wf={wf} />
       </nav>
       <div className="wf-pane">
-        <div className="card lc-card"><div className="card-head"><h3>Lifecycle</h3>
+        <div className={"card lc-card" + (lcHidden ? " is-collapsed" : "")}><div className="card-head"><h3><button className="lc-toggle" aria-expanded={!lcHidden} aria-controls="lc-body" title={lcHidden ? "Show the lifecycle diagram" : "Hide the lifecycle diagram (the step list on the left has the same steps)"}
+            onClick={() => { if (lcHidden) delete S.panes["wf:lc:c"]; else S.panes["wf:lc:c"] = 1; update(); }}><span className="lc-caret" aria-hidden="true">{lcHidden ? "▸" : "▾"}</span> Lifecycle</button></h3>
           {t.in > 0 && <><span className="badge">{fmtK(t.in + t.out)} tokens</span><span className="badge">{isCopilot() ? t.premium + " premium req" : "$" + t.usd.toFixed(3)}</span><span className="badge">{t.tools} tool calls</span><span className="badge">{t.files} files</span></>}
           <span className="muted" style={{ marginLeft: "auto" }}>Step {cur + 1} of {wf.steps.length} · {wf.steps[cur].title} · {STATE_LABEL[stepState(wf, cur)]}</span></div>
-          <div className="lc-scroll"><Lifecycle wf={wf} /></div>
+          {!lcHidden && <div id="lc-body"><div className="lc-scroll"><Lifecycle wf={wf} /></div>
           <div className="lc-legend"><span><i style={{ borderColor: "var(--focus)" }} />current</span><span><i style={{ borderColor: "var(--ok)" }} />approved</span><span><i style={{ borderColor: "var(--warn)" }} />awaiting approval</span><span><i className="dash" />locked</span><span><b className="gate" />approval gate</span>
-            {allDone && <button className="link" style={{ marginLeft: "auto" }} onClick={async () => { if (await confirmDialog("Every step goes back to pending; inputs are kept.", { title: "Start the next iteration?", ok: "Start" })) { await backend.ResetWorkflow().catch((e) => toast(errMsg(e))); } }}>Start next iteration</button>}</div>
+            {allDone && <button className="link" style={{ marginLeft: "auto" }} onClick={async () => { if (await confirmDialog("Every step goes back to pending; inputs are kept.", { title: "Start the next iteration?", ok: "Start" })) { await backend.ResetWorkflow().catch((e) => toast(errMsg(e), "error")); } }}>Start next iteration</button>}</div></div>}
+          {lcHidden && allDone && <div className="row-actions"><button className="btn secondary" onClick={async () => { if (await confirmDialog("Every step goes back to pending; inputs are kept.", { title: "Start the next iteration?", ok: "Start" })) { await backend.ResetWorkflow().catch((e) => toast(errMsg(e), "error")); } }}>Start next iteration</button></div>}
         </div>
 
         <header className="view-head"><h1>{i + 1} · {st.title} <span className="muted" style={{ fontWeight: 400, fontSize: ".7em" }}><code>{st.cmd}</code></span></h1>{statePill(state)}
@@ -127,21 +140,28 @@ export function Workflow() {
             onChange={(v) => { S.wf.model = v; update(); saveWorkflow(); }} /></span></header>
         {wf.steps.some((x) => x.id === "implement" && x.status === "done") && <div className="banner ok zip-banner"><Icon.check /> <span><b>Implementation is done.</b> Download the whole project{S.ws.speckit?.project ? <> (<code className="inline-code">{S.ws.speckit.project}/</code> with the skills, rules and diagrams it uses)</> : null} as one zip.</span>
           <button className="btn primary" disabled={S.zipBusy} onClick={() => downloadProjectZip(true)}>{S.zipBusy ? "Zipping…" : "Download project (.zip)"}</button></div>}
-        {i !== cur && !allDone && <div className="banner">You are viewing <b>{st.title}</b>. The workflow is currently at <b>{wf.steps[cur].title}</b>. <button className="link" onClick={() => { S.sel = cur; update(); loadStepEvents(cur); }}>Go to current step</button></div>}
+        {i !== cur && !allDone && state !== "locked" && <div className="banner">You are viewing <b>{st.title}</b>. The workflow is currently at <b>{wf.steps[cur].title}</b>. <button className="link" onClick={() => { S.sel = cur; update(); loadStepEvents(cur); }}>Go to current step</button></div>}
         {state === "paused" && (
           <div className={"gate-banner" + (gate === "loop" ? " loop" : "")}><div className="gate-text"><Icon.warn /><div>
             {gate === "loop" ? <><b>The agent seems stuck in a loop</b><p>The run was stopped. Accept what it produced, send feedback and rerun, or reject the step.</p></>
               : <><b>Human approval needed</b><p>Review the {st.title.toLowerCase()} output below. Approving {i < wf.steps.length - 1 ? <>unlocks <b>{wf.steps[i + 1].title}</b></> : "finishes the workflow"}.</p></>}</div></div>
-            <div className="gate-actions"><button className="btn primary" onClick={() => decide(st, "approve")}>{gate === "loop" ? "Accept output" : "Approve and continue"}</button><button className="btn secondary" onClick={() => decide(st, "changes")}>Request changes</button><button className="btn secondary" onClick={() => decide(st, "reject")}>Reject</button></div></div>
+            {!S.wfChanges ? <div className="gate-actions"><button className="btn primary" onClick={() => decide(st, "approve")}>{gate === "loop" ? "Accept output" : "Approve and continue"}</button>
+              <button className="btn secondary" aria-expanded="false" onClick={() => { S.wfChanges = true; update(); setTimeout(() => document.getElementById("wf-feedback")?.focus(), 30); }}>{gate === "loop" ? "Send feedback and rerun…" : "Request changes…"}</button>
+              <button className="btn secondary danger-quiet" onClick={async () => { if (await confirmDialog(`The ${st.title} step is marked as rejected; you can run it again later.`, { title: "Reject this output?", ok: "Reject", danger: true })) decide(st, "reject"); }}>Reject</button></div>
+            : <div className="gate-changes"><label className="field"><span className="muted">What should change? The agent reruns the step with this feedback.</span>
+                <textarea id="wf-feedback" rows={3} value={st.feedback || ""} placeholder="e.g. Add a principle about accessibility; keep it under one page."
+                  onChange={(e) => { st.feedback = e.target.value; update(); saveWorkflow(); }} onKeyDown={(e) => { if ((e.metaKey || e.ctrlKey) && e.key === "Enter" && st.feedback?.trim()) { e.preventDefault(); S.wfChanges = false; decide(st, "changes"); } }} /></label>
+              <div className="gate-actions"><button className="btn primary" disabled={!st.feedback?.trim()} title="⌘Enter / Ctrl+Enter" onClick={() => { S.wfChanges = false; decide(st, "changes"); }}>Send and rerun</button>
+                <button className="btn secondary" onClick={() => { S.wfChanges = false; update(); }}>Cancel</button></div></div>}</div>
         )}
-        {state === "locked" && <div className="banner">Locked until <b>{wf.steps[i - 1].title}</b> is approved. You can prepare inputs and instructions now.</div>}
+        {state === "locked" && <div className="banner wf-locked"><Icon.lock /><span><b>{st.title}</b> is locked until <b>{wf.steps[i - 1].title}</b> is approved. You can prepare its inputs and instructions now.</span>
+          {i !== cur && !allDone && <button className="btn secondary" onClick={() => { S.sel = cur; update(); loadStepEvents(cur); }}>Go to {wf.steps[cur].title}</button>}</div>}
         {state === "interrupted" && <div className="banner error">The app closed while this step was running. Run it again to continue.</div>}
 
         <div className="two-col">
           <div className="card"><div className="card-head"><span className="card-index">1</span><h3>Inputs</h3>{st.input.trim() ? <span className="badge badge-ok">collected</span> : <span className="badge">needed</span>}</div>
             <p className="wf-desc">{st.ask}. Passed to <code className="inline-code">{st.cmd}</code> as its argument.</p>
             <textarea rows={5} placeholder={st.placeholder} disabled={!editable} value={st.input} onChange={(e) => edit("input", e.target.value)} />
-            {state === "paused" && <label className="field" style={{ marginTop: 8 }}><span className="muted">Feedback for “Request changes”</span><input value={st.feedback || ""} placeholder="What should change?" onChange={(e) => edit("feedback", e.target.value)} /></label>}
           </div>
           <div className="card"><div className="card-head"><span className="card-index">2</span><h3>Instructions for the agent</h3>{st.template && <button className="link" onClick={() => edit("instructions", st.template)}>Use template</button>}</div>
             <p className="wf-desc">How the agent should work on this step. Sent with the command; not part of the spec.</p>
@@ -151,14 +171,16 @@ export function Workflow() {
         </div>
 
         <div className={"card ready-card" + (canRun ? " is-ready" : "")}><div className="card-head"><span className="card-index">3</span><h3>{canRun ? "Ready to run" : state === "running" ? "Running" : state === "paused" ? "Ran — awaiting your approval" : "Not ready yet"}</h3></div>
-          <ul className="checklist">{checks.map(([ok, l]) => <li key={l} className={ok ? "ok" : ""}>{ok ? <Icon.check /> : <Icon.x />}<span>{l}</span></li>)}<li className="ok"><Icon.check /><span>{st.gate ? "Pauses for approval when done" : "No approval gate (runs straight through)"}</span></li></ul>
+          <ul className="checklist">{checks.map(([ok, l]) => <li key={l} className={ok ? "ok" : ""}>{ok ? <Icon.check /> : <Icon.x />}<span>{l}</span>
+            {!ok && l.startsWith("Spec Kit") && <button className="link" onClick={goSetUpSpecKit}>Set up Spec Kit</button>}</li>)}<li className="ok"><Icon.check /><span>{st.gate ? "Pauses for approval when done" : "No approval gate (runs straight through)"}</span></li></ul>
           <pre className="code" aria-label="Command preview">{st.cmd} {st.input.trim().split("\n")[0].slice(0, 90) || "…"}
             {st.instructions.trim() && <>{"\n"}<span className="syn-comment"># instructions: {st.instructions.trim().split("\n")[0].slice(0, 80)}</span></>}
             {"\n"}<span className="syn-comment"># context: {OPTS.filter(([k]) => opts[k]).map(([, l]) => l.toLowerCase()).join(", ") || "none"}</span></pre>
           <div className="row-actions">
-            <button className="btn primary" disabled={!canRun} onClick={() => runStep(st)}>{["done", "failed", "cancelled", "interrupted"].includes(state) ? "Run again" : "Run " + st.cmd}</button>
-            {state === "running" && <button className="btn secondary" onClick={() => backend.CancelRun(st.lastRun).catch((e) => toast(errMsg(e)))}>Cancel run</button>}
-            <button className="link" onClick={async () => { try { const p = await backend.Compose(st.id, ""); S._prompt = S._prompt === p ? null : p; update(); } catch (e) { toast(errMsg(e)); } }}>{S._prompt ? "Hide full prompt" : "Show full prompt"}</button>
+            <button className="btn primary" disabled={!canRun} aria-describedby={!canRun && editable ? "wf-why" : undefined} onClick={() => runStep(st)}>{["done", "failed", "cancelled", "interrupted"].includes(state) ? "Run again" : "Run " + st.cmd}</button>
+            {!canRun && editable && <span id="wf-why" className="muted run-why">Needed first: {checks.find((c) => !c[0])?.[1]}</span>}
+            {state === "running" && <button className="btn secondary" onClick={() => backend.CancelRun(st.lastRun).catch((e) => toast(errMsg(e), "error"))}>Cancel run</button>}
+            <button className="link" onClick={async () => { try { const p = await backend.Compose(st.id, ""); S._prompt = S._prompt === p ? null : p; update(); } catch (e) { toast(errMsg(e), "error"); } }}>{S._prompt ? "Hide full prompt" : "Show full prompt"}</button>
             <span className="muted">Agent: {agentLabel()} · reads {S.ws.root}</span></div>
           {S._prompt && <pre className="code console-out"><Linkify text={S._prompt} /></pre>}
         </div>
@@ -168,11 +190,11 @@ export function Workflow() {
   );
 }
 
-function RunSettings({ wf }) {
+export function RunSettings({ wf, open }) {
   const b = wf.budget, st = wf.steps[Math.min(S.sel, wf.steps.length - 1)];
   const num = (v) => Math.max(0, Number(v) || 0);
   return (
-    <details style={{ margin: "10px 8px 0" }}><summary className="muted" style={{ cursor: "pointer" }}>Run settings</summary>
+    <details style={{ margin: open ? 0 : "10px 8px 0" }} open={open || undefined}><summary className="muted" style={{ cursor: "pointer" }}>Run settings</summary>
       <div className="budget" style={{ gridTemplateColumns: "1fr" }}>
         <label className="field inline"><span>Token budget per run</span><input type="number" min="0" step="10000" value={b.maxTokens} onChange={(e) => { b.maxTokens = num(e.target.value); update(); saveWorkflow(); }} /></label>
         <label className="field inline"><span>Cost budget per run (USD)</span><input type="number" min="0" step="0.5" value={b.maxUsd} onChange={(e) => { b.maxUsd = num(e.target.value); update(); saveWorkflow(); }} /></label>

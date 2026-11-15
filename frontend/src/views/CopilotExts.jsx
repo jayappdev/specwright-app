@@ -94,7 +94,7 @@ async function load(x, replace) {
     if (r.note) c.log = [...c.log, "Not made into tools yet: " + r.note];
     toast(r.tools?.length ? `Loaded ${x.name}: ${r.tools.join(", ")} ${r.tools.length === 1 ? "is now a project tool" : "are now project tools"}.` : `Loaded ${x.name} into ${r.path}.`);
     refreshExtensions();
-  } catch (e) { toast(errMsg(e)); c.log = [errMsg(e)]; }
+  } catch (e) { toast(errMsg(e), "error"); c.log = [errMsg(e)]; }
   c.busy = false;
   await loadCopilotExts(true);
 }
@@ -102,7 +102,7 @@ async function load(x, replace) {
 async function remove(x) {
   const tools = (S.ws?.extensions || []).filter((t) => t.kind === "copilot" && t.dir === ".github/extensions/" + x.name).map((t) => t.name);
   if (!(await confirmDialog(`.github/extensions/${x.name}${tools.length ? ` and its tools (${tools.join(", ")})` : ""} move to .codegen/archive/<date-time>/ in the project, so you can restore them. Your own copy in ~/.copilot is not touched.`, { title: `Delete ${x.name} from this project?`, ok: "Delete", danger: true }))) return;
-  try { const r = await backend.RemoveCopilotExtension(x.name); toast(`Deleted ${x.name} from the project. Archived in ${r.path}.`); const c = cx(); c.sel = ""; refreshExtensions(); } catch (e) { toast(errMsg(e)); }
+  try { const r = await backend.RemoveCopilotExtension(x.name); toast(`Deleted ${x.name} from the project. Archived in ${r.path}.`); const c = cx(); c.sel = ""; refreshExtensions(); } catch (e) { toast(errMsg(e), "error"); }
   await loadCopilotExts(true);
 }
 
@@ -204,7 +204,7 @@ export async function approveCopilotTool(d) {
     S.tb = { ...S.tb, editing: rec.name, draft: JSON.parse(JSON.stringify(rec)) };
     toast(`${extOfTool(rec)} approved: its tools are available to agents and flows.`);
     loadCopilotExts(true);
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }
 
 // For a project extension: the project tools it became (or approval).

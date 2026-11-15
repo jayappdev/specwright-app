@@ -29,7 +29,7 @@ export function ResultsLink({ id, ended = true }) {
       <span className="results-files">{[...key, ...outs.slice(0, 6)].map((f) => <FileLink key={f} path={r.dir + "/" + f}>{f}</FileLink>)}{outs.length > 6 && <span className="muted">+{outs.length - 6} outputs</span>}</span>
       <span className="results-actions">
         <button className="link" title={"Run id " + id} onClick={() => navigator.clipboard?.writeText(id).then(() => toast("Run id copied."), () => {})}>Copy run id</button>
-        {backend.kind === "desktop" && <button className="link" onClick={() => backend.RevealPath(r.dir + "/summary.md").catch((e) => toast(errMsg(e)))}>Show in Finder</button>}
+        {backend.kind === "desktop" && <button className="link" onClick={() => backend.RevealPath(r.dir + "/summary.md").catch((e) => toast(errMsg(e), "error"))}>Show in Finder</button>}
       </span>
     </div>
   );

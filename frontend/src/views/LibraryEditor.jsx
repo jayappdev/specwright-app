@@ -67,7 +67,7 @@ export async function openLibraryEditor(scope, kind, lib, opts = {}) {
       e.content = await backend.ReadFile(lib.path);
       if (scope === "global") e.desc = lib.note || "";
     }
-  } catch (err) { toast(errMsg(err)); }
+  } catch (err) { toast(errMsg(err), "error"); }
   e.loading = false; e.key = Date.now(); update();
 }
 
@@ -76,7 +76,7 @@ const setLibs = (libs) => { if (S.ws && libs) S.ws.libraries = libs; };
 export async function deleteSkillFile(skill, file, scope = "project") {
   const g = scope === "global";
   if (!(await confirmDialog(g ? "The corporate skill is signed and published again without it, and it is removed from every project. Update any link to it in SKILL.md." : "It moves to SpecWright's trash and can be recovered from there. Update any link to it in SKILL.md.", { title: `Delete ${file} from ${skill}?`, ok: g ? "Delete and publish" : "Delete", danger: true }))) return;
-  try { setLibs(g ? await backend.DeleteManagedLibraryFile(skill, file) : await backend.DeleteSkillFile(skill, file)); toast(g ? `${file} removed from ${skill} and published.` : `${file} deleted.`); update(); } catch (err) { toast(errMsg(err)); }
+  try { setLibs(g ? await backend.DeleteManagedLibraryFile(skill, file) : await backend.DeleteSkillFile(skill, file)); toast(g ? `${file} removed from ${skill} and published.` : `${file} deleted.`); update(); } catch (err) { toast(errMsg(err), "error"); }
 }
 
 export async function deleteLibrary(scope, lib) {
@@ -85,7 +85,7 @@ export async function deleteLibrary(scope, lib) {
   try {
     setLibs(managed ? await backend.DeleteManagedLibrary(lib.name) : await backend.DeleteProjectLibrary(lib.path));
     toast(managed ? `${lib.name} retired.` : `${lib.name} deleted.`); update();
-  } catch (err) { toast(errMsg(err)); }
+  } catch (err) { toast(errMsg(err), "error"); }
 }
 
 async function save() {
@@ -105,7 +105,7 @@ async function save() {
     setLibs(libs);
     toast(e.scope === "global" ? (e.kind === "skill" ? `${name} published to every project.` : `${e.skill} published again with ${fpath}.`) : `${name} saved.`);
     close();
-  } catch (err) { e.busy = false; toast(errMsg(err)); update(); }
+  } catch (err) { e.busy = false; toast(errMsg(err), "error"); update(); }
 }
 
 // The AI writes the script (or changes it) from a plain description. The
@@ -120,7 +120,7 @@ async function writeWithAI() {
     a.undo = { name: e.name, content: e.content };
     e.content = d.content; if (!e.name.trim() || e.name.trim() !== d.fileName && !e.oldPath) e.name = d.fileName;
     a.summary = d.summary || ""; a.prompt = "";
-  } catch (err) { toast(errMsg(err)); }
+  } catch (err) { toast(errMsg(err), "error"); }
   a.busy = false; update();
 }
 

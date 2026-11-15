@@ -7,7 +7,7 @@ import { backend } from "./backend.js";
 const PREFS_KEY = "codegen.prefs.v1";
 const loadPrefs = () => { try { return JSON.parse(localStorage.getItem(PREFS_KEY) || "null"); } catch { return null; } };
 const savePrefs = () => {
-  try { localStorage.setItem(PREFS_KEY, JSON.stringify({ appearance: S.appearance, view: S.view, setup: S.setup, lastWorkspace: S.ws?.root || S.lastWorkspace, tab: S.run.tab })); } catch { /* storage unavailable */ }
+  try { localStorage.setItem(PREFS_KEY, JSON.stringify({ appearance: S.appearance, view: S.view, setup: S.setup, lastWorkspace: S.ws?.root || S.lastWorkspace, tab: S.run.tab, panes: S.panes, rail: S.rail })); } catch { /* storage unavailable */ }
 };
 
 const p = loadPrefs() || {};
@@ -16,6 +16,8 @@ export const S = {
   view: p.view || "wizard",
   setup: { done: false, provider: "", source: "", model: "", ...(p.setup || {}) },
   lastWorkspace: p.lastWorkspace || "",
+  panes: p.panes && typeof p.panes === "object" ? p.panes : {}, // side pane widths (px) and collapsed panes, by key
+  rail: p.rail || "",  // "open" | "closed" | "" (automatic: open on wide windows)
   info: null,
   ws: null,          // WorkspaceState from the hub
   wsError: "",
@@ -41,21 +43,34 @@ export const S = {
 
 let version = 0;
 const subs = new Set();
+export const savePrefsNow = () => savePrefs();
 export function update() { version++; savePrefs(); subs.forEach((f) => f()); }
 export function useApp() { return useSyncExternalStore((f) => (subs.add(f), () => subs.delete(f)), () => version); }
 
+// toast(msg, kind): kind "error" stays 8 s (and can be closed), the rest 3.2 s;
+// pointer over the toast holds it (toastHold/toastRelease).
 let toastTimer;
-export function toast(msg) { S.toast = String(msg); update(); clearTimeout(toastTimer); toastTimer = setTimeout(() => { S.toast = ""; update(); }, 3200); }
+const TOAST_MS = { error: 8000 };
+export function hideToast() { clearTimeout(toastTimer); S.toast = ""; S.toastKind = ""; update(); }
+export function toastRelease() { clearTimeout(toastTimer); if (S.toast) toastTimer = setTimeout(hideToast, TOAST_MS[S.toastKind] || 3200); }
+export function toastHold() { clearTimeout(toastTimer); }
+export function toast(msg, kind = "info") {
+  S.toast = String(msg); S.toastKind = kind;
+  // the message list on the status bar keeps them after the toast is gone
+  S.notices = [{ msg: S.toast, kind, at: Date.now() }, ...(S.notices || [])].slice(0, 20);
+  S.noticesUnread = (S.noticesUnread || 0) + 1;
+  update(); toastRelease();
+}
 export const errMsg = (e) => String(e?.message || e || "error").replace(/^Error:\s*/, "");
 export async function call(fn, ...args) {
-  try { return await fn(...args); } catch (e) { toast(errMsg(e)); throw e; }
+  try { return await fn(...args); } catch (e) { toast(errMsg(e), "error"); throw e; }
 }
 
 // Debounced saves so typing does not write a file per keystroke.
 const timers = {};
 export function debounce(key, ms, fn) { clearTimeout(timers[key]); timers[key] = setTimeout(fn, ms); }
-export const saveProfile = () => debounce("profile", 350, () => S.ws && backend.SaveProfile(S.ws.profile).catch((e) => toast(errMsg(e))));
-export const saveWorkflow = () => debounce("workflow", 350, () => S.wf && backend.SaveWorkflow(S.wf).catch((e) => toast(errMsg(e))));
+export const saveProfile = () => debounce("profile", 350, () => S.ws && backend.SaveProfile(S.ws.profile).catch((e) => toast(errMsg(e), "error")));
+export const saveWorkflow = () => debounce("workflow", 350, () => S.wf && backend.SaveWorkflow(S.wf).catch((e) => toast(errMsg(e), "error")));
 
 export async function openWorkspace(path, viaPicker) {
   try {
@@ -225,7 +240,7 @@ export async function downloadProjectZip(withContext = true) {
   try {
     const r = await backend.ExportProjectZip(withContext);
     if (r?.path) toast(`Saved ${r.files} files (${r.bytes >= 1 << 20 ? (r.bytes / (1 << 20)).toFixed(1) + " MB" : Math.max(1, Math.round(r.bytes / 1024)) + " KB"}) to ${r.path}${r.skipped?.length ? ` · ${r.skipped.length} large file(s) left out` : ""}`);
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
   S.zipBusy = false; update();
 }
 
@@ -238,5 +253,5 @@ export async function switchProject(name) {
     toast(`Now working on ${name ? name + "/" : "the top folder"}.`);
     update();
     loadStepEvents(S.sel);
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }

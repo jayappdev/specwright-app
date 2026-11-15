@@ -2,6 +2,7 @@
 // results are previewed live and that open in the Flow designer.
 import { useEffect, useState } from "react";
 import { backend } from "../backend.js";
+import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg } from "../store.js";
 import { GUIDE, exampleFlow } from "./flowGuide.js";
 import { StepIcon, openFlowInDesigner } from "./Flows.jsx";
@@ -28,12 +29,16 @@ function stepSettings(n) {
 async function tryExample(g, ex) {
   if (!S.ws) return toast("Open a workspace first (Development wizard or Choose input): the example is saved as a flow in it.");
   try {
-    const base = await backend.NewFlow("Example: " + ex.title);
+    // a second copy of the same example gets "(2)", and so on, so the flow list tells them apart
+    const names = new Set(((await backend.Flows().catch(() => [])) || []).map((x) => x.name));
+    let name = "Example: " + ex.title;
+    for (let k = 2; names.has(name); k++) name = `Example: ${ex.title} (${k})`;
+    const base = await backend.NewFlow(name);
     const { flow } = exampleFlow(ex);
-    await backend.SaveFlow({ ...base, description: `An example from the Flow step guide (${g.name}). Its first steps produce sample data; replace them with your own tools.`, inputs: flow.inputs, nodes: flow.nodes, edges: flow.edges });
-    toast(`Saved as the flow “Example: ${ex.title}”. Delete it when you are done.`);
+    await backend.SaveFlow({ ...base, name, description: `An example from the Flow step guide (${g.name}). Its first steps produce sample data; replace them with your own tools.`, inputs: flow.inputs, nodes: flow.nodes, edges: flow.edges });
+    toast(`Saved as the flow “${name}”. Delete it when you are done.`);
     openFlowInDesigner(base.id, ex.focus);
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }
 
 function Example({ g, ex, k }) {
@@ -105,6 +110,7 @@ export function FlowGuide() {
   const go = (t) => { setCur(t); document.getElementById("guide-" + t)?.scrollIntoView({ behavior: "smooth", block: "start" }); };
   return (
     <div className="files guide">
+      <Pane k="flowguide" v="--pane-l" pane=".ftree" min={200} max={480} label="Resize the step list" />
       <nav className="ftree" aria-label="Flow steps">
         <div style={{ padding: "0 8px 8px" }}><h1>Flow step guide</h1>
           <button className="link" onClick={() => { S.view = "flows"; update(); }}>← Back to the Flow designer</button></div>

@@ -8,6 +8,9 @@ import { ModelPicker } from "../ModelPicker.jsx";
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
+import { openFlowGuide } from "./FlowGuide.jsx";
+import { EmptyState } from "../ui.jsx";
+import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, isCopilot, refreshExtensions, kcName, isWindows } from "../store.js";
 import { Icon, Pill } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
@@ -24,6 +27,18 @@ import { CopyButton } from "../CopyButton.jsx";
 const frs = () => (S.frun ||= { flows: null, flowId: "", flow: null, creds: [], keychain: false, runs: [], runId: "", inputs: {}, files: {}, opts: defaultOpts(), secretVals: {}, showOpts: false, tab: "refine", decision: {} });
 const defaultOpts = () => ({ review: "ai", repeat: 1, forEach: { input: "", split: "lines", filter: "", max: 100 }, timeoutMinutes: 0, stepTimeoutSeconds: 0, startAt: "", skip: [], stopAfter: "", model: "" });
 const LIVE = ["running", "review", "scheduled"];
+// "just now", "5 min ago", "2 h ago", "yesterday 14:05", then the date
+export function ago(t) {
+  const d = new Date(t), s = (Date.now() - d) / 1000;
+  if (!(s >= 0)) return d.toLocaleString();
+  if (s < 45) return "just now";
+  if (s < 3600) return Math.round(s / 60) + " min ago";
+  if (s < 6 * 3600) return Math.round(s / 3600) + " h ago";
+  const day = (x) => new Date(x).toDateString(), time = d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+  if (day(d) === day(Date.now())) return "today " + time;
+  if (day(d) === day(Date.now() - 864e5)) return "yesterday " + time;
+  return d.toLocaleDateString([], { day: "numeric", month: "short" }) + " " + time;
+}
 const STATUS_LABEL = { running: "Running", review: "Waiting for you", scheduled: "Scheduled", done: "Completed", failed: "Failed", stopped: "Stopped", interrupted: "Interrupted", pending: "Pending", skipped: "Skipped" };
 const pill = (s) => ({ review: "paused", scheduled: "pending", interrupted: "failed", stopped: "cancelled", skipped: "pending" }[s] || s);
 
@@ -49,14 +64,17 @@ async function loadFlow(id) {
     r.creds = await backend.FlowCredentials(id).catch(() => []);
     r.secretStatus = Object.fromEntries(((await backend.FlowSecretStatus(id).catch(() => [])) || []).map((s) => [s.name, s]));
     r.typeSecret = {}; r.saveSecret = {}; r.reveal = {};
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
   update();
 }
+
+// showFlowRun opens Run flows on one run (used by the status bar).
+export function showFlowRun(id) { S.view = "flowrun"; update(); openRun(id); }
 
 async function openRun(id) {
   const r = frs();
   r.runId = id;
-  if (!S.flowRuns[id]) { try { S.flowRuns[id] = await backend.FlowRun(id); } catch (e) { toast(errMsg(e)); } }
+  if (!S.flowRuns[id]) { try { S.flowRuns[id] = await backend.FlowRun(id); } catch (e) { toast(errMsg(e), "error"); } }
   if (!S.loaded[id]) { S.loaded[id] = true; const evs = (await backend.RunEvents(id).catch(() => [])) || []; const seen = new Set((S.events[id] || []).map((e) => e.seq)); S.events[id] = [...(S.events[id] || []), ...evs.filter((e) => !seen.has(e.seq))].sort((a, b) => a.seq - b.seq); }
   const st = S.flowRuns[id];
   if (st && st.flowId !== r.flowId) await loadFlow(st.flowId);
@@ -84,12 +102,12 @@ async function start() {
     if (saveSecrets.length) { for (const n of saveSecrets) { r.saveSecret[n] = false; r.typeSecret[n] = false; r.inputs[n] = ""; } backend.FlowSecretStatus(f.id).then((l) => { r.secretStatus = Object.fromEntries((l || []).map((x) => [x.name, x])); update(); }, () => {}); }
     r.runs = [{ id: st.id, workflow: f.id, state: st.status, started: st.started, usage: {} }, ...r.runs];
     update();
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }
 
 async function decide(action, extra = {}) {
   const r = frs();
-  try { await backend.DecideFlow(r.runId, { action, ...extra }); r.decision = {}; update(); } catch (e) { toast(errMsg(e)); }
+  try { await backend.DecideFlow(r.runId, { action, ...extra }); r.decision = {}; update(); } catch (e) { toast(errMsg(e), "error"); }
 }
 
 // --- setup ------------------------------------------------------------------------
@@ -171,7 +189,7 @@ function Credentials() {
       if (where === "keychain") await backend.SaveSecretToKeychain(c.name, v); else await backend.SetSecret(c.name, v);
       r.secretVals[c.name] = ""; r.creds = await backend.FlowCredentials(r.flowId);
       toast(where === "keychain" ? `${c.name} saved in the keychain.` : `${c.name} set for this session.`); update();
-    } catch (e) { toast(errMsg(e)); }
+    } catch (e) { toast(errMsg(e), "error"); }
   };
   return (
     <div className="card"><div className="card-head"><Icon.lock /><h3>Credentials</h3><span className="badge">{r.creds.length}</span></div>
@@ -187,12 +205,33 @@ function Credentials() {
   );
 }
 
+const REVIEW_HINT = {
+  refine: "Say what should be different; the AI redoes this step's result and the flow continues from it.",
+  command: "Reshape the result with a shell command, such as jq, sort or grep.",
+  edit: "Change the result by hand; the flow continues with your version.",
+  retry: "Change this step's settings and run it again with the same inputs.",
+};
+const REVIEW_LABEL = { ai: "reviews after AI steps", each: "review after every step", marked: "reviews only marked steps", none: "no reviews" };
+// the summary line: the review mode, then only what differs from the defaults
+function optionsSummary(o, f) {
+  const name = (id) => f.nodes.find((n) => n.id === id)?.title || id, out = [REVIEW_LABEL[o.review] || o.review];
+  if (+o.repeat > 1) out.push(`${o.repeat} times`);
+  if (o.forEach.input) out.push(`once per item of ${f.inputs.find((i) => i.name === o.forEach.input)?.label || o.forEach.input}`);
+  if (o.startAt) out.push("starts " + new Date(o.startAt).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }));
+  if (+o.timeoutMinutes) out.push(`stops after ${o.timeoutMinutes} min`);
+  if (+o.stepTimeoutSeconds) out.push(`${o.stepTimeoutSeconds} s per step`);
+  if (o.stopAfter) out.push(`stops after ${name(o.stopAfter)}`);
+  if (o.skip.length) out.push(`skips ${o.skip.length} step${o.skip.length === 1 ? "" : "s"}`);
+  if (o.model?.trim()) out.push("model " + o.model.trim());
+  return out.length === 1 ? out[0] + " · no limits" : out.join(" · ");
+}
+
 function Options() {
   const r = frs(), o = r.opts, f = r.flow, set = (k, v) => { o[k] = v; update(); };
   const steps = f.nodes.filter((n) => n.type !== "start");
   return (
     <details className="card fr-opts" open={r.showOpts} onToggle={(e) => { r.showOpts = e.target.open; }}>
-      <summary><b>Options</b> <span className="muted">· reviews, repeat, run per item, filter, timing, steps</span></summary>
+      <summary><b>Options</b> <span className="muted">· {optionsSummary(o, f)}</span></summary>
       <div className="fr-grid">
         <label className="field"><span className="muted">Pause for review</span><select value={o.review} onChange={(e) => set("review", e.target.value)}>
           <option value="ai">After AI steps and marked steps</option><option value="each">After every step</option><option value="marked">Only steps marked for review</option><option value="none">Never</option></select></label>
@@ -223,7 +262,7 @@ function Setup() {
     <Credentials />
     <Options />
     <div className="row-actions fr-go"><button className="btn primary fr-run" onClick={start}><Icon.workflow /> {r.opts.startAt ? "Schedule run" : "Run flow"}</button>
-      <span className="muted">{f.nodes.length - 1} steps · {f.nodes.filter((n) => n.type === "output").length} outputs · saves about {estimate(f)} min each run</span></div>
+      <span className="muted">{(() => { const n = f.nodes.filter((x) => !["start", "output"].includes(x.type)).length, o = f.nodes.filter((x) => x.type === "output").length; return `${n} step${n === 1 ? "" : "s"} · ${o} output${o === 1 ? "" : "s"}`; })()} · saves about {estimate(f)} min each run</span></div>
   </>;
 }
 
@@ -260,6 +299,7 @@ function Review({ st }) {
         <button className="btn secondary danger-text" onClick={() => decide("stop")}><Icon.x /> Stop the flow</button>
       </div>
       <div className="tabs" role="tablist" style={{ marginTop: 12 }}>{[["refine", "Refine with AI"], ["command", "Run a command"], ["edit", "Edit the result"], ["retry", "Change settings and run again"]].map(([k, l]) => <button key={k} role="tab" className="tab" aria-selected={tab === k} onClick={() => go(k)}>{l}</button>)}</div>
+      <p className="muted fr-tab-hint">{REVIEW_HINT[tab]}</p>
       <div className="fr-iter">
         {tab === "refine" && <><textarea rows={3} value={d.prompt || ""} placeholder={rv.type === "ai" ? "e.g. Shorter, and add a risks section" : "e.g. Keep only the failing tests and group them by package"} onChange={(e) => setD("prompt", e.target.value)} />
           {saveBox(rv.type === "ai" ? "added to the step's prompt" : "as an AI step after this one")}
@@ -379,7 +419,7 @@ function TrialBanner({ st }) {
   const r = frs(), t = st.trial, live = LIVE.includes(st.status);
   const title = (id) => st.steps.find((x) => x.id === id)?.title || id;
   const apply = async () => {
-    try { await backend.ApplyStepFix(st.id); t.applied = true; toast(`Applied to the flow ${st.flowName}.`); update(); } catch (e) { toast(errMsg(e)); }
+    try { await backend.ApplyStepFix(st.id); t.applied = true; toast(`Applied to the flow ${st.flowName}.`); update(); } catch (e) { toast(errMsg(e), "error"); }
   };
   return <div className={"banner fr-trial" + (t.applied ? " applied" : "")}>
     <div><b>{t.applied ? "Applied to the flow." : "Trial of a change — not saved yet."}</b> Changed: {t.steps.map((x) => <span key={x.id}><b>{title(x.id)}</b>{x.why ? ` (${x.why})` : ""}</span>).reduce((a, b) => [a, "; ", b])}.
@@ -412,7 +452,7 @@ function RunView({ st }) {
   return <>
     <header className="view-head"><h1>{st.flowName}</h1><Pill s={pill(st.status)} label={STATUS_LABEL[st.status] || st.status} />
       <div className="head-controls">
-        {live && <button className="btn secondary danger-text" onClick={() => backend.StopFlowRun(st.id).catch((e) => toast(errMsg(e)))}><Icon.x /> Stop</button>}
+        {live && <button className="btn secondary danger-text" onClick={() => backend.StopFlowRun(st.id).catch((e) => toast(errMsg(e), "error"))}><Icon.x /> Stop</button>}
         <button className="btn secondary" onClick={() => { S.pg ||= { prompt: "", tools: true, model: "", runs: [], sel: "", loaded: false }; S.pg.loaded = false; S.pg.sel = st.id; S.view = "playground"; update(); }}>Watch in the playground</button>
         {!live && <button className="btn secondary" title="Ask follow-up questions about this run's results" onClick={() => continueInPlayground([st.id])}><Icon.history /> Continue in the playground</button>}
         {!live && <button className="btn primary" onClick={() => { r.runId = ""; update(); }}>Run again</button>}
@@ -425,8 +465,9 @@ function RunView({ st }) {
     {st.changes?.length > 0 && <div className="banner fr-saved"><Icon.check /> Saved to the flow: {st.changes.join("; ")}</div>}
     {st.status === "review" && st.review && <Review st={st} />}
     {st.status === "running" && <AiProgress evs={evs} />}
+    {!live && st.outputs?.length > 0 && <Outputs st={st} />}
     <Steps st={st} />
-    <Outputs st={st} />
+    {(live || !st.outputs?.length) && <Outputs st={st} />}
     <details className="fr-activity"><summary className="muted">Activity and debug log · {evs.length} events</summary>
       <RunPanel st={{ id: "flow", cmd: st.flowName, status: live ? "running" : st.status, lastRun: st.id }} evs={evs} running={live} /></details>
   </>;
@@ -474,15 +515,17 @@ export function FlowRun() {
   const runsOf = (id) => r.runs.filter((x) => x.workflow === id).slice(0, 6);
   return (
     <div className={"files frun" + (st ? " with-side" : "")}>
+      <Pane k="flowrun" v="--pane-l" pane=".ftree" min={200} max={480} label="Resize the flow list" />
+      {st && <Pane k="flowrun-side" v="--pane-r" pane=".fr-side" edge="left" min={200} max={480} label="Resize the progress panel" />}
       <nav className="ftree" aria-label="Flows and runs">
         <h1 style={{ padding: "0 8px 8px" }}>Run flows</h1>
         {(r.flows || []).map((f) => <div key={f.id} className="fr-flow">
           <button className={"run-item" + (r.flowId === f.id && !r.runId ? " active" : "")} onClick={() => { r.runId = ""; loadFlow(f.id); }}>
             <span className="run-item-top"><b>{f.name}</b></span><small>{f.steps} steps · {f.outputs} outputs</small></button>
           {runsOf(f.id).map((x) => { const live = S.flowRuns[x.id]?.status || x.state; return <button key={x.id} className={"run-item fr-run-item" + (r.runId === x.id ? " active" : "")} onClick={() => openRun(x.id)}>
-            <span className="run-item-top"><span>{new Date(x.started).toLocaleString()}{(x.kind === "flow-trial" || S.flowRuns[x.id]?.trial) && <span className="badge badge-info" style={{ marginLeft: 6 }}>trial</span>}</span><Pill s={pill(live)} label={STATUS_LABEL[live] || live} /></span></button>; })}
+            <span className="run-item-top"><span title={new Date(x.started).toLocaleString()}>{ago(x.started)}{(x.kind === "flow-trial" || S.flowRuns[x.id]?.trial) && <span className="badge badge-info" style={{ marginLeft: 6 }}>trial</span>}</span><Pill s={pill(live)} label={STATUS_LABEL[live] || live} /></span></button>; })}
         </div>)}
-        {r.flows && !r.flows.length && <p className="muted" style={{ padding: "4px 8px" }}>No flows yet. Design one under Tools › Flow designer.</p>}
+        {r.flows && !r.flows.length && <EmptyState compact title="No flows yet" actions={[["Design a flow", () => { S.view = "flows"; update(); }, true], ["Try an example", () => openFlowGuide("")]]}>A flow strings tools, AI steps and outputs together. Design one, or start from an example in the Flow step guide.</EmptyState>}
       </nav>
       <div className="fview">{st ? <RunView st={st} /> : r.flow ? <Setup /> : <p className="muted">Choose a flow.</p>}</div>
       {st && <Sidebar st={st} />}

@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { backend } from "../backend.js";
+import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, fmtCredits } from "../store.js";
 import { Icon, Pill, Chip } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
@@ -31,7 +32,7 @@ function Tree({ node, prefix, depth }) {
     let label = name, p = path, k = kid;
     if (/src\/(main|test)\/(java|kotlin)\/[^/]+$/.test(path)) while (k && Object.keys(k).length === 1 && k[Object.keys(k)[0]] !== null) { const n = Object.keys(k)[0]; label += "." + n; p += "/" + n; k = k[n]; }
     const isPkg = /src\/(main|test)\/(java|kotlin)\//.test(p + "/");
-    const open = S.files.open[p] !== false;
+    const open = S.files.q ? true : S.files.open[p] ?? !/^\.codegen$/.test(p);
     return <div key={p}>
       <button className="tree-item" style={{ paddingLeft: 8 + depth * 14 }} aria-expanded={open} onClick={() => { S.files.open[p] = !open; update(); }}>{isPkg ? <Icon.pkg /> : <Icon.folder />}<span>{label}</span></button>
       {open && <Tree node={k} prefix={p} depth={depth + 1} />}
@@ -81,7 +82,7 @@ async function ask(text, kind) {
     Object.assign(a, { runId: id, asked: text, kind: "", prompt: "", seen: "" });
     if (kind === "fix" || kind === "packages" || kind === "compile") a.auto = true;
     update();
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }
 
 // Open a workspace path (optionally :line) from the AI's answer.
@@ -93,7 +94,7 @@ function openPath(path, line) {
   update();
 }
 
-function Assistant() {
+function Assistant({ onHide }) {
   const a = fa(), box = useRef(null), f = S.files;
   const evs = a.runId ? S.events[a.runId] || [] : [];
   const state = a.runId ? stateOf(evs) : "", running = state === "running";
@@ -114,11 +115,12 @@ function Assistant() {
   return (
     <div className="card fa">
       <div className="card-head"><Icon.spark /><h3>Ask AI</h3><span className="muted" style={{ fontWeight: 400 }}>find, explain, fix the build, install packages</span>
+        {onHide && <button className="icon-btn fa-hide" aria-label="Hide the Ask AI panel" title="Hide the Ask AI panel" onClick={onHide}><Icon.x /></button>}
         {a.runId && <button className="link" style={{ marginLeft: "auto" }} onClick={() => { a.runId = ""; update(); }}>Clear</button>}</div>
       <div className="fa-input">
         <textarea ref={box} rows={2} value={a.prompt} placeholder={f.sel ? `e.g. "Why does ${f.sel.split("/").pop()} fail to compile?" or "Where is OrderPlaced published?"  (⌘/Ctrl + Enter)` : "Ask the AI about this project…"}
           onChange={(e) => { a.prompt = e.target.value; update(); }} onKeyDown={(e) => { if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) { e.preventDefault(); ask(); } }} />
-        {running ? <button className="btn secondary" onClick={() => backend.CancelRun(a.runId).catch((e) => toast(errMsg(e)))}>Stop</button>
+        {running ? <button className="btn secondary" onClick={() => backend.CancelRun(a.runId).catch((e) => toast(errMsg(e), "error"))}>Stop</button>
           : <button className="btn primary" disabled={busy || !a.prompt.trim()} onClick={() => ask()}>Ask</button>}
       </div>
       <div className="chips" style={{ marginTop: 8 }}>
@@ -158,20 +160,25 @@ async function compile() {
 
 export function Files() {
   const f = S.files;
-  useEffect(() => { if (S.ws) backend.ListFiles().then((l) => { l = l || []; f.list = l; if (!f.sel && l.length) f.sel = l.find((x) => x.startsWith("specs/") || x.startsWith("src/")) || l[0]; update(); }).catch((e) => toast(errMsg(e))); }, [S.ws?.root]);
+  useEffect(() => { if (S.ws) backend.ListFiles().then((l) => { l = l || []; f.list = l; if (!f.sel && l.length) f.sel = l.find((x) => x.startsWith("specs/") || x.startsWith("src/")) || l[0]; update(); }).catch((e) => toast(errMsg(e), "error")); }, [S.ws?.root]);
   useEffect(() => { if (f.sel) return loadFileInto(view(), f.sel); }, [f.sel, f.list.length]);
   if (!S.ws) return <NeedWorkspace what="files" />;
-  const c = f.compile;
+  const c = f.compile, aiHidden = !!S.panes["files:ai:c"];
+  const toggleAI = () => { if (aiHidden) delete S.panes["files:ai:c"]; else S.panes["files:ai:c"] = 1; update(); };
   return (
-    <div className="files">
-      <nav className="ftree" aria-label="Files, packages and folders"><h1 style={{ padding: "0 8px 8px" }}>Files</h1><div className="tree-folder" title={S.ws.root}>{S.ws.name}</div><Tree node={buildTree(f.list)} prefix="" depth={0} /></nav>
+    <div className={"files" + (aiHidden ? "" : " files-ai")}>
+      <Pane k="files" v="--pane-l" pane=".ftree" min={200} max={560} label="Resize the file tree" />
+      {!aiHidden && <Pane k="files-ai" v="--pane-r" pane=".fa-side" edge="left" min={300} max={720} label="Resize the Ask AI panel" />}
+      <nav className="ftree" aria-label="Files, packages and folders"><h1 style={{ padding: "0 8px 8px" }}>Files</h1><input className="tree-filter" type="search" placeholder="Filter files" aria-label="Filter files by name or path" value={f.q || ""} onChange={(e) => { f.q = e.target.value; update(); }} />
+        <div className="tree-folder" title={S.ws.root}>{S.ws.name}</div>{(() => { const q = (f.q || "").toLowerCase().trim(), list = q ? f.list.filter((p) => p.toLowerCase().includes(q)) : f.list;
+          return list.length ? <Tree node={buildTree(list)} prefix="" depth={0} /> : <p className="muted" style={{ padding: "4px 8px" }}>No file matches “{f.q}”.</p>; })()}</nav>
       <div className="fview">
         <header className="view-head"><h1 style={{ fontFamily: "var(--font-mono)", fontSize: "1em", wordBreak: "break-all" }}>{f.sel || "No file selected"}</h1>
-          <div className="head-controls head-model"><ModelPicker value={fa().model || ""} onChange={(v) => { fa().model = v; update(); }} label="Model" /><button className="btn primary" disabled={c?.running} onClick={compile}>{c?.running ? "Compiling…" : "Compile project"}</button></div></header>
-        <Assistant />
+          <div className="head-controls head-model">{aiHidden && <button className="btn secondary" onClick={toggleAI} title="Show the Ask AI panel"><Icon.spark /> Ask AI</button>}<ModelPicker value={fa().model || ""} onChange={(v) => { fa().model = v; update(); }} label="Model" /><button className="btn primary" disabled={c?.running} onClick={compile}>{c?.running ? "Compiling…" : "Compile project"}</button></div></header>
         {c && <div className="card"><div className="card-head"><h3>Compilation {c.cmd && <span className="muted" style={{ fontWeight: 400 }}><code>{c.cmd}</code></span>}</h3>{c.running ? <span className="spinner" /> : <Pill s={c.ok ? "done" : "failed"} label={c.ok ? "Passed" : "Failed"} />}</div><pre className="code console-out">{c.out ? <FileLinkify text={c.out} /> : "…"}</pre></div>}
         {f.sel && <div className="fv-card"><FileView slot={view()} line={f.line} /></div>}
       </div>
+      {!aiHidden && <aside className="fa-side" aria-label="Ask AI about the project"><Assistant onHide={toggleAI} /></aside>}
     </div>
   );
 }

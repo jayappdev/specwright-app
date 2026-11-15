@@ -1,6 +1,6 @@
 // Keeping the Playground's and History's run lists tidy: search, Active /
 // Archived, groups, and selecting several runs to archive, restore or group.
-// Runs are archived automatically after the days set under Appearance ›
+// Runs are archived automatically after the days set under Settings › Runs ›
 // Housekeeping.
 import { useEffect } from "react";
 import { backend } from "./backend.js";
@@ -44,7 +44,7 @@ async function act(area, runs, kind, ids) {
       toast(name.trim() ? `Put ${ids.length} run${ids.length === 1 ? "" : "s"} in “${name.trim()}”.` : "Removed from the group.");
     }
     h.picked = []; h.selecting = false; update();
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }
 
 // The bar above a run list.
@@ -65,7 +65,7 @@ export function RunListBar({ area, runs }) {
       {h.view === "active" ? <button className="btn secondary small" disabled={!h.picked.length} onClick={() => act(area, runs, "archive")}>Archive</button>
         : <button className="btn secondary small" disabled={!h.picked.length} onClick={() => act(area, runs, "restore")}>Restore</button>}
       <button className="btn secondary small" disabled={!h.picked.length} onClick={() => act(area, runs, "group")}>Group…</button></div>}
-    <small className="muted hk-note">{days ? `Finished runs are archived after ${days} day${days === 1 ? "" : "s"}` : "Runs are not archived automatically"} · <button className="link" onClick={() => { S.view = "appearance"; S.scrollTo = "housekeeping"; update(); }}>change</button></small>
+    <small className="muted hk-note">{days ? `Finished runs are archived after ${days} day${days === 1 ? "" : "s"}` : "Runs are not archived automatically"} · <button className="link" onClick={() => { S.view = "appearance"; S.settingsTab = "runs"; S.scrollTo = "housekeeping"; update(); }}>change</button></small>
   </div>;
 }
 
@@ -98,7 +98,7 @@ export function RunActions({ area, runs, run }) {
   </>;
 }
 
-// Appearance › Housekeeping: after how many days runs are archived.
+// Settings › Runs › Housekeeping: after how many days runs are archived.
 export function HousekeepingCard() {
   useEffect(() => { loadHousekeeping(); }, []);
   useEffect(() => { if (S.scrollTo === "housekeeping") { document.getElementById("housekeeping")?.scrollIntoView({ block: "start" }); S.scrollTo = ""; } }, []);
@@ -106,7 +106,7 @@ export function HousekeepingCard() {
   if (!s) return null;
   const save = async () => {
     try { S.housekeeping = await backend.SaveHousekeeping({ playgroundDays: +s.playgroundDays || 0, historyDays: +s.historyDays || 0 }); toast(S.housekeeping.lastArchived ? `Saved. Archived ${S.housekeeping.lastArchived} run${S.housekeeping.lastArchived === 1 ? "" : "s"} now.` : "Saved."); for (const a of ["playground", "history"]) hk(a); S.pg && (S.pg.loaded = false); update(); }
-    catch (e) { toast(errMsg(e)); }
+    catch (e) { toast(errMsg(e), "error"); }
   };
   const days = (k, label) => <label className="field"><span className="muted">{label}</span>
     <div className="hk-days"><input type="number" min="0" max="3650" value={s[k] ?? 0} onChange={(e) => { s[k] = e.target.value; update(); }} /><span className="muted">days after a run ends (0: never)</span></div></label>;

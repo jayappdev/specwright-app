@@ -10,8 +10,9 @@ import { useEffect, useRef, useState } from "react";
 import { openFlowRunner } from "./FlowRun.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { backend } from "../backend.js";
+import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, saveText, refreshExtensions, kcName, isWindows } from "../store.js";
-import { Icon } from "../ui.jsx";
+import { Icon, Menu, usePopover } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { ToolIcon } from "../ToolTile.jsx";
 import { AttachBar, AttachmentChips, onPasteAttach } from "../Attachments.jsx";
@@ -74,7 +75,7 @@ export function StepIcon({ n, tools, size = 34 }) {
 
 async function loadList() {
   const f = fl();
-  try { f.list = await backend.Flows(); } catch (e) { f.list = []; toast(errMsg(e)); }
+  try { f.list = await backend.Flows(); } catch (e) { f.list = []; toast(errMsg(e), "error"); }
   if (!f.ops) f.ops = await backend.FlowOps().catch(() => null);
   update();
 }
@@ -87,10 +88,11 @@ async function openFlow(id) {
   if (f.dirty) await save();
   try {
     const flow = await backend.LoadFlow(id);
-    Object.assign(f, { id, flow, sel: null, selEdge: null, dirty: false, preview: {} });
+    Object.assign(f, { id, flow, sel: null, selEdge: null, dirty: false, preview: {}, kbLink: null });
+    resetHistory();
     f.issues = (await backend.ValidateFlow(flow).catch(() => [])) || [];
     await refreshShapes();
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
   update();
 }
 
@@ -102,9 +104,34 @@ async function refreshShapes() {
   f.shapes = (await backend.FlowShapes(f.flow, samples).catch(() => null)) || {};
 }
 
+// Undo / redo: snapshots of the flow, taken when it changes. Changes less than
+// 600 ms apart (typing) share one snapshot. At most 60 are kept per flow.
+const snap0 = (flow) => JSON.stringify({ ...flow, updated: undefined });
+function resetHistory() { const f = fl(); f.undo = []; f.redo = []; f.last = f.flow ? snap0(f.flow) : ""; f.lastAt = 0; }
+function record() {
+  const f = fl(), now = Date.now(), cur = snap0(f.flow);
+  if (cur === f.last) return;
+  if (!f.undo) resetHistory();
+  if (now - (f.lastAt || 0) > 600 || !f.undo.length) { f.undo.push(f.last); if (f.undo.length > 60) f.undo.shift(); }
+  f.redo = []; f.last = cur; f.lastAt = now;
+}
+function restore(from, to) {
+  const f = fl();
+  if (!f.flow || !f[from]?.length) return;
+  (f[to] ||= []).push(snap0(f.flow));
+  const s = f[from].pop(), updated = f.flow.updated;
+  f.flow = { ...JSON.parse(s), updated }; f.last = s; f.lastAt = 0;
+  f.sel = null; f.multi = []; f.selEdge = null;
+  f.dirty = true; update();
+  backend.ValidateFlow(f.flow).then((is) => { f.issues = is || []; update(); }).catch(() => {});
+  clearTimeout(timer); timer = setTimeout(save, 700);
+}
+const undo = () => restore("undo", "redo"), redo = () => restore("redo", "undo");
+
 let timer = 0;
 function changed() {
   const f = fl();
+  record();
   f.dirty = true; update();
   clearTimeout(timer);
   timer = setTimeout(save, 700);
@@ -122,7 +149,7 @@ async function save() {
     f.flow.updated = st.flow.updated;
     const s = (f.list || []).find((x) => x.id === f.flow.id);
     if (s) { s.name = f.flow.name; s.updated = st.flow.updated; }
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
   f.saving = false; update();
 }
 
@@ -130,7 +157,7 @@ async function newFlow() {
   const name = await askText("New flow", { label: "Name", value: "New flow", ok: "Create" });
   if (name == null) return;
   try { const flow = await backend.NewFlow(name); await loadList(); await openFlow(flow.id); }
-  catch (e) { toast(errMsg(e)); }
+  catch (e) { toast(errMsg(e), "error"); }
 }
 
 async function importFlow(file) {
@@ -138,28 +165,28 @@ async function importFlow(file) {
     const st = await backend.ImportFlow(await file.text());
     await loadList(); await openFlow(st.flow.id);
     toast(`Imported ${st.flow.name}.` + (st.notes?.length ? " " + st.notes.join(" · ") : ""));
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }
 
 async function exportFlow() {
   const f = fl();
   if (f.dirty) await save();
   try { saveText(`${f.flow.id}.flow.json`, await backend.ExportFlow(f.flow.id), "application/json"); }
-  catch (e) { toast(errMsg(e)); }
+  catch (e) { toast(errMsg(e), "error"); }
 }
 
 async function deleteFlow() {
   const f = fl();
   if (!(await confirmDialog(`This removes .codegen/flows/${f.flow.id}.json from the project.`, { title: `Delete the flow ${f.flow.name}?`, ok: "Delete", danger: true }))) return;
   try { await backend.DeleteFlow(f.flow.id); Object.assign(f, { id: "", flow: null, sel: null, dirty: false }); clearTimeout(timer); await loadList(); }
-  catch (e) { toast(errMsg(e)); }
+  catch (e) { toast(errMsg(e), "error"); }
 }
 
 async function duplicateFlow() {
   const f = fl();
   if (f.dirty) await save();
   const copy = { ...clone(f.flow), id: "", name: f.flow.name + " (copy)" };
-  try { const st = await backend.SaveFlow(copy); await loadList(); await openFlow(st.flow.id); } catch (e) { toast(errMsg(e)); }
+  try { const st = await backend.SaveFlow(copy); await loadList(); await openFlow(st.flow.id); } catch (e) { toast(errMsg(e), "error"); }
 }
 
 // --- graph helpers ---------------------------------------------------------------------
@@ -278,7 +305,7 @@ function removeSelected() {
   flow.nodes = flow.nodes.filter((x) => !ids.has(x.id));
   flow.edges = flow.edges.filter((e) => !ids.has(e.from) && !ids.has(e.to));
   f.sel = null; f.multi = []; changed();
-  if (ids.size > 1) toast(`Deleted ${ids.size} steps.`);
+  toast(ids.size > 1 ? `Deleted ${ids.size} steps. ⌘Z / Ctrl+Z brings them back.` : "Deleted the step. ⌘Z / Ctrl+Z brings it back.");
 }
 
 // --- several selected steps: select, copy, paste ------------------------------------
@@ -297,6 +324,8 @@ function setSelection(ids) {
 }
 
 const CLIP_FORMAT = "specwright-steps";
+
+function togglePane(k) { if (S.panes[k]) delete S.panes[k]; else S.panes[k] = 1; update(); }
 
 // copySteps puts the selected steps, the connections between them and the
 // inputs they use on the clipboard (and keeps them for pasting in the app).
@@ -378,7 +407,7 @@ async function pasteAsNewFlow(clip) {
     const flow = await backend.NewFlow("Steps from " + (clip.from || "a flow"));
     await loadList(); await openFlow(flow.id);
     pasteSteps(clip);
-  } catch (e) { toast(errMsg(e)); }
+  } catch (e) { toast(errMsg(e), "error"); }
 }
 
 // rename a step and every {{steps.<id>…}} / {{<id>.output_file|buffer_output}} that refers to it
@@ -417,8 +446,8 @@ function SecretSourceEditor({ i }) {
   const ref = () => ({ service: k.service || "SpecWright", account: k.account || i.name, kind: k.kind || "" });
   const set = (patch) => { Object.assign(i, patch); setSt(null); changed(); };
   const setK = (patch) => { i.keychain = k; Object.assign(k, patch); for (const x of ["service", "account", "kind"]) if (!k[x]) delete k[x]; if (!Object.keys(k).length) delete i.keychain; setSt(null); changed(); };
-  const check = async () => { try { setSt(await backend.CheckKeychain(ref())); } catch (e) { toast(errMsg(e)); } };
-  const save = async () => { try { await backend.SaveToKeychain(ref(), val); setVal(""); toast(`Saved in the ${kcName()} (${ref().service} / ${ref().account}).`); check(); } catch (e) { toast(errMsg(e)); } };
+  const check = async () => { try { setSt(await backend.CheckKeychain(ref())); } catch (e) { toast(errMsg(e), "error"); } };
+  const save = async () => { try { await backend.SaveToKeychain(ref(), val); setVal(""); toast(`Saved in the ${kcName()} (${ref().service} / ${ref().account}).`); check(); } catch (e) { toast(errMsg(e), "error"); } };
   const usesKc = src === "keychain" || src === "auto", usesEnv = src === "env" || src === "auto";
   return <div className="fl-secret">
     <Field label="Where the value comes from"><select value={src} onChange={(e) => set({ source: e.target.value === "ask" ? undefined : e.target.value })}>{SECRET_SOURCES.map(([v, l]) => <option key={v} value={v}>{typeof l === "function" ? l() : l}</option>)}</select></Field>
@@ -512,6 +541,18 @@ function edgeLabel(a, b, e) {
 
 // --- canvas ------------------------------------------------------------------------------
 
+// fitView: zoom and scroll so every step is in view
+let canvasEl = null;
+function fitView() {
+  const f = fl(), el = canvasEl;
+  if (!f.flow || !el) return;
+  const ns = f.flow.nodes, x1 = Math.min(...ns.map((n) => n.x)), y1 = Math.min(...ns.map((n) => n.y));
+  const x2 = Math.max(...ns.map((n) => n.x + NODE_W)), y2 = Math.max(...ns.map((n) => n.y + 90));
+  const pad = 40, z = Math.min(1.2, Math.max(0.4, Math.min((el.clientWidth - pad * 2) / (x2 - x1 || 1), (el.clientHeight - pad * 2) / (y2 - y1 || 1))));
+  f.zoom = +z.toFixed(2); update();
+  requestAnimationFrame(() => { el.scrollLeft = Math.max(0, x1 * f.zoom - pad); el.scrollTop = Math.max(0, y1 * f.zoom - pad); });
+}
+
 function Canvas() {
   const f = fl(), flow = f.flow, box = useRef(null), [drag, setDrag] = useState(null), [link, setLink] = useState(null), [band, setBand] = useState(null);
   const sel = new Set(selectedIds());
@@ -545,7 +586,28 @@ function Canvas() {
   useEffect(() => {
     const busy = (e) => e.target?.closest?.("input, textarea, select, [contenteditable=true]") || document.querySelector(".drawer-scrim, .file-preview, .ai-designer") || String(window.getSelection?.() || "").trim();
     const key = (e) => {
+      // ⌘S / Ctrl+S saves the flow, also while typing in the inspector (not under another editor or dialog)
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "s" && !e.shiftKey && !e.altKey && fl().flow && !document.querySelector(".drawer-scrim, .file-preview, .ai-designer, [role=dialog]")) {
+        e.preventDefault(); if (fl().dirty && !fl().saving) save(); return;
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === "\\" && !document.querySelector("[role=dialog]")) { e.preventDefault(); return togglePane("flows:insp:c"); }
       if (busy(e)) return;
+      const mod = e.metaKey || e.ctrlKey;
+      if (mod && e.key.toLowerCase() === "z") { e.preventDefault(); return e.shiftKey ? redo() : undo(); }
+      if (mod && e.key.toLowerCase() === "y") { e.preventDefault(); return redo(); }
+      if (e.key === "Escape" && f.kbLink) { f.kbLink = null; update(); return; }
+      // arrows move the selected steps (⇧: 5 grid steps)
+      if (!mod && !e.altKey && e.key.startsWith("Arrow") && selectedIds().length) {
+        e.preventDefault();
+        const d = (e.shiftKey ? 5 : 1) * GRID, dx = e.key === "ArrowLeft" ? -d : e.key === "ArrowRight" ? d : 0, dy = e.key === "ArrowUp" ? -d : e.key === "ArrowDown" ? d : 0;
+        for (const id of selectedIds()) { const n = nodeOf(id); if (n) { n.x = Math.max(0, n.x + dx); n.y = Math.max(0, n.y + dy); } }
+        return changed();
+      }
+      // C: connect the selected step to another one (Tab to it, Enter)
+      if (!mod && !e.altKey && e.key.toLowerCase() === "c" && f.sel && nodeOf(f.sel)?.type !== "output") {
+        e.preventDefault(); f.kbLink = f.sel; return update();
+      }
+      if (!mod && !e.altKey && e.key.toLowerCase() === "f") { e.preventDefault(); return fitView(); }
       if ((e.key === "Delete" || e.key === "Backspace") && (f.sel || f.selEdge != null)) { e.preventDefault(); removeSelected(); }
       if (e.key === "Escape") { f.sel = null; f.multi = []; f.selEdge = null; update(); }
       if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === "a") { e.preventDefault(); setSelection(fl().flow.nodes.filter((n) => n.type !== "start").map((n) => n.id)); }
@@ -568,7 +630,7 @@ function Canvas() {
   // a Gather loops back to its Loop: a dashed path under the region, "next item"
   const back = Object.entries(loops.gather).map(([l, g]) => { const a = nodeOf(g), b = nodeOf(l); if (!a || !b) return null; const region = flow.nodes.filter((x) => (loops.stack[x.id] || []).includes(l) || x.id === l || x.id === g); const low = Math.max(...region.map((x) => x.y)) + 92; const ax = a.x + NODE_W / 2, bx = b.x + NODE_W / 2; return { k: l, d: `M${ax},${a.y + 64} C${ax},${low} ${bx},${low} ${bx},${b.y + 64}`, x: (ax + bx) / 2, y: low - 12 }; }).filter(Boolean);
   return (
-    <div className="fl-canvas" ref={box} onWheel={wheel}
+    <div className="fl-canvas" ref={(el) => { box.current = el; canvasEl = el; }} onWheel={wheel}
       onDragOver={(e) => { if ([...e.dataTransfer.types].includes("application/x-flow-step")) e.preventDefault(); }}
       onDrop={(e) => { const spec = e.dataTransfer.getData("application/x-flow-step"); if (!spec) return; e.preventDefault(); const p = toLocal(e); f.sel = null; addNode(JSON.parse(spec), p.x - NODE_W / 2, p.y - 24); }}
       onMouseDown={(e) => { // empty canvas: draw a rectangle to select steps
@@ -592,8 +654,11 @@ function Canvas() {
             : n.type === "aggregate" ? (n.mode === "window" ? "Window" : "Group") + ((n.groupBy || []).length ? " by " + n.groupBy.join(", ") : " · all rows") : "";
           const inLoop = loops.stack[n.id] || [], loopName = inLoop.length ? nodeOf(inLoop[inLoop.length - 1])?.title || inLoop[inLoop.length - 1] : "";
           return (
-            <div key={n.id} data-node={n.id} className={"fl-node t-" + n.type + (f.sel === n.id || sel.has(n.id) ? " sel" : "") + (err ? " has-err" : is.length ? " has-warn" : "") + (link ? " linking" : "") + (inLoop.length ? " in-loop" : "")}
+            <div key={n.id} data-node={n.id} className={"fl-node t-" + n.type + (f.sel === n.id || sel.has(n.id) ? " sel" : "") + (err ? " has-err" : is.length ? " has-warn" : "") + (link || f.kbLink ? " linking" : "") + (f.kbLink === n.id ? " kb-from" : "") + (inLoop.length ? " in-loop" : "")}
               style={{ left: n.x, top: n.y, width: NODE_W }}
+              tabIndex={0} role="button" aria-label={`${n.title || n.id}, ${n.type} step${is.length ? `, ${is.length} problem${is.length === 1 ? "" : "s"}` : ""}`} aria-pressed={f.sel === n.id || sel.has(n.id)}
+              onFocus={() => { if (!f.kbLink && f.sel !== n.id && !sel.has(n.id)) { f.sel = n.id; f.multi = []; f.selEdge = null; update(); } }}
+              onKeyDown={(e) => { if (e.key === "Enter" && f.kbLink) { e.preventDefault(); const from = f.kbLink; f.kbLink = null; if (from !== n.id) connect(from, n.id); else update(); } }}
               onMouseDown={(e) => {
                 if (e.button !== 0 || e.target.closest(".fl-port")) return;
                 const p = toLocal(e);
@@ -604,16 +669,22 @@ function Canvas() {
               <div className="fl-node-head"><StepIcon n={n} tools={ts} /><div className="fl-node-text"><b>{n.title || n.id}</b><small>{sub}</small></div>
                 {is.length > 0 && <span className={"fl-badge " + (err ? "err" : "warn")} title={is.map((i) => i.message).join("\n")}>{is.length}</span>}</div>
               {inLoop.length > 0 && <div className="fl-loop-chip" title={`Runs once per item of ${loopName}${inLoop.length > 1 ? ` (nested ${inLoop.length} deep)` : ""}`}>↻ {inLoop.length > 1 ? "×" + inLoop.length + " " : ""}per item of {loopName}</div>}
-              {n.type === "start" && flow.inputs.length > 0 && <div className="fl-node-body">{flow.inputs.slice(0, 5).map((i) => <code key={i.name}>{i.name}</code>)}{flow.inputs.length > 5 && <span className="muted">+{flow.inputs.length - 5}</span>}</div>}
+              {n.type === "start" && flow.inputs.length > 0 && <div className="fl-node-body">{flow.inputs.slice(0, 5).map((i) => <code key={i.name} title={i.type === "secret" ? `Secret input${i.source ? " · from " + i.source : ""}: masked, never saved with the run` : undefined}>{i.type === "secret" && <Icon.lock />}{i.name}</code>)}{flow.inputs.length > 5 && <span className="muted">+{flow.inputs.length - 5}</span>}</div>}
               {n.type !== "output" && <span className="fl-port out" title="Drag to connect" onMouseDown={(e) => { e.stopPropagation(); e.preventDefault(); setLink({ from: n.id, ...toLocal(e) }); }} />}
             </div>
           );
         })}
       </div>
-      {flow.nodes.length === 1 && <div className="fl-hint"><b>Start by dragging a tool or step here</b><span>Drag from a step's ● to another step to connect them. Delete removes the selected step or connection.</span><span>Select several steps with ⇧-click or by drawing a box on the canvas; ⌘C copies them, ⌘V pastes them here or into another flow.</span></div>}
-      <div className="fl-zoom"><button className="icon-btn" aria-label="Zoom out" onClick={() => { f.zoom = Math.max(0.4, +(z - 0.1).toFixed(2)); update(); }}><Icon.minus /></button>
-        <button className="fv-pct" onClick={() => { f.zoom = 1; update(); }}>{Math.round(z * 100)}%</button>
-        <button className="icon-btn" aria-label="Zoom in" onClick={() => { f.zoom = Math.min(1.6, +(z + 0.1).toFixed(2)); update(); }}><Icon.plus /></button></div>
+      {flow.nodes.length === 1 && <div className="fl-hint"><b>Start by dragging a tool or step here</b><span>Drag from a step's ● to another step to connect them. Delete removes the selected step or connection.</span><span>Select several steps with ⇧-click or by drawing a box on the canvas; ⌘C copies them, ⌘V pastes them here or into another flow.</span><span>Keyboard: Tab to a step, arrows move it, C then Tab and Enter connects it, F fits the view, ⌘Z undoes.</span></div>}
+      <div className="fl-zoom" role="toolbar" aria-label="Canvas">
+        <button className="icon-btn" aria-label="Undo" title="Undo (⌘Z / Ctrl+Z)" disabled={!f.undo?.length} onClick={undo}><Icon.undo /></button>
+        <button className="icon-btn" aria-label="Redo" title="Redo (⇧⌘Z / Ctrl+Y)" disabled={!f.redo?.length} onClick={redo}><Icon.redo /></button>
+        <span className="fl-zoom-sep" />
+        <button className="icon-btn" aria-label="Zoom out" title="Zoom out (⌘ + scroll)" onClick={() => { f.zoom = Math.max(0.4, +(z - 0.1).toFixed(2)); update(); }}><Icon.minus /></button>
+        <button className="fv-pct" title="Back to 100%" onClick={() => { f.zoom = 1; update(); }}>{Math.round(z * 100)}%</button>
+        <button className="icon-btn" aria-label="Zoom in" title="Zoom in (⌘ + scroll)" onClick={() => { f.zoom = Math.min(1.6, +(z + 0.1).toFixed(2)); update(); }}><Icon.plus /></button>
+        <button className="icon-btn" aria-label="Fit all steps in view" title="Fit all steps in view (F)" onClick={fitView}><Icon.fit /></button></div>
+      {f.kbLink && <div className="fl-kb-hint" role="status">Connecting from <b>{nodeOf(f.kbLink)?.title || f.kbLink}</b>: Tab to a step, Enter connects, Esc cancels.</div>}
     </div>
   );
 }
@@ -629,17 +700,19 @@ function Palette() {
       onClick={() => addNode(spec)} onKeyDown={(e) => e.key === "Enter" && addNode(spec)}>
       {icon}<span><b>{label}</b><small>{sub}</small></span></div>
   );
+  if (S.panes["flows:pal:c"]) return <aside className="fl-palette is-collapsed" aria-label="Steps and tools"><button className="icon-btn" aria-label="Show steps and tools" title="Show steps and tools" onClick={() => togglePane("flows:pal:c")}><Icon.panelL /></button></aside>;
   return (
     <aside className="fl-palette" aria-label="Steps and tools">
-      <div className="tree-folder fl-pal-head">Steps <button className="link" title="How each step works, with examples" onClick={() => openFlowGuide("")}>How to use them ↗</button></div>
-      {STEP_TYPES.map((s) => item({ type: s.type }, s.name, s.help, <StepIcon n={{ type: s.type }} tools={[]} size={30} />))}
-      <input className="fl-search" placeholder="Filter tools" value={f.q} onChange={(e) => { f.q = e.target.value; update(); }} />
+      <div className="tree-folder fl-pal-head">Steps <button className="link" title="How each step works, with examples" onClick={() => openFlowGuide("")}>How to use them ↗</button>
+        <button className="icon-btn fl-collapse" aria-label="Hide steps and tools" title="Hide steps and tools" onClick={() => togglePane("flows:pal:c")}><Icon.panelL /></button></div>
+      <input className="fl-search" type="search" placeholder="Filter steps and tools" aria-label="Filter steps and tools" value={f.q} onChange={(e) => { f.q = e.target.value; update(); }} />
+      {STEP_TYPES.filter((s) => !f.q || (s.name + " " + s.help).toLowerCase().includes(f.q.toLowerCase())).map((s) => item({ type: s.type }, s.name, s.help, <StepIcon n={{ type: s.type }} tools={[]} size={30} />))}
       <div className="tree-folder">Project tools · {projectTools().length}</div>
       {ts.map((t) => item({ type: "tool", tool: t.name }, t.name, t.desc, <ToolIcon t={t} size={30} />))}
       {!projectTools().length && <p className="muted" style={{ padding: "0 6px" }}>No tools yet. Create one on the Tools screen.</p>}
       <div className="tree-folder" title="Built into SpecWright: they run directly in the project, without the AI">Built-in tools · {builtinTools().length}</div>
       {bs.map((t) => item({ type: "tool", tool: t.name }, toolRef(t.name), t.desc.replace(/^[^:]*:\s*/, ""), <ToolIcon t={t} size={30} />))}
-      {!!f.q && !ts.length && !bs.length && <p className="muted" style={{ padding: "0 6px" }}>No tool matches “{f.q}”.</p>}
+      {!!f.q && !ts.length && !bs.length && !STEP_TYPES.some((s) => (s.name + " " + s.help).toLowerCase().includes(f.q.toLowerCase())) && <p className="muted" style={{ padding: "0 6px" }}>Nothing matches “{f.q}”.</p>}
       <p className="muted fl-pal-hint">Drag onto the canvas, or click to add after the selected step.</p>
     </aside>
   );
@@ -899,7 +972,8 @@ function StepInspector({ n }) {
 
 function Inspector() {
   const f = fl(), n = f.sel ? nodeOf(f.sel) : null, e = !n && f.selEdge != null ? f.flow.edges[f.selEdge] : null, many = selectedIds();
-  return <aside className="fl-inspector" aria-label="Inspector">{many.length > 1 ? <MultiInspector ids={many} /> : n ? <StepInspector key={n.id} n={n} /> : e ? <EdgeInspector key={f.selEdge} e={e} /> : <FlowSettings key={f.flow.id} />}</aside>;
+  if (S.panes["flows:insp:c"]) return <aside className="fl-inspector is-collapsed" aria-label="Inspector"><button className="icon-btn" aria-label="Show the inspector" title="Show the inspector (⌘\)" onClick={() => togglePane("flows:insp:c")}><Icon.panelR /></button></aside>;
+  return <aside className="fl-inspector" aria-label="Inspector"><button className="icon-btn fl-collapse fl-insp-collapse" aria-label="Hide the inspector" title="Hide the inspector (⌘\)" onClick={() => togglePane("flows:insp:c")}><Icon.panelR /></button>{many.length > 1 ? <MultiInspector ids={many} /> : n ? <StepInspector key={n.id} n={n} /> : e ? <EdgeInspector key={f.selEdge} e={e} /> : <FlowSettings key={f.flow.id} />}</aside>;
 }
 
 function MultiInspector({ ids }) {
@@ -1056,12 +1130,13 @@ function AggregateInspector({ n, set }) {
 }
 
 function Issues() {
-  const f = fl(), [open, setOpen] = useState(false);
+  const f = fl(), p = usePopover();
   const errs = f.issues.filter((i) => i.level === "error").length, warns = f.issues.length - errs;
   if (!f.issues.length) return <span className="badge badge-ok">no problems</span>;
-  return <span className="fl-issues">
-    <button className={"badge " + (errs ? "badge-warn" : "")} onClick={() => setOpen(!open)}>{errs ? `${errs} problem${errs === 1 ? "" : "s"}` : ""}{errs && warns ? " · " : ""}{warns ? `${warns} warning${warns === 1 ? "" : "s"}` : ""}</button>
-    {open && <div className="fl-issue-pop" onMouseLeave={() => setOpen(false)}>{f.issues.map((i, k) => <button key={k} className={"fl-issue " + i.level} onClick={() => { f.sel = i.node || null; setOpen(false); update(); }}><b>{i.node ? (nodeOf(i.node)?.title || i.node) : "Flow"}</b> {i.message}</button>)}</div>}
+  const label = (errs ? `${errs} problem${errs === 1 ? "" : "s"}` : "") + (errs && warns ? " · " : "") + (warns ? `${warns} warning${warns === 1 ? "" : "s"}` : "");
+  return <span className="fl-issues" ref={p.wrap}>
+    <button ref={p.btn} className={"btn secondary fl-issue-btn" + (errs ? " has-errors" : "")} aria-haspopup="true" aria-expanded={p.open} title="Show the problems; pick one to go to its step" onClick={() => p.setOpen(!p.open)}><Icon.warn /> {label} ▾</button>
+    {p.open && <div className="fl-issue-pop" role="list">{f.issues.map((i, k) => <button key={k} role="listitem" className={"fl-issue " + i.level} onClick={() => { f.sel = i.node || null; f.selEdge = null; p.setOpen(false); update(); }}><b>{i.node ? (nodeOf(i.node)?.title || i.node) : "Flow"}</b> {i.message}{i.node && <span className="muted"> · go to step</span>}</button>)}</div>}
   </span>;
 }
 
@@ -1074,9 +1149,11 @@ export function Flows() {
   useEffect(() => () => { if (fl().dirty) save(); }, []);
   if (!S.ws) return <NeedWorkspace what="the flow designer" />;
   return (
-    <div className="files flows">
+    <div className={"files flows" + (S.panes["flows:list:c"] && f.flow ? " list-c" : "")}>
+      <Pane k="flows" v="--pane-l" pane=":scope > .ftree" min={180} max={420} label="Resize the flow list" />
       <nav className="ftree" aria-label="Flows">
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "0 8px 8px" }}><h1>Flows</h1><button className="btn primary" onClick={newFlow}>+ New</button></div>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 6, padding: "0 8px 8px" }}><h1>Flows</h1><span className="grow" /><button className="btn primary" onClick={newFlow}>+ New</button>
+          {f.flow && <button className="icon-btn" aria-label="Hide the flow list" title="Hide the flow list (the flow menu in the header still switches flows)" onClick={() => togglePane("flows:list:c")}><Icon.panelL /></button>}</div>
         <div style={{ padding: "0 8px 8px", display: "grid", gap: 4, justifyItems: "start" }}><button className="link" title="Describe what you want; the AI designer proposes flows built from your tools" onClick={() => openDesigner("new")}><Icon.spark /> New flow with AI</button>
           {S.flowClip && <button className="link" title={`${S.flowClip.nodes.length} copied step(s) from ${S.flowClip.from || "a flow"}`} onClick={() => pasteFromClipboard(true)}>Paste {S.flowClip.nodes.length} step{S.flowClip.nodes.length === 1 ? "" : "s"} as a new flow</button>}</div>
         {(f.list || []).map((x) => <button key={x.id} className={"run-item" + (x.id === f.flow?.id ? " active" : "")} onClick={() => openFlow(x.id)}>
@@ -1087,20 +1164,23 @@ export function Flows() {
       </nav>
       {f.flow ? <div className="fl-main">
         <header className="fl-bar">
-          <select className="fl-switch" aria-label="Open a flow" value={f.flow.id} onChange={(e) => e.target.value === "+new" ? newFlow() : e.target.value === "+import" ? imp.current?.click() : openFlow(e.target.value)}>
-            {(f.list || []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}<option value="+new">+ New flow…</option><option value="+import">Import…</option></select>
+          {S.panes["flows:list:c"] && <button className="icon-btn fl-list-show" aria-label="Show the flow list" title="Show the flow list" onClick={() => togglePane("flows:list:c")}><Icon.panelL /></button>}
+          <select className="fl-switch" aria-label="Open a flow" value={f.flow.id} onChange={(e) => { const v = e.target.value; e.target.value = f.flow.id; v === "+new" ? newFlow() : v === "+ai" ? openDesigner("new") : v === "+paste" ? pasteFromClipboard(true) : v === "+import" ? imp.current?.click() : openFlow(v); }}>
+            {(f.list || []).map((x) => <option key={x.id} value={x.id}>{x.name}</option>)}<option value="+new">+ New flow…</option><option value="+ai">New flow with AI…</option>
+            {S.flowClip && <option value="+paste">Paste {S.flowClip.nodes.length} copied step{S.flowClip.nodes.length === 1 ? "" : "s"} as a new flow</option>}<option value="+import">Import…</option></select>
           <input className="fl-name" value={f.flow.name} aria-label="Flow name" onChange={(e) => { f.flow.name = e.target.value; changed(); }} />
           <Issues />
-          <span className="muted fl-saved">{f.saving ? "Saving…" : f.dirty ? "Unsaved" : "Saved"}</span>
+          <span className={"fl-saved" + (f.dirty && !f.saving ? " is-dirty" : " muted")} role="status">{f.saving ? "Saving…" : f.dirty ? "Unsaved changes" : "Saved"}</span>
           <span className="status-spacer" />
           <button className="btn secondary" onClick={() => { f.sel = null; f.selEdge = null; update(); }}>Flow settings</button>
-          <button className="btn primary" title="Run this flow" onClick={async () => { if (f.dirty) await save(); openFlowRunner(f.flow.id); }}><Icon.run /> Run</button>
-          <button className="btn secondary" onClick={exportFlow}>Export</button>
-          <button className="btn secondary" onClick={duplicateFlow}>Duplicate</button>
-          <button className="btn secondary" onClick={deleteFlow}>Delete</button>
-          <button className="btn primary" disabled={f.saving || !f.dirty} onClick={save}>Save</button>
+          <button className="btn secondary" title={f.dirty ? "Saves the flow, then opens it in Run flows" : "Open this flow in Run flows"} onClick={async () => { if (f.dirty) await save(); openFlowRunner(f.flow.id); }}><Icon.run /> Run</button>
+          <button className="btn primary" disabled={f.saving || !f.dirty} title="Save (⌘S / Ctrl+S)" onClick={save}>Save</button>
+          <Menu label="More flow actions" items={[["Export…", exportFlow], ["Duplicate", duplicateFlow], ["Import a flow…", () => imp.current?.click()], ["Delete flow…", deleteFlow, { danger: true }]]} />
         </header>
-        <div className="fl-work"><Palette /><Canvas /><Inspector />{f.ai?.open && <AIDesigner />}</div>
+        <div className={"fl-work" + (S.panes["flows:pal:c"] ? " pal-c" : "") + (S.panes["flows:insp:c"] ? " insp-c" : "")}>
+          {!S.panes["flows:pal:c"] && <Pane k="flows-pal" v="--pane-pal" pane=".fl-palette" min={160} max={360} label="Resize the steps and tools panel" />}
+          {!S.panes["flows:insp:c"] && <Pane k="flows-insp" v="--pane-insp" pane=".fl-inspector" edge="left" min={260} max={560} label="Resize the inspector" />}
+          <Palette /><Canvas /><Inspector />{f.ai?.open && <AIDesigner />}</div>
       </div> : <section className="view"><div className="card"><h3>Design a flow</h3>
         <p className="wf-desc">Drag tools onto a canvas and connect them. Give the flow inputs (text, files, clipboard), a custom context and skills; merge and transform data between steps; and produce outputs as Markdown, text, HTML, CSV or JSON that are saved, passed to a tool, copied or shown.</p>
         <p className="wf-desc">New to flows? The <button className="link" onClick={() => openFlowGuide("")}>Flow step guide</button> explains every step with examples you can open here.</p>
@@ -1336,9 +1416,10 @@ function AIDesigner({ inline }) {
       }
       ai.open = false; ai.res = null;
       await loadList(); await openFlow(id);
-    } catch (e) { toast(errMsg(e)); }
+    } catch (e) { toast(errMsg(e), "error"); }
   };
-  return <div className={"ai-designer" + (inline ? " inline" : "")} role="dialog" aria-label="AI designer">
+  // over the canvas it is a dialog (choosing between options needs the room); on the empty page it is inline
+  const panel = <div className={"ai-designer" + (inline ? " inline" : "")} role="dialog" aria-modal={inline ? undefined : "true"} aria-label="AI designer" onKeyDown={(e) => { if (e.key === "Escape" && !inline) { e.stopPropagation(); set("open", false); } }}>
     <div className="ai-designer-head"><Icon.spark /><h3>{improving ? `Fix and improve “${f.flow.name}”` : "New flow with AI"}</h3>
       <span className="muted">{improving ? "The AI changes this flow; you get versions of it to choose from" : "Describe what you want in your own words"}</span>
       <button className="link" style={{ marginLeft: "auto" }} aria-label="Close" onClick={() => set("open", false)}>✕</button></div>
@@ -1356,4 +1437,5 @@ function AIDesigner({ inline }) {
       <p className="muted fl-help">{ai.res.repaired ? "Some options were fixed automatically after the check. " : ""}{ai.res.usage?.input_tokens ? `Used ${(ai.res.usage.input_tokens + ai.res.usage.output_tokens).toLocaleString()} tokens` : ""}{ai.res.usage?.premium_requests ? ` · ${ai.res.usage.premium_requests} premium request${ai.res.usage.premium_requests === 1 ? "" : "s"}` : ""}{ai.res.usage?.cost_usd ? ` · $${ai.res.usage.cost_usd.toFixed(3)}` : ""}</p>
     </>}
   </div>;
+  return inline ? panel : <div className="modal-scrim ai-scrim" role="presentation">{panel}</div>;
 }

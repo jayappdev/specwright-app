@@ -104,7 +104,7 @@ function BulkEditor() {
       const path = await backend.SaveRulesDoc(format, doc);
       toast(`Saved ${parsed.length} rules to ${path}.`);
       close("bulk");
-    } catch (e) { toast(errMsg(e)); }
+    } catch (e) { toast(errMsg(e), "error"); }
     setBusy(false);
   };
   return (
