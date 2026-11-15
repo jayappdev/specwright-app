@@ -3,7 +3,7 @@ import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, fmtK } from "../store.js";
 import { Pill } from "../ui.jsx";
-import { RunPanel } from "./Workflow.jsx";
+import { RunPanel } from "../components/RunPanel.jsx";
 import { Icon } from "../ui.jsx";
 import { continueInPlayground } from "./Playground.jsx";
 import { ago } from "../time.js";

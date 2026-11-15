@@ -27,7 +27,7 @@ import {
 import { Icon, Pill } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { StepIcon, openFlowInDesigner } from "./Flows.jsx";
-import { RunPanel } from "./Workflow.jsx";
+import { RunPanel } from "../components/RunPanel.jsx";
 import { continueInPlayground } from "./Playground.jsx";
 import { ResultsLink } from "../RunResults.jsx";
 import { AiProgress } from "../AiProgress.jsx";

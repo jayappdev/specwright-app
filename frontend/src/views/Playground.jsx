@@ -12,7 +12,7 @@ import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, isCopilot, fmtK, fmtMs, fmtCredits } from "../store.js";
 import { Icon, Pill, Stat, Chip } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
-import { RunPanel } from "./Workflow.jsx";
+import { RunPanel } from "../components/RunPanel.jsx";
 import { agentLabel } from "./Setup.jsx";
 import { Linkify, FileLink } from "../FileLinks.jsx";
 import { EventIcon } from "../EventIcon.jsx";

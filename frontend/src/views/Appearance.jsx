@@ -6,7 +6,7 @@ import { FAMILIES, ANDROID_SEEDS, UI_FONTS, CODE_FONTS } from "../palettes.js";
 import { agentLabel } from "./Setup.jsx";
 import { HousekeepingCard } from "../RunHousekeeping.jsx";
 import { PackagesCard } from "./Packages.jsx";
-import { RunSettings } from "./Workflow.jsx";
+import { RunSettings } from "../components/RunSettings.jsx";
 
 // Settings: one place for the app's settings, in tabs. The same settings stay
 // where they were used before too (Run settings on the workflow, Packages &
