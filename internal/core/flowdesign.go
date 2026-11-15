@@ -17,6 +17,12 @@ import (
 	"codegen/internal/store"
 )
 
+// patterns compiled once (not on every call)
+var (
+	notSlugChars  = regexp.MustCompile(`[^A-Za-z0-9_-]+`) // characters not allowed in an id
+	versionSuffix = regexp.MustCompile(`\s*\(v\d+\)$`)    // a " (v2)" version suffix of a flow name
+)
+
 // The AI designer: someone describes what they want in their own words and
 // gets a few ready-made flows to choose from — or asks for an existing flow
 // to be improved, and saves the result as a new version. The agent is given
@@ -425,7 +431,7 @@ func fixDesign(f *flow.Flow, known map[string]bool) {
 			n.Title = firstNonEmpty(n.Title, "Inputs")
 		} else if !nodeIDRE.MatchString(id) || id == "start" {
 			clean := func(x string) string {
-				return strings.Trim(regexp.MustCompile(`[^A-Za-z0-9_-]+`).ReplaceAllString(x, "-"), "-")
+				return strings.Trim(notSlugChars.ReplaceAllString(x, "-"), "-")
 			}
 			id = clean(id) // "Blockers!" → "Blockers"
 			if !nodeIDRE.MatchString(id) || id == "start" {
@@ -623,7 +629,7 @@ func (h *Hub) SaveFlowVersion(baseID string, f flow.Flow) (FlowState, error) {
 			}
 		}
 	}
-	name := regexp.MustCompile(`\s*\(v\d+\)$`).ReplaceAllString(base.Name, "")
+	name := versionSuffix.ReplaceAllString(base.Name, "")
 	f.ID = flow.UniqueID(root, flow.Slug(name)+fmt.Sprintf("-v%d", rev))
 	f.Name = fmt.Sprintf("%s (v%d)", name, rev)
 	f.Parent, f.Revision = family, rev

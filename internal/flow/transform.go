@@ -14,6 +14,18 @@ import (
 	"time"
 )
 
+// patterns compiled once (not on every call)
+var (
+	htmlStart    = regexp.MustCompile(`(?i)^\s*(<!doctype|<html|<(div|p|h[1-6]|table|ul|ol|section|article|body)\b)`) // text that starts as HTML
+	mdHeading    = regexp.MustCompile(`^#{1,6}\s`)                                                                    // a Markdown heading
+	mdTableRule  = regexp.MustCompile(`^\|?\s*:?-{3,}`)                                                               // a Markdown table's header rule
+	mdBullet     = regexp.MustCompile(`^[-*+]\s`)                                                                     // a bullet list item
+	mdNumbered   = regexp.MustCompile(`^\d+[.)]\s`)                                                                   // a numbered list item
+	startsDigit  = regexp.MustCompile(`^\d`)                                                                          // starts with a digit
+	mdListMarker = regexp.MustCompile(`^([-*+]|\d+[.)])\s+`)                                                          // a list item's marker
+	safeHref     = regexp.MustCompile(`^(https?:|mailto:|#|/|\./)`)                                                   // links that may stay links
+)
+
 // --- templates ----------------------------------------------------------------
 
 // Data is what templates can read while a flow runs (or in a preview).
@@ -801,7 +813,7 @@ func toCSV(v any) (string, error) {
 func Convert(content, format string) (string, error) {
 	t := strings.TrimSpace(content)
 	isJSON := (strings.HasPrefix(t, "{") || strings.HasPrefix(t, "[")) && json.Valid([]byte(t))
-	isHTML := regexp.MustCompile(`(?i)^\s*(<!doctype|<html|<(div|p|h[1-6]|table|ul|ol|section|article|body)\b)`).MatchString(t)
+	isHTML := htmlStart.MatchString(t)
 	switch format {
 	case "json":
 		if isJSON {
@@ -934,7 +946,7 @@ func MarkdownToHTML(md string) string {
 		case t == "":
 			flush()
 			closeList()
-		case regexp.MustCompile(`^#{1,6}\s`).MatchString(t):
+		case mdHeading.MatchString(t):
 			flush()
 			closeList()
 			lv := len(t) - len(strings.TrimLeft(t, "#"))
@@ -947,7 +959,7 @@ func MarkdownToHTML(md string) string {
 			flush()
 			closeList()
 			b.WriteString("<blockquote>" + inline(strings.TrimSpace(strings.TrimPrefix(t, ">"))) + "</blockquote>\n")
-		case strings.HasPrefix(t, "|") && i+1 < len(lines) && regexp.MustCompile(`^\|?\s*:?-{3,}`).MatchString(strings.TrimSpace(lines[i+1])):
+		case strings.HasPrefix(t, "|") && i+1 < len(lines) && mdTableRule.MatchString(strings.TrimSpace(lines[i+1])):
 			flush()
 			closeList()
 			cells := func(s string) []string {
@@ -978,7 +990,7 @@ func MarkdownToHTML(md string) string {
 			}
 			b.WriteString("</tr></thead><tbody>\n")
 			for i += 2; i < len(lines); i++ {
-				if strings.TrimSpace(lines[i]) == "" && i+1 < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i+1]), "|") && !regexp.MustCompile(`^\|?\s*:?-{3,}`).MatchString(strings.TrimSpace(lines[i+1])) {
+				if strings.TrimSpace(lines[i]) == "" && i+1 < len(lines) && strings.HasPrefix(strings.TrimSpace(lines[i+1]), "|") && !mdTableRule.MatchString(strings.TrimSpace(lines[i+1])) {
 					continue // a blank line between rows (tables joined from parts): the table goes on
 				}
 				if !strings.HasPrefix(strings.TrimSpace(lines[i]), "|") {
@@ -992,10 +1004,10 @@ func MarkdownToHTML(md string) string {
 			}
 			i--
 			b.WriteString("</tbody></table>\n")
-		case regexp.MustCompile(`^[-*+]\s`).MatchString(t), regexp.MustCompile(`^\d+[.)]\s`).MatchString(t):
+		case mdBullet.MatchString(t), mdNumbered.MatchString(t):
 			flush()
 			kind := "ul"
-			if regexp.MustCompile(`^\d`).MatchString(t) {
+			if startsDigit.MatchString(t) {
 				kind = "ol"
 			}
 			if list != kind {
@@ -1003,7 +1015,7 @@ func MarkdownToHTML(md string) string {
 				b.WriteString("<" + kind + ">\n")
 				list = kind
 			}
-			item := regexp.MustCompile(`^([-*+]|\d+[.)])\s+`).ReplaceAllString(t, "")
+			item := mdListMarker.ReplaceAllString(t, "")
 			b.WriteString("<li>" + inline(item) + "</li>\n")
 		default:
 			closeList()
@@ -1036,7 +1048,7 @@ func inline(s string) string {
 	s = reLink.ReplaceAllStringFunc(s, func(m string) string {
 		p := reLink.FindStringSubmatch(m)
 		href := p[2]
-		if !regexp.MustCompile(`^(https?:|mailto:|#|/|\./)`).MatchString(href) {
+		if !safeHref.MatchString(href) {
 			href = "#"
 		}
 		return `<a href="` + href + `">` + p[1] + `</a>`

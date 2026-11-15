@@ -15,6 +15,11 @@ import (
 	"sync/atomic"
 )
 
+// patterns compiled once (not on every call)
+var (
+	identifierRE = regexp.MustCompile(`^[\p{L}_$][\p{L}\p{N}_$]*$`) // a symbol name
+)
+
 const maxSearchFile = 4 << 20 // files above this are not searched
 
 // --- file_search ---------------------------------------------------------------
@@ -289,7 +294,7 @@ func findUsages(ctx context.Context, b *Box, a args) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	if !regexp.MustCompile(`^[\p{L}_$][\p{L}\p{N}_$]*$`).MatchString(sym) {
+	if !identifierRE.MatchString(sym) {
 		return "", errors.New("symbol must be a single identifier, e.g. PlaceOrderService or placeOrder")
 	}
 	q := regexp.QuoteMeta(sym)
