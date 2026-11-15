@@ -25,12 +25,15 @@ type App struct {
 }
 
 // NewApp creates the hub.
-func NewApp() (*App, error) {
+func NewApp() (*App, error) { return newApp("") }
+
+// newApp creates the hub with its data in storeDir ("" = the app's usual folder).
+func newApp(storeDir string) (*App, error) {
 	// a Finder-launched app gets a minimal PATH: borrow the login shell's so
 	// claude, copilot, node, go and mvn are found
 	core.UseLoginShellPath()
 	exe, _ := os.Executable()
-	h, err := core.New(core.Options{AIShimExe: exe})
+	h, err := core.New(core.Options{AIShimExe: exe, StoreDir: storeDir})
 	if err != nil {
 		return nil, err
 	}

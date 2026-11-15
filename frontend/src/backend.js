@@ -138,5 +138,50 @@ function wailsBackend() {
   return api;
 }
 
+// The real Go backend over HTTP, for the browser preview (`SpecWright devserver`
+// prints the URL to open: ?devbackend=http://127.0.0.1:5174&token=…). The
+// address and token are kept for the browser tab's session.
+function devConfig() {
+  if (typeof window === "undefined") return null;
+  try {
+    const q = new URLSearchParams(window.location.search);
+    if (q.get("devbackend") && q.get("token")) {
+      sessionStorage.setItem(
+        "devbackend",
+        JSON.stringify({ url: q.get("devbackend"), token: q.get("token") }),
+      );
+      // the token does not stay in the address bar
+      window.history.replaceState(null, "", window.location.pathname);
+    }
+    return JSON.parse(sessionStorage.getItem("devbackend") || "null");
+  } catch {
+    return null;
+  }
+}
+
+function devBackend({ url, token }) {
+  const api = { kind: "dev" };
+  for (const m of METHODS)
+    api[m] = async (...args) => {
+      const r = await fetch(url + "/api/call", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "X-Dev-Token": token },
+        body: JSON.stringify({ method: m, args }),
+      });
+      if (!r.ok) throw new Error(`dev server: ${r.status} ${await r.text()}`);
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      return j.result;
+    };
+  api.on = (cb) => {
+    const es = new EventSource(url + "/api/events?token=" + encodeURIComponent(token));
+    es.onmessage = (ev) => cb(JSON.parse(ev.data));
+    return () => es.close();
+  };
+  return api;
+}
+
 export const isDesktop = typeof window !== "undefined" && !!window.go?.main?.App;
-export const backend = isDesktop ? wailsBackend() : createMockBackend(METHODS);
+const dev = !isDesktop && devConfig();
+// desktop app: Wails bindings; browser preview: the dev server if given, else the mock
+export const backend = isDesktop ? wailsBackend() : dev ? devBackend(dev) : createMockBackend(METHODS);

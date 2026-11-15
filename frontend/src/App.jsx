@@ -121,7 +121,11 @@ async function boot() {
     await backend.SetAgent(S.setup.provider, "", S.setup.model || "").catch(() => {});
   }
   update();
-  const ws = S.lastWorkspace || (backend.kind === "mock" ? S.info?.workspace : "");
+  // the dev server's open folder wins (the remembered one may be the mock's)
+  const ws =
+    (backend.kind === "dev" && S.info?.workspace) ||
+    S.lastWorkspace ||
+    (backend.kind === "mock" ? S.info?.workspace : "");
   if (ws) await openWorkspace(ws);
 }
 
@@ -378,7 +382,11 @@ export function App() {
             {resolveTheme(S.appearance.theme).name}
           </button>
           <span className="status-item">
-            {backend.kind === "desktop" ? "v" + (S.info?.version || "") : "browser preview · mock backend"}
+            {backend.kind === "desktop"
+              ? "v" + (S.info?.version || "")
+              : backend.kind === "dev"
+                ? "browser preview · real backend"
+                : "browser preview · mock backend"}
           </span>
         </footer>
       </div>

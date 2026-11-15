@@ -1,5 +1,5 @@
 # SpecWright tasks. `make check` runs what CI runs.
-.PHONY: check test test-race vet fmt fmt-check ui-check ui-test ui-lint ui-fmt ui-fmt-check ui-build build dev
+.PHONY: check test test-race vet fmt fmt-check ui-check ui-test ui-lint ui-fmt ui-fmt-check ui-build build dev devserver
 
 check: fmt-check vet test ui-check
 
@@ -44,3 +44,8 @@ build:
 # browser preview of the UI on http://localhost:5173 (mock backend)
 dev:
 	npm --prefix frontend run dev
+
+# the real Go backend for the browser preview: run it, then `make dev`, and
+# open the URL it prints (WORKSPACE=… opens a project folder at start)
+devserver:
+	go run . devserver $(if $(WORKSPACE),-workspace $(WORKSPACE))
