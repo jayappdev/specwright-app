@@ -347,7 +347,7 @@ export function Wizard() {
       toast(`Imported ${r.length} rules.`);
     });
   // one section at a time (default), or all of them in one scroll ("Show all sections", remembered)
-  const all = !!S.panes["wiz:all"],
+  const all = !!S.layout["wiz:all"],
     cur = WIZ.some(([id]) => id === S.wizSection) ? S.wizSection : WIZ[0][0],
     ci = WIZ.findIndex(([id]) => id === cur);
   const go = (id) => {
@@ -404,8 +404,8 @@ export function Wizard() {
               type="checkbox"
               checked={all}
               onChange={(e) => {
-                if (e.target.checked) S.panes["wiz:all"] = 1;
-                else delete S.panes["wiz:all"];
+                if (e.target.checked) S.layout["wiz:all"] = 1;
+                else delete S.layout["wiz:all"];
                 update();
               }}
             />{" "}

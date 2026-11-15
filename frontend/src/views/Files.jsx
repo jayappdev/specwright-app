@@ -452,10 +452,10 @@ export function Files() {
   }, [f.sel, f.list.length]);
   if (!S.ws) return <NeedWorkspace what="files" />;
   const c = f.compile,
-    aiHidden = !!S.panes["files:ai:c"];
+    aiHidden = !!S.layout["files:ai:c"];
   const toggleAI = () => {
-    if (aiHidden) delete S.panes["files:ai:c"];
-    else S.panes["files:ai:c"] = 1;
+    if (aiHidden) delete S.layout["files:ai:c"];
+    else S.layout["files:ai:c"] = 1;
     update();
   };
   return (

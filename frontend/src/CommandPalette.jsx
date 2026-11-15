@@ -4,6 +4,7 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { backend } from "./backend.js";
 import { S, update } from "./store.js";
+import { register, listShortcuts } from "./shortcuts.js";
 
 let commands = () => [];
 // views: [{ id, label, group }] in sidebar order, from App
@@ -38,26 +39,46 @@ export function useCommandPalette(views, toggleRail) {
       hint: "Sidebar",
       run: toggleRail,
     });
+    // keyboard shortcuts, found by typing e.g. "shortcut" or "save"
+    const viewName = Object.fromEntries(views.map((v) => [v.id, v.label]));
+    for (const s of listShortcuts())
+      out.push({
+        id: "key:" + s.scope + s.label,
+        label: "Shortcut: " + s.label,
+        hint: s.keys + " · " + (viewName[s.scope] || "anywhere"),
+        run: () => {},
+      });
     return out;
   };
   useEffect(() => {
-    const key = (e) => {
-      const mod = e.metaKey || e.ctrlKey;
-      if (!mod || e.altKey || document.querySelector('[aria-modal="true"]')) return;
-      if (e.key.toLowerCase() === "k" && !e.shiftKey) {
-        e.preventDefault();
-        openPalette();
-        return;
-      }
-      const n = +e.key;
-      if (!e.shiftKey && n >= 1 && n <= 9 && views[n - 1] && S.setup.done) {
-        e.preventDefault();
-        S.view = views[n - 1].id;
-        update();
-      }
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
+    const offs = [
+      register({
+        id: "palette",
+        scope: "global",
+        keys: ["mod+k"],
+        inFields: true,
+        label: "Search views and flows",
+        run: (e) => {
+          e.preventDefault();
+          openPalette();
+        },
+      }),
+      register({
+        id: "go-view",
+        scope: "global",
+        keys: [1, 2, 3, 4, 5, 6, 7, 8, 9].map((n) => "mod+" + n),
+        inFields: true,
+        help: [["mod+1", "Go to a view in sidebar order (⌘1 … ⌘9)"]],
+        run: (e) => {
+          const v = views[+e.key - 1];
+          if (!v || !S.setup.done) return false;
+          e.preventDefault();
+          S.view = v.id;
+          update();
+        },
+      }),
+    ];
+    return () => offs.forEach((off) => off());
   }, [views]);
 }
 

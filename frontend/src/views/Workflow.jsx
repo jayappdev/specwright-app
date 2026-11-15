@@ -382,7 +382,7 @@ export function Workflow() {
     state = stepState(wf, i),
     cur = currentStep(wf);
   const allDone = wf.steps.every((s) => s.status === "done");
-  const lcHidden = !!S.panes["wf:lc:c"];
+  const lcHidden = !!S.layout["wf:lc:c"];
   const editable = !["running", "paused"].includes(state);
   const evs = st.lastRun ? S.events[st.lastRun] || [] : [];
   const gate =
@@ -461,8 +461,8 @@ export function Workflow() {
                     : "Hide the lifecycle diagram (the step list on the left has the same steps)"
                 }
                 onClick={() => {
-                  if (lcHidden) delete S.panes["wf:lc:c"];
-                  else S.panes["wf:lc:c"] = 1;
+                  if (lcHidden) delete S.layout["wf:lc:c"];
+                  else S.layout["wf:lc:c"] = 1;
                   update();
                 }}
               >

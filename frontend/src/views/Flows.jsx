@@ -13,6 +13,7 @@ import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, saveText, refreshExtensions, kcName, isWindows } from "../store.js";
 import { Icon, Menu, usePopover } from "../ui.jsx";
+import { register } from "../shortcuts.js";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { ToolIcon } from "../ToolTile.jsx";
 import { AttachBar, onPasteAttach } from "../Attachments.jsx";
@@ -732,8 +733,8 @@ function setSelection(ids) {
 const CLIP_FORMAT = "specwright-steps";
 
 function togglePane(k) {
-  if (S.panes[k]) delete S.panes[k];
-  else S.panes[k] = 1;
+  if (S.layout[k]) delete S.layout[k];
+  else S.layout[k] = true;
   update();
 }
 
@@ -1487,11 +1488,33 @@ function Canvas() {
         pasteSteps(c);
       }
     };
-    window.addEventListener("keydown", key);
+    // the canvas keys go through the app's shortcut registry; a key counts as
+    // handled when the handler called preventDefault (others reach global ones)
+    const off = register({
+      id: "flow-canvas",
+      scope: "flows",
+      inFields: true,
+      help: [
+        ["mod+s", "Save the flow"],
+        ["mod+z", "Undo"],
+        ["mod+shift+z", "Redo"],
+        ["mod+\\", "Show or hide the inspector"],
+        ["f", "Fit all steps in view"],
+        ["arrowup", "Move the selected steps (arrows; ⇧ for bigger steps)"],
+        ["c", "Connect the selected step: then Tab to a step and Enter"],
+        ["mod+a", "Select all steps"],
+        ["mod+c", "Copy the selected steps"],
+        ["mod+v", "Paste steps"],
+      ],
+      run: (e) => {
+        key(e);
+        return e.defaultPrevented ? undefined : false;
+      },
+    });
     window.addEventListener("copy", copy);
     window.addEventListener("paste", paste);
     return () => {
-      window.removeEventListener("keydown", key);
+      off();
       window.removeEventListener("copy", copy);
       window.removeEventListener("paste", paste);
     };
@@ -1918,7 +1941,7 @@ function Palette() {
       </span>
     </div>
   );
-  if (S.panes["flows:pal:c"])
+  if (S.layout["flows:pal:c"])
     return (
       <aside className="fl-palette is-collapsed" aria-label="Steps and tools">
         <button
@@ -3269,7 +3292,7 @@ function Inspector() {
     n = f.sel ? nodeOf(f.sel) : null,
     e = !n && f.selEdge != null ? f.flow.edges[f.selEdge] : null,
     many = selectedIds();
-  if (S.panes["flows:insp:c"])
+  if (S.layout["flows:insp:c"])
     return (
       <aside className="fl-inspector is-collapsed" aria-label="Inspector">
         <button
@@ -4066,7 +4089,7 @@ export function Flows() {
   );
   if (!S.ws) return <NeedWorkspace what="the flow designer" />;
   return (
-    <div className={"files flows" + (S.panes["flows:list:c"] && f.flow ? " list-c" : "")}>
+    <div className={"files flows" + (S.layout["flows:list:c"] && f.flow ? " list-c" : "")}>
       <Pane k="flows" v="--pane-l" pane=":scope > .ftree" min={180} max={420} label="Resize the flow list" />
       <nav className="ftree" aria-label="Flows">
         <div
@@ -4160,7 +4183,7 @@ export function Flows() {
       {f.flow ? (
         <div className="fl-main">
           <header className="fl-bar">
-            {S.panes["flows:list:c"] && (
+            {S.layout["flows:list:c"] && (
               <button
                 className="icon-btn fl-list-show"
                 aria-label="Show the flow list"
@@ -4258,11 +4281,11 @@ export function Flows() {
           <div
             className={
               "fl-work" +
-              (S.panes["flows:pal:c"] ? " pal-c" : "") +
-              (S.panes["flows:insp:c"] ? " insp-c" : "")
+              (S.layout["flows:pal:c"] ? " pal-c" : "") +
+              (S.layout["flows:insp:c"] ? " insp-c" : "")
             }
           >
-            {!S.panes["flows:pal:c"] && (
+            {!S.layout["flows:pal:c"] && (
               <Pane
                 k="flows-pal"
                 v="--pane-pal"
@@ -4272,7 +4295,7 @@ export function Flows() {
                 label="Resize the steps and tools panel"
               />
             )}
-            {!S.panes["flows:insp:c"] && (
+            {!S.layout["flows:insp:c"] && (
               <Pane
                 k="flows-insp"
                 v="--pane-insp"

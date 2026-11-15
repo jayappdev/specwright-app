@@ -23,6 +23,7 @@ const savePrefs = () => {
     lastWorkspace: S.ws?.root || S.lastWorkspace,
     tab: S.run.tab,
     panes: S.panes,
+    layout: S.layout,
     rail: S.rail,
   });
   if (text === savedPrefs) return;
@@ -35,6 +36,8 @@ const savePrefs = () => {
 };
 
 const p = loadPrefs() || {};
+// layout flags (see S.layout), e.g. "flows:pal:c" = Flow designer palette collapsed
+const LAYOUT_FLAGS = ["files:ai:c", "flows:insp:c", "flows:list:c", "flows:pal:c", "wf:lc:c", "wiz:all"];
 export const S = {
   appearance: {
     theme: "system",
@@ -47,8 +50,17 @@ export const S = {
   view: p.view || "wizard",
   setup: { done: false, provider: "", source: "", model: "", ...(p.setup || {}) },
   lastWorkspace: p.lastWorkspace || "",
-  panes: p.panes && typeof p.panes === "object" ? p.panes : {}, // side pane widths (px) and collapsed panes, by key
-  rail: p.rail || "", // "open" | "closed" | "" (automatic: open on wide windows)
+  // side pane widths in px, by pane key (PaneHandle); persisted
+  panes: Object.fromEntries(
+    Object.entries(p.panes || {}).filter(([k, v]) => typeof v === "number" && !LAYOUT_FLAGS.includes(k)),
+  ),
+  // hidden/collapsed parts of the layout, by key (true when on); persisted.
+  // Older prefs kept these in panes: they move over here.
+  layout: {
+    ...Object.fromEntries(LAYOUT_FLAGS.filter((k) => p.panes?.[k]).map((k) => [k, true])),
+    ...(p.layout || {}),
+  },
+  rail: p.rail || "", // sidebar labels: "open" | "closed" | "" (automatic: open on wide windows)
   info: null,
   ws: null, // WorkspaceState from the hub
   wsError: "",
@@ -70,6 +82,51 @@ export const S = {
   metrics: null,
   wizSection: "w-lang",
   toast: "",
+  toastKind: "", // "info" | "error"
+  notices: [], // the last 20 toasts { msg, kind, at }, newest first (Notices.jsx)
+  noticesUnread: 0,
+
+  // --- session state owned by one feature module (created there on first use) ---
+  // Each module keeps its own factory with defaults (e.g. fl() in Flows.jsx);
+  // they are listed here so the whole shape of S is in one place.
+  admin: null, // AdminStatus from the hub (store.refreshAdmin)
+  managed: null, // managed tool catalog (store.js, Admin.jsx)
+  builtins: null, // built-in tools (Builtins.jsx)
+  flowBuiltins: null, // built-in tools usable as flow steps (Flows.jsx, Inputs.jsx)
+  toolTags: null, // tool name -> tags (Tools.jsx)
+  pkg: null, // package and proxy settings (Packages.jsx)
+  housekeeping: null, // auto-archive settings (RunHousekeeping.jsx)
+  models: null, // model list for ModelPicker
+  recentRuns: null, // runs offered by "Refer to earlier runs" (Playground.jsx)
+  tf: null, // Tools list filter (Tools.jsx tf())
+  bt: null, // selected built-in tool (Builtins.jsx)
+  cx: null, // selected Copilot extension (CopilotExts.jsx)
+  sk: null, // Spec Kit card state (Inputs.jsx sk())
+  fa: null, // Files › Ask AI (Files.jsx fa())
+  pg: null, // Prompt playground (Playground.jsx pg())
+  pgPicker: null, // "Refer to earlier runs" dialog (Playground.jsx)
+  fl: null, // Flow designer (Flows.jsx fl())
+  flowClip: null, // copied flow steps (Flows.jsx)
+  frun: null, // Run flows (FlowRun.jsx frs())
+  guide: "", // Flow step guide: step type in view (FlowGuide.jsx)
+  hk: null, // run list selection and groups (RunHousekeeping.jsx)
+  rulesUi: null, // rule drawer and bulk editor (RulesEditors.jsx)
+  libEdit: null, // skill / script editor drawer (LibraryEditor.jsx)
+  preview: null, // file preview panel (FilePreview.jsx)
+  dialog: null, // confirm / ask dialog (Dialog.jsx)
+  palette: null, // command palette { q } while open (CommandPalette.jsx)
+  cmdFlows: null, // flows listed in the command palette
+  metricsRange: null, // Metrics range (Metrics.jsx)
+  metricsShown: null,
+  metricsLoading: false,
+  settingsTab: "appearance", // Settings tab (Appearance.jsx)
+  themeFamily: "", // theme family tab in Settings › Appearance
+  m3seed: "", // Android theme: own seed color and brightness
+  m3dark: true,
+  railOpen: false, // computed by App from rail and the window width
+  scrollTo: "", // one-shot: element id to scroll to after a view opens
+  wfChanges: false, // approval banner: "Request changes" field open (Workflow.jsx)
+  zipBusy: false, // project zip being written
 };
 
 let version = 0;

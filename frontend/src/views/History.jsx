@@ -7,6 +7,7 @@ import { RunPanel } from "./Workflow.jsx";
 import { Icon } from "../ui.jsx";
 import { continueInPlayground } from "./Playground.jsx";
 import { ago } from "../time.js";
+import { register } from "../shortcuts.js";
 import { CopyButton } from "../CopyButton.jsx";
 import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHousekeeping.jsx";
 
@@ -71,39 +72,36 @@ function usageLine(r) {
 
 // Space plays or pauses the replay, ← and → step through it (not while typing)
 function useReplayKeys(evCount) {
-  useEffect(() => {
-    const key = (e) => {
-      const h = S.history;
-      if (
-        !h?.sel ||
-        e.metaKey ||
-        e.ctrlKey ||
-        e.altKey ||
-        e.target.closest?.("input:not([type=range]), textarea, select, [contenteditable=true], button") ||
-        document.querySelector('[aria-modal="true"]')
-      )
-        return;
-      if (e.key === " ") {
-        e.preventDefault();
-        if (h.playing) {
+  useEffect(
+    () =>
+      register({
+        id: "replay",
+        scope: "history",
+        keys: [" ", "arrowleft", "arrowright"],
+        help: [
+          [" ", "Play or pause the replay"],
+          ["arrowleft", "Previous event"],
+          ["arrowright", "Next event"],
+        ],
+        run: (e) => {
+          const h = S.history;
+          // a focused button or the scrubber keeps its own Space and arrows
+          if (!h?.sel || e.target.closest?.("button, input[type=range]")) return false;
+          e.preventDefault();
+          if (e.key === " ") {
+            if (h.playing) {
+              stop();
+              update();
+            } else play();
+            return;
+          }
           stop();
+          h.pos = e.key === "ArrowLeft" ? Math.max(0, h.pos - 1) : Math.min(evCount, h.pos + 1);
           update();
-        } else play();
-      } else if (e.key === "ArrowLeft" && !e.target.matches?.("input[type=range]")) {
-        e.preventDefault();
-        stop();
-        h.pos = Math.max(0, h.pos - 1);
-        update();
-      } else if (e.key === "ArrowRight" && !e.target.matches?.("input[type=range]")) {
-        e.preventDefault();
-        stop();
-        h.pos = Math.min(evCount, h.pos + 1);
-        update();
-      }
-    };
-    window.addEventListener("keydown", key);
-    return () => window.removeEventListener("keydown", key);
-  }, [evCount]);
+        },
+      }),
+    [evCount],
+  );
 }
 
 export function History() {
