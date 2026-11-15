@@ -51,7 +51,11 @@ export function installModalFocus() {
     if (m && !m.contains(e.target) && !e.target.closest?.(".toast")) focusables(m)[0]?.focus();
   });
   // remember the focus before a modal opens; give it back when none is left
-  new MutationObserver(() => {
+  // most mutations are ordinary re-renders: only look when a modal was added or removed
+  const modalIn = (n) =>
+    n.nodeType === 1 && (n.matches?.('[aria-modal="true"]') || n.querySelector?.('[aria-modal="true"]'));
+  new MutationObserver((records) => {
+    if (!records.some((r) => [...r.addedNodes].some(modalIn) || [...r.removedNodes].some(modalIn))) return;
     const m = topModal();
     if (m && !open) {
       open = true;

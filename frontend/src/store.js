@@ -12,20 +12,23 @@ const loadPrefs = () => {
     return null;
   }
 };
+// savePrefs writes the persisted fields, but only when they changed: update()
+// runs for every streamed event and keystroke, and most of those touch no pref.
+let savedPrefs = "";
 const savePrefs = () => {
+  const text = JSON.stringify({
+    appearance: S.appearance,
+    view: S.view,
+    setup: S.setup,
+    lastWorkspace: S.ws?.root || S.lastWorkspace,
+    tab: S.run.tab,
+    panes: S.panes,
+    rail: S.rail,
+  });
+  if (text === savedPrefs) return;
   try {
-    localStorage.setItem(
-      PREFS_KEY,
-      JSON.stringify({
-        appearance: S.appearance,
-        view: S.view,
-        setup: S.setup,
-        lastWorkspace: S.ws?.root || S.lastWorkspace,
-        tab: S.run.tab,
-        panes: S.panes,
-        rail: S.rail,
-      }),
-    );
+    localStorage.setItem(PREFS_KEY, text);
+    savedPrefs = text;
   } catch {
     /* storage unavailable */
   }
@@ -72,10 +75,20 @@ export const S = {
 let version = 0;
 const subs = new Set();
 export const savePrefsNow = () => savePrefs();
+// update() after changing S. Several calls in one task (an event handler, a
+// burst of streamed events) share one notification, sent in a microtask: it
+// still runs before any timer, so code that does update() then setTimeout(…)
+// sees the new render.
+let pending = false;
 export function update() {
   version++;
-  savePrefs();
-  subs.forEach((f) => f());
+  if (pending) return;
+  pending = true;
+  queueMicrotask(() => {
+    pending = false;
+    savePrefs();
+    subs.forEach((f) => f());
+  });
 }
 export function useApp() {
   return useSyncExternalStore(
@@ -230,8 +243,44 @@ export const currentStep = (wf) => {
 
 // Events from the hub.
 let wfTimer;
+// Events of every run seen in a session would otherwise stay in memory. Keep
+// the runs on screen, the live ones and the last MAX_RUNS touched; others are
+// dropped and fetched again (S.loaded) when opened.
+const MAX_RUNS = 30;
+const touched = new Map(); // run id -> last time an event arrived or it was shown
+export function touchRun(id) {
+  if (id) touched.set(id, Date.now());
+}
+function onScreen() {
+  const ids = new Set([
+    S.history?.sel,
+    S.pg?.sel,
+    S.frun?.runId,
+    S.fa?.runId,
+    ...(S.wf?.steps || []).map((s) => s.lastRun),
+  ]);
+  for (const [id, st] of Object.entries(S.flowRuns || {}))
+    if (["running", "review", "scheduled"].includes(st?.status)) ids.add(id);
+  return ids;
+}
+function pruneEvents() {
+  const ids = Object.keys(S.events);
+  if (ids.length <= MAX_RUNS) return;
+  const keep = onScreen();
+  const old = ids
+    .filter((id) => !keep.has(id) && (S.events[id] || []).some((x) => x.type === "run.end"))
+    .sort((a, b) => (touched.get(a) || 0) - (touched.get(b) || 0));
+  for (const id of old.slice(0, ids.length - MAX_RUNS)) {
+    delete S.events[id];
+    delete S.loaded[id];
+    touched.delete(id);
+  }
+}
+
 export function onHubEvent(e) {
   if (e.run_id && e.type !== "workflow.changed") {
+    if (!S.events[e.run_id]) pruneEvents();
+    touchRun(e.run_id);
     const arr = (S.events[e.run_id] ||= []);
     if (!arr.length || arr[arr.length - 1].seq < e.seq) arr.push(e);
     else if (!arr.some((x) => x.seq === e.seq)) {
