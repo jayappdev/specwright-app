@@ -1,13 +1,15 @@
 // Bundles src/ into dist/ (embedded by main.go). `--serve` runs a dev
 // server on http://localhost:5173 where the UI talks to mockBackend.js.
 import * as esbuild from "esbuild";
-import { copyFile, mkdir, rm } from "node:fs/promises";
+import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 
 const serve = process.argv.includes("--serve");
 // the dev server uses its own folder so it never empties the dist/ that main.go embeds
 const outdir = serve ? ".dev" : "dist";
 await rm(outdir, { recursive: true, force: true });
 await mkdir(outdir, { recursive: true });
+// dist/.gitkeep is tracked so `go:embed all:frontend/dist` compiles on a fresh clone: keep it
+if (!serve) await writeFile(`${outdir}/.gitkeep`, "");
 await copyFile("index.html", `${outdir}/index.html`);
 // one source for the app icon, the favicon and the in-app logo
 await copyFile("../build/appicon.svg", `${outdir}/logo.svg`);
