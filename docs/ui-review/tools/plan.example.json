@@ -1,0 +1,46 @@
+[
+ {
+  "name": "02-wizard",
+  "view": "wizard"
+ },
+ {
+  "name": "03-wizard-full",
+  "view": "wizard",
+  "full": true
+ },
+ {
+  "name": "22-flows-light",
+  "view": "flows",
+  "scheme": "light"
+ },
+ {
+  "name": "12-tools-1024",
+  "view": "tools",
+  "w": 1024,
+  "h": 700
+ },
+ {
+  "name": "35-wizard-material-skin",
+  "view": "wizard",
+  "skin": "material"
+ },
+ {
+  "name": "07-workflow-approval",
+  "view": "inputs",
+  "reset": true,
+  "js": [
+   "window.__c=(t,sel)=>{const els=[...document.querySelectorAll(sel||'button,a,summary,[role=button],[role=radio],label')].filter(e=>e.offsetParent!==null&&(e.textContent||'').trim().replace(/\\s+/g,' ').toLowerCase().includes(t.toLowerCase()));const e=els.sort((a,b)=>a.textContent.length-b.textContent.length)[0];if(!e)return 'MISSING '+t;e.click();return null};window.__t=(sel,v)=>{const e=document.querySelector(sel);if(!e)return 'MISSING '+sel;const p=Object.getOwnPropertyDescriptor(e.tagName==='TEXTAREA'?HTMLTextAreaElement.prototype:HTMLInputElement.prototype,'value').set;p.call(e,v);e.dispatchEvent(new Event('input',{bubbles:true}));return null};window.__nav=(l)=>{document.querySelector('[aria-label=\"'+l+'\"]').click();return null};null",
+   "__nav(\"Choose input\")",
+   "__c(\"Set up Spec Kit\")",
+   "new Promise(r=>setTimeout(r,2500))",
+   "[...document.querySelectorAll(\"[aria-label]\")].map(e=>e.getAttribute(\"aria-label\")).join(\"|\")",
+   "__nav(\"Run spec workflow\")",
+   "__t(\".main textarea\",\"Every public service has unit tests; no secrets in code.\")",
+   "(()=>{const b=[...document.querySelectorAll(\"button.primary\")].find(e=>e.textContent.trim().startsWith(\"Run \"));if(!b)return \"NOBTN\";b.click();return null})()",
+   "new Promise(r=>setTimeout(r,2500))",
+   "new Promise(r=>setTimeout(r,2500))",
+   "new Promise(r=>setTimeout(r,2500))",
+   "(document.querySelector(\".toast\")||{}).textContent+\" || \"+[...document.querySelectorAll(\".pill\")].map(x=>x.textContent).join(\",\")"
+  ]
+ }
+]
