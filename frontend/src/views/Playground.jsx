@@ -2,6 +2,7 @@
 // and see its answer, every tool call with arguments and result, and the
 // tokens, cost or premium requests, model calls and timing of the run.
 import { ModelPicker } from "../ModelPicker.jsx";
+import { PROMPT_STATUS_LABEL, RUN_KIND_LONG } from "../labels.js";
 import { CopyButton } from "../CopyButton.jsx";
 import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHousekeeping.jsx";
 import { useEffect, useRef, useState } from "react";
@@ -41,7 +42,6 @@ export function continueInPlayground(ids) {
   setTimeout(() => document.querySelector(".pg-composer textarea")?.focus(), 50);
 }
 
-const KIND = { playground: "Prompt", workflow: "Workflow step", flow: "Flow run" };
 const runTitle = (id) => {
   const x = pg().runs.find((r) => r.id === id) || (S.recentRuns || []).find((r) => r.id === id);
   return x
@@ -146,7 +146,6 @@ const promptOf = (r) =>
   r.title ||
   (S.events[r.id] || []).find((e) => e.type === "prompt.compose")?.prompt ||
   "(prompt)";
-const PG_LABEL = { done: "Completed", failed: "Failed", cancelled: "Stopped", running: "Running" };
 export const stateOf = (evs) =>
   [...evs].reverse().find((e) => e.type === "run.end")?.state || (evs.length ? "running" : "pending");
 
@@ -491,7 +490,7 @@ export function Playground() {
                         }
                       />
                     ) : S.events[x.id]?.length ? (
-                      <Pill s={st} label={PG_LABEL[st]} />
+                      <Pill s={st} label={PROMPT_STATUS_LABEL[st]} />
                     ) : null}
                   </span>
                   <small>{new Date(x.at).toLocaleString()}</small>
@@ -531,7 +530,11 @@ export function Playground() {
             <div className="card run-card">
               <div className="card-head">
                 <h3>Usage</h3>
-                {running ? <span className="spinner" /> : <Pill s={state} label={PG_LABEL[state]} />}
+                {running ? (
+                  <span className="spinner" />
+                ) : (
+                  <Pill s={state} label={PROMPT_STATUS_LABEL[state]} />
+                )}
                 {model && <span className="badge">{model}</span>}
               </div>
               <div className="mstats">
@@ -778,7 +781,7 @@ function Thread({ r }) {
             onClick={() => setOpen({ ...open, [d.id]: !open[d.id] })}
             aria-expanded={!!open[d.id]}
           >
-            <span className="pg-turn-kind">{KIND[d.kind] || "Run"}</span>
+            <span className="pg-turn-kind">{RUN_KIND_LONG[d.kind] || "Run"}</span>
             <b>{d.title}</b>
             <span className="muted">{new Date(d.started).toLocaleString()}</span>
           </button>
@@ -871,7 +874,7 @@ export function RunPicker() {
                     update();
                   }}
                 />
-                <span className="pg-turn-kind">{KIND[d.kind] || "Run"}</span>
+                <span className="pg-turn-kind">{RUN_KIND_LONG[d.kind] || "Run"}</span>
                 <span className="pg-picker-title">
                   <b>{d.title}</b>
                   <small className="muted">

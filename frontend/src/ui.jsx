@@ -1,5 +1,7 @@
 // Shared icons and small components.
 import { useEffect, useRef, useState } from "react";
+import { STEP_STATUS_LABEL } from "./labels.js";
+export { STEP_STATUS_LABEL as STATUS_LABEL };
 const svgProps = {
   width: 18,
   height: 18,
@@ -176,18 +178,8 @@ export const Icon = {
   ),
 };
 
-export const STATUS_LABEL = {
-  pending: "Pending",
-  running: "Running",
-  paused: "Waiting",
-  done: "Approved",
-  failed: "Rejected",
-  idle: "Idle",
-  cancelled: "Cancelled",
-  interrupted: "Interrupted",
-};
 export function Pill({ s, label }) {
-  return <span className={`pill pill-${s}`}>{label || STATUS_LABEL[s] || s}</span>;
+  return <span className={`pill pill-${s}`}>{label || STEP_STATUS_LABEL[s] || s}</span>;
 }
 
 export function Seg({ value, options, onChange }) {

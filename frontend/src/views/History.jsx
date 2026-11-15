@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { RUN_KIND, runKind } from "../labels.js";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, fmtK } from "../store.js";
@@ -10,10 +11,6 @@ import { ago } from "../time.js";
 import { register } from "../shortcuts.js";
 import { CopyButton } from "../CopyButton.jsx";
 import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHousekeeping.jsx";
-
-const KIND = { playground: "Prompt", workflow: "Workflow", flow: "Flow" };
-const kindOf = (r) =>
-  r.kind || (r.step === "flow" ? "flow" : r.workflow === "playground" ? "playground" : "workflow");
 
 let timer;
 function stop() {
@@ -171,8 +168,8 @@ export function History() {
                 <PickBox area="history" id={r.id} />
                 <span className="run-item-top">
                   <span className="hist-title">
-                    <span className={"pg-turn-kind k-" + kindOf(r)}>{KIND[kindOf(r)]}</span>{" "}
-                    <b>{r.title || (kindOf(r) === "flow" ? r.workflow : r.step)}</b>
+                    <span className={"pg-turn-kind k-" + runKind(r)}>{RUN_KIND[runKind(r)]}</span>{" "}
+                    <b>{r.title || (runKind(r) === "flow" ? r.workflow : r.step)}</b>
                   </span>
                   <Pill s={r.state} />
                 </span>
@@ -205,7 +202,7 @@ export function History() {
             {run.ask && (
               <div className="pg-you">
                 <span className="pg-you-tag">
-                  {kindOf(run) === "flow" ? "Inputs" : kindOf(run) === "workflow" ? "Input" : "You"}
+                  {runKind(run) === "flow" ? "Inputs" : runKind(run) === "workflow" ? "Input" : "You"}
                 </span>
                 <div>{run.ask}</div>
               </div>

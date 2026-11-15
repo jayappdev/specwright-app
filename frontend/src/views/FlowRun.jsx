@@ -5,6 +5,8 @@
 //            edit, change settings and retry), outputs and activity
 //   sidebar  progress and metrics: steps, elapsed time, tokens, credits, tools
 import { useEffect, useState } from "react";
+import { FLOW_STATUS_LABEL as STATUS_LABEL } from "../labels.js";
+export { STATUS_LABEL };
 import { backend } from "../backend.js";
 import { openFlowGuide } from "./FlowGuide.jsx";
 import { EmptyState } from "../ui.jsx";
@@ -45,17 +47,6 @@ const defaultOpts = () => ({
   model: "",
 });
 export const LIVE = ["running", "review", "scheduled"];
-export const STATUS_LABEL = {
-  running: "Running",
-  review: "Waiting for you",
-  scheduled: "Scheduled",
-  done: "Completed",
-  failed: "Failed",
-  stopped: "Stopped",
-  interrupted: "Interrupted",
-  pending: "Pending",
-  skipped: "Skipped",
-};
 export const pill = (s) =>
   ({
     review: "paused",
