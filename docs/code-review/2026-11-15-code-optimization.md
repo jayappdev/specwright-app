@@ -10,15 +10,18 @@ Analysis only: no code was changed for this report. It follows up [2026-11-10-ma
 | C2 | Done: command steps need approval per project (stored in the app data folder, by command hash); Run flows lists and approves them; test added. | `ab37489` |
 | C3 | Done: store write failures go to a hook, logged and shown as `store.error`; results files report the first failed write; test added. | `bc19172` |
 | H1 | Done (first half): `SpecWright devserver` serves the real backend to the browser preview (`?devbackend=…&token=…`). The mock still exists; cutting it down to fixtures is open. | `1c5a42e` |
-| H2 | Started: permission prompts and the Spec Kit download moved into their own types and locks. The bigger areas (secrets, admin, libraries, flows, results) are open. | `21d2d64` |
+| H2 | Partly done: permission prompts, the Spec Kit download and secrets have their own types and locks (secrets lookups no longer hold the hub lock). Admin, libraries, flows and results are open. | `21d2d64`, `4f9d373` |
 | H3 | Done as files: `flowrun.go` split into six files by concern. Moving it to its own package behind interfaces is open. | `c7cefce` |
-| H4 | Started: Prettier pass (lines over 200 characters 979 → 71); `RunPanel`, `RunSettings` and the AI designer moved out of the big views. Further splits of `Flows.jsx` (4,686 lines), `FlowRun.jsx` and `Tools.jsx` are open. | `8c99aaa`, `03ab88e` |
+| H4 | Mostly done: Prettier pass (lines over 200 characters 979 → 71); `Flows.jsx` 5,134 → 1,255 lines (`views/flows/`: Canvas, Palette, Inspector, Conditions, Fields, AIDesigner); `FlowRun.jsx` 1,889 → 463 (`views/flowrun/`); `Tools.jsx` 1,782 → 1,221 (`views/tools/`); `Workflow.jsx` 1,800 → 906 (`components/RunPanel`, `RunSettings`). Open: `Tools()` is still one 900-line function. | `8c99aaa`, `03ab88e`, `71f7bcd`, `4d5394c` |
 | H5 | Done: one notification per task, prefs written only on change, old run events dropped, cheap modal observer. | `52aced1` |
 | H6 | Done: ESLint, Prettier, Vitest (20 tests), Makefile (`make check`), GitHub Actions. CI has not run yet (nothing pushed). | `31e9eb7` |
 | H7 | Done: `shortcuts.js` registry; palette, History and flow canvas use it; shortcuts listed in the palette. Dialog-owned Esc handlers stay with their dialogs. | `2d2045e` |
 | H8 | Done: every `S` field declared in `store.js`; layout flags moved to `S.layout` (old prefs migrated). | `2d2045e` |
-| H9 | Started: `styles.css` split into eight ordered files (built CSS identical). Cascade layers for skins are open. | `2a5bd1c` |
-| L4 (part), L9 (part) | `ago` moved to `time.js`; `RunPanel` key warning fixed. | `31e9eb7`, `03ab88e` |
+| H9 | Done: eight files in ordered cascade layers (base, app, skins, components, views, shell); checked by comparing computed styles of 21,600 elements on 12 views × 5 skins (20 intended changes). | `2a5bd1c`, `8b52a4e` |
+| L1 | Done: 14 constant regexes compiled once at package level. | `db64590` |
+| L3 | Done: status and kind labels in `labels.js` (no text changes). | `40947dc` |
+| L4 (part), L9 (part) | `ago` moved to `time.js`; `RunPanel` and `RunSettings` out of the Workflow view; `RunPanel` key warning fixed. Open: `openFlowRunner` / `openFlowInDesigner` / `openFlowGuide` still cross-import between views. | `31e9eb7`, `03ab88e` |
+| (found) | A race in the results writer: the run record was saved before `summary.md`, so `TestRunIDsResultsAndContinuation` failed now and then. Fixed. | `c49c4ee` |
 
 Priorities:
 - **Critical:** risk of lost work, lost data or a security problem. Do first.
