@@ -157,6 +157,10 @@ export function onHubEvent(e) {
     case "build.line":
       if (S.files.compile?.running) S.files.compile.out += (S.files.compile.out ? "\n" : "") + e.summary;
       break;
+    case "store.error": // run history could not be written (disk full, no access)
+    case "results.error": // a run's results folder could not be written
+      toast(e.summary || "Could not save run history.", "error");
+      break;
     case "results.saved":
       delete S.results[e.run_id];
       break;

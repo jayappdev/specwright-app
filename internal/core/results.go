@@ -330,9 +330,16 @@ func (h *Hub) WriteRunResults(id string) error {
 	d, _ := h.Digest(id)
 	evs, _ := h.Store.Events(id)
 	red := h.Store.Redactor()
+	var werr error // the first file that could not be written; the others are still tried
 	write := func(name, content string) {
-		_ = os.MkdirAll(filepath.Dir(filepath.Join(abs, name)), 0o755)
-		_ = os.WriteFile(filepath.Join(abs, name), []byte(red.String(content)), 0o644)
+		p := filepath.Join(abs, name)
+		err := os.MkdirAll(filepath.Dir(p), 0o755)
+		if err == nil {
+			err = os.WriteFile(p, []byte(red.String(content)), 0o644)
+		}
+		if err != nil && werr == nil {
+			werr = fmt.Errorf("write %s: %w", name, err)
+		}
 	}
 	// events and the composed prompt
 	var ev strings.Builder
@@ -457,7 +464,7 @@ func (h *Hub) WriteRunResults(id string) error {
 	_ = h.Store.SaveRun(r)
 	write("summary.md", h.summaryMD(r, d, len(calls)))
 	h.Bus.Publish(bus.Event{Type: "results.saved", RunID: id, Summary: dir, Data: map[string]any{"dir": dir}})
-	return nil
+	return werr
 }
 
 func str(v any) string {

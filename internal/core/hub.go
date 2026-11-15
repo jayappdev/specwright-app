@@ -125,6 +125,7 @@ func New(o Options) (*Hub, error) {
 		}
 	}
 	h.watchRunEnds()
+	h.reportStoreErrors()
 	go h.autoArchiveLoop()
 	h.Bus.SetFilter(func(e *bus.Event) { st.Redactor().Event(e) })
 	br, err := extension.StartBridge(h)
