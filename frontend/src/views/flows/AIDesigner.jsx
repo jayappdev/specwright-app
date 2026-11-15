@@ -15,7 +15,8 @@ import { update, toast, errMsg } from "../../store.js";
 import { Icon } from "../../ui.jsx";
 import { compact } from "../../schema.js";
 import { AiProgress } from "../../AiProgress.jsx";
-import { StepIcon, condCount, fl, loadList, openFlow, save, tools } from "../Flows.jsx";
+import { StepIcon, fl, loadList, openFlow, save, tools } from "../Flows.jsx";
+import { condCount } from "./Conditions.jsx";
 
 const DESIGN_EXAMPLES = [
   "Every morning, tell me which blocking issues the quality gate found, grouped by file",
