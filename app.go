@@ -67,6 +67,19 @@ func (a *App) DetectCredentials() []core.CredentialSource { return val(a.hub.Det
 func (a *App) SetAgent(name, token, model string) error   { return a.hub.SetAgent(name, token, model) }
 func (a *App) ClearToken()                                { a.hub.ClearToken() }
 
+// ExportTools returns a tool file (*.tools.json) with the named tools.
+func (a *App) ExportTools(names []string) (string, error) { return ok(a.hub.ExportTools(names)) }
+
+// PreviewToolImport lists the tools in a tool file for review before importing.
+func (a *App) PreviewToolImport(data string) ([]core.ToolImportItem, error) {
+	return ok(a.hub.PreviewToolImport(data))
+}
+
+// ImportTools imports a tool file's tools (needing approval), by action per name.
+func (a *App) ImportTools(data string, actions map[string]string) (core.ToolImportResult, error) {
+	return ok(a.hub.ImportTools(data, actions))
+}
+
 // SetCopilotWeb sets which web pages Copilot may open in runs.
 func (a *App) SetCopilotWeb(w agent.WebAccess) error { return a.hub.SetCopilotWeb(w) }
 

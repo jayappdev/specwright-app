@@ -12,3 +12,44 @@
 @import "./styles/activity.css" layer(activity);
 @import "./styles/runs.css" layer(runs);
 @import "./styles/shell.css" layer(shell);
+
+/* ---- tool export / import --------------------------------------------------------- */
+.share-modal {
+  width: min(760px, 100%);
+}
+.share-list {
+  list-style: none;
+  margin: 8px 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  max-height: 52vh;
+  overflow: auto;
+}
+.share-list.import > li {
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 8px 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.share-list.import > li.skipped {
+  opacity: 0.6;
+}
+.share-row {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.share-row select {
+  flex: none;
+}
+.share-code {
+  max-height: 220px;
+  overflow: auto;
+  margin: 0;
+  font-size: max(11px, 0.85em);
+  white-space: pre;
+}

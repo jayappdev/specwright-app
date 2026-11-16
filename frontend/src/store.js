@@ -127,6 +127,7 @@ export const S = {
   scrollTo: "", // one-shot: element id to scroll to after a view opens
   wfChanges: false, // approval banner: "Request changes" field open (Workflow.jsx)
   zipBusy: false, // project zip being written
+  toolShare: null, // Tools export / import dialog (views/tools/Share.jsx)
 };
 
 let version = 0;

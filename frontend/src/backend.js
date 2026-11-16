@@ -129,6 +129,9 @@ const METHODS = [
   "FlowCommands",
   "ApproveFlowCommands",
   "SetCopilotWeb",
+  "ExportTools",
+  "PreviewToolImport",
+  "ImportTools",
 ];
 
 function wailsBackend() {

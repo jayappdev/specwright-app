@@ -136,6 +136,11 @@ func (h *Hub) ExportFlow(id string) (string, error) {
 		return "", err
 	}
 	b, err := flow.Export(root, f)
+	if err != nil {
+		return "", err
+	}
+	// the project tools it uses travel with it (imported as needing approval)
+	b, err = h.withFlowTools(f, b)
 	return string(b), err
 }
 
@@ -152,6 +157,7 @@ func (h *Hub) ImportFlow(data string) (FlowState, error) {
 	if err != nil {
 		return FlowState{}, err
 	}
+	notes = append(notes, h.importFlowTools(data)...)
 	issues := h.ValidateFlow(*f)
 	for _, is := range issues {
 		if strings.Contains(is.Message, "is not available") {

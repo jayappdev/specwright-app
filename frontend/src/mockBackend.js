@@ -5116,6 +5116,91 @@ export function createMockBackend(methods) {
       adm.managed = adm.managed.filter((t) => t.name !== name);
       savAdm();
     },
+    // tool files (mirrors internal/core/toolshare.go)
+    async ExportTools(names) {
+      if (!names?.length) throw new Error("choose at least one tool to export");
+      const tags = db.toolTags || {};
+      const tools = names.map((n) => {
+        const e = db.exts.find((x) => x.name === n);
+        if (!e || isManaged(n) || (e.kind && e.kind !== "script")) throw new Error(`${n} cannot be exported`);
+        const { name, desc, lang, params, secrets, perms, command, script, deps, output, outputBy, prompt } =
+          e;
+        return {
+          name,
+          desc,
+          lang,
+          params,
+          secrets,
+          perms,
+          command,
+          script: script || db.files[e.scriptPath] || "",
+          deps,
+          output,
+          outputBy,
+          prompt,
+          tags: tags[n],
+        };
+      });
+      return JSON.stringify({ format: "specwright-tools", version: 1, exported: now(), tools }, null, 2);
+    },
+    async PreviewToolImport(data) {
+      let b;
+      try {
+        b = JSON.parse(data);
+      } catch (e) {
+        throw new Error("not a tool file: " + e.message);
+      }
+      if (b.format !== "specwright-tools") throw new Error("not a SpecWright tool file");
+      if (!b.tools?.length) throw new Error("the file has no tools");
+      const free = (n) => {
+        for (let k = 2; ; k++)
+          if (!db.exts.some((x) => x.name === n + "-" + k) && !isManaged(n + "-" + k)) return n + "-" + k;
+      };
+      return b.tools.map((t) => {
+        if (!/^[a-z][a-z0-9_-]{0,39}$/.test(t.name || ""))
+          throw new Error(`tool ${t.name}: not a valid name`);
+        const exists = db.exts.some((x) => x.name === t.name),
+          managed = isManaged(t.name);
+        return { tool: t, exists, managed, suggest: exists || managed ? free(t.name) : "" };
+      });
+    },
+    async ImportTools(data, actions = {}) {
+      const items = await api.PreviewToolImport(data);
+      const res = { imported: [], skipped: [], notes: [] };
+      for (const it of items) {
+        let a = actions[it.tool.name] || (it.exists || it.managed ? "skip" : "import"),
+          name = it.tool.name;
+        if (a === "skip") {
+          res.skipped.push(name);
+          continue;
+        }
+        if (a.startsWith("copy:")) name = a.slice(5).trim();
+        else if (a === "import" && (it.exists || it.managed))
+          throw new Error(`a tool named ${name} already exists`);
+        const rec = {
+          ...clone(it.tool),
+          name,
+          kind: "script",
+          scope: "project",
+          approved: false,
+          status: "needs approval",
+          scriptPath: `.codegen/tools/project/${name}.${it.tool.lang === "Python" ? "py" : it.tool.lang === "Node.js" ? "js" : "sh"}`,
+        };
+        delete rec.tags;
+        db.files[rec.scriptPath] = rec.script || "";
+        const k = db.exts.findIndex((x) => x.name === name);
+        if (k >= 0) db.exts[k] = rec;
+        else db.exts.push(rec);
+        if (it.tool.tags?.length) (db.toolTags ||= {})[name] = it.tool.tags;
+        if (it.tool.secrets?.length)
+          res.notes.push(
+            `${name} needs secret(s) ${it.tool.secrets.map((x) => x.name).join(", ")}: no values come with the file`,
+          );
+        res.imported.push(name);
+      }
+      persist();
+      return res;
+    },
     async SaveExtension(e) {
       if (e.scope === "managed" || e.managed || isManaged(e.name)) refuse(e.name);
       if (!/^[a-z][a-z0-9_-]{0,39}$/.test(e.name))

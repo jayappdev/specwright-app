@@ -1,4 +1,5 @@
 import { useEffect } from "react";
+import { ShareMenu, exportTools } from "./tools/Share.jsx";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { ModelPicker } from "../ModelPicker.jsx";
@@ -347,7 +348,12 @@ export function Tools() {
   const reach = (k) =>
     tb.ro
       ? (k === 1 || k === 2) && d
-      : k === 0 || (k <= 2 && d) || (k === 3 && d && (d.kind === "npm" || (tb.test && !tb.test.running)));
+      : k === 0 ||
+        (k <= 2 && d) ||
+        // an imported tool ("needs approval") can be approved after reading it, without a test
+        (k === 3 &&
+          d &&
+          (d.kind === "npm" || d.status === "needs approval" || (tb.test && !tb.test.running)));
   const set = (k, v) => {
     tb[k] = v;
     update();
@@ -734,6 +740,15 @@ export function Tools() {
             <button className="btn primary" onClick={() => set("stage", npm ? "save" : "test")}>
               {npm ? "Next: approve" : "Next: test with AI"}
             </button>
+            {!npm && d.status === "needs approval" && (
+              <button
+                className="btn secondary"
+                title="An imported tool: once you have read its script and command, you can approve it without an AI test"
+                onClick={() => set("stage", "save")}
+              >
+                Skip the test
+              </button>
+            )}
             {tb.editing && !tb.ro && !tb.admin && (
               <>
                 <span className="status-spacer" />
@@ -1103,9 +1118,11 @@ export function Tools() {
               ? "Approve for agents"
               : tb.scope === "global"
                 ? "Submit to global catalog"
-                : tb.editing
-                  ? "Update project tool"
-                  : "Save to project"}
+                : d.status === "needs approval"
+                  ? "Approve and save"
+                  : tb.editing
+                    ? "Update project tool"
+                    : "Save to project"}
           </button>
         </div>
       </div>
@@ -1125,9 +1142,12 @@ export function Tools() {
           }}
         >
           <h1>Tools</h1>
-          <button className="btn primary" onClick={() => newTool(false)}>
-            + New
-          </button>
+          <span style={{ display: "flex", gap: 6 }}>
+            <button className="btn primary" onClick={() => newTool(false)}>
+              + New
+            </button>
+            <ShareMenu />
+          </span>
         </div>
         <ToolFinder />
         {finding() ? (
@@ -1184,6 +1204,16 @@ export function Tools() {
                 <span className={"badge " + (tb.admin ? "badge-warn" : "")}>
                   <Icon.lock /> {tb.admin ? "admin mode" : "read-only"}
                 </span>
+              )}
+              {tb.editing && !tb.admin && !tb.ro && (d?.kind || "script") === "script" && (
+                <button
+                  className="btn secondary"
+                  style={{ marginLeft: "auto" }}
+                  title="Save this tool to a file another project can import"
+                  onClick={() => exportTools([tb.editing])}
+                >
+                  Export
+                </button>
               )}
             </header>
             {tb.editing && <ToolTagsBar name={tb.editing} />}
