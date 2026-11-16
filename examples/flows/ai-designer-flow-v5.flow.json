@@ -1,0 +1,176 @@
+{
+  "format": "specwright-flow",
+  "version": 1,
+  "exported": "2026-11-16T01:13:10Z",
+  "flow": {
+    "version": 1,
+    "id": "ai-designer-flow-v5",
+    "name": "AI designer flow (v5)",
+    "description": "Fetches each ticker's live price from Yahoo Finance's JSON chart endpoint instead of a Google search page.",
+    "inputs": [
+      {
+        "name": "stocks",
+        "label": "Stock names (one per line)",
+        "type": "multiline",
+        "required": true
+      }
+    ],
+    "context": {},
+    "skills": [],
+    "nodes": [
+      {
+        "id": "start",
+        "type": "start",
+        "title": "Inputs",
+        "x": 40,
+        "y": 80
+      },
+      {
+        "id": "loop1",
+        "type": "loop",
+        "title": "Each stock",
+        "x": 300,
+        "y": 80,
+        "split": "auto",
+        "field": "stocks"
+      },
+      {
+        "id": "name",
+        "type": "transform",
+        "title": "Get stock name",
+        "x": 560,
+        "y": 80,
+        "template": "{{item}}",
+        "op": "template"
+      },
+      {
+        "id": "clean",
+        "type": "transform",
+        "title": "Clean name",
+        "x": 820,
+        "y": 80,
+        "op": "trim"
+      },
+      {
+        "id": "fetch",
+        "type": "tool",
+        "title": "Yahoo Finance quote",
+        "x": 1080,
+        "y": 80,
+        "tool": "builtin:fetch_webpage",
+        "args": {
+          "format": "json",
+          "max_chars": "30000",
+          "url": "https://query1.finance.yahoo.com/v8/finance/chart/AMZN?interval=1h\u0026range=1d"
+        }
+      },
+      {
+        "id": "price",
+        "type": "transform",
+        "title": "Find price",
+        "x": 1460,
+        "y": 90,
+        "op": "json-path",
+        "expr": "chart.result[0].meta.regularMarketPrice"
+      },
+      {
+        "id": "row",
+        "type": "transform",
+        "title": "Row",
+        "x": 1650,
+        "y": 20,
+        "template": "| {{clean.buffer_output}} | {{price.buffer_output}} |",
+        "op": "template"
+      },
+      {
+        "id": "gather1",
+        "type": "gather",
+        "title": "Collect rows",
+        "x": 1860,
+        "y": 80,
+        "mode": "concat"
+      },
+      {
+        "id": "table",
+        "type": "transform",
+        "title": "Markdown",
+        "x": 2120,
+        "y": 80,
+        "template": "# Stock values\n\n| Stock | Price |\n|---|---|\n{{gather1.buffer_output}}",
+        "op": "template"
+      },
+      {
+        "id": "show",
+        "type": "output",
+        "title": "Display",
+        "x": 2380,
+        "y": 80,
+        "format": "md",
+        "actions": [
+          {
+            "type": "show"
+          },
+          {
+            "type": "save",
+            "path": "out/stock-prices.md"
+          }
+        ]
+      },
+      {
+        "id": "transform",
+        "type": "transform",
+        "title": "Transform",
+        "x": 1220,
+        "y": 240,
+        "op": "json-path",
+        "expr": "json"
+      }
+    ],
+    "edges": [
+      {
+        "from": "start",
+        "to": "loop1"
+      },
+      {
+        "from": "loop1",
+        "to": "name"
+      },
+      {
+        "from": "name",
+        "to": "clean"
+      },
+      {
+        "from": "clean",
+        "to": "fetch"
+      },
+      {
+        "from": "price",
+        "to": "row"
+      },
+      {
+        "from": "row",
+        "to": "gather1"
+      },
+      {
+        "from": "gather1",
+        "to": "table"
+      },
+      {
+        "from": "table",
+        "to": "show"
+      },
+      {
+        "from": "fetch",
+        "to": "transform"
+      },
+      {
+        "from": "transform",
+        "to": "price"
+      }
+    ],
+    "updated": "2026-11-13T16:40:14Z",
+    "parent": "ai-designer-flow",
+    "revision": 5,
+    "designed": "Made by the AI designer: “Instead of getting from google, get it from a place that gives real time stock price”."
+  }
+}
