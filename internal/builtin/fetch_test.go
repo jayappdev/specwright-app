@@ -79,7 +79,7 @@ func TestFetchWebpageFormats(t *testing.T) {
 	}
 	// a body longer than max_chars: text is cut with a note, raw fails rather than give broken JSON
 	long := call(t, b, "fetch_webpage", map[string]any{"url": srv.URL + "/big", "max_chars": 600.0})
-	if !strings.Contains(long, "more characters") {
+	if !strings.Contains(long, "more; raise max_chars") || !strings.Contains(long, ".codegen/tool-output/fetch_webpage-") {
 		t.Fatal(long)
 	}
 	if _, err := b.Call(context.Background(), "fetch_webpage", map[string]any{"url": srv.URL + "/big", "format": "raw", "max_chars": 600.0}); err == nil || !strings.Contains(err.Error(), "larger than 600") {

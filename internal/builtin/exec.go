@@ -1,6 +1,7 @@
 package builtin
 
 import (
+	"codegen/internal/bigout"
 	"encoding/json"
 
 	"bytes"
@@ -47,7 +48,12 @@ func (r *ring) String() string {
 	defer r.mu.Unlock()
 	s := string(r.buf)
 	if r.total > r.n {
-		s = fmt.Sprintf("[… first %s of output dropped]\n", human(int64(r.total-r.n))) + s
+		// the kept tail starts after the first line break (or at least at a character)
+		if i := strings.IndexByte(s, '\n'); i >= 0 && i < len(s)/5 {
+			s = s[i+1:]
+		}
+		s = strings.ToValidUTF8(s, "")
+		s = fmt.Sprintf("[… first %s of output dropped]\n", human(int64(r.total-len(s)))) + s
 	}
 	return s
 }
@@ -383,8 +389,12 @@ func fetchWebpage(ctx context.Context, b *Box, a args) (string, error) {
 	}
 	more := ""
 	if len(text) > limit {
-		more = fmt.Sprintf("\n… %d more characters; raise max_chars to read further", len(text)-limit)
-		text = text[:limit]
+		full := text
+		text = bigout.SafeCut(full, limit)
+		more = fmt.Sprintf("\n… %s more; raise max_chars (up to 200000) to read further", bigout.Human(len(full)-len(text)))
+		if rel, err := bigout.Save(b.root, "fetch_webpage", "text", full); err == nil {
+			more += fmt.Sprintf(", or read the whole text from %s with read_file (start_line / end_line)", rel)
+		}
 	}
 	head := fmt.Sprintf("%s → %s", resp.Request.URL, resp.Status)
 	if title != "" {
@@ -458,13 +468,13 @@ func fetchJSON(resp *http.Response, body []byte, title, text string, limit int) 
 				out["json"] = v
 				break
 			}
-			out["truncated"] = true // too long to pass on whole: its text, cut
-			out["body"] = t[:limit]
+			out["truncated"] = true // too long to pass on whole: its text, cut at a line
+			out["body"] = bigout.SafeCut(t, limit)
 			break
 		}
 		if len(text) > limit {
 			out["truncated"] = true
-			text = text[:limit]
+			text = bigout.SafeCut(text, limit)
 		}
 		out["body"] = text
 	}

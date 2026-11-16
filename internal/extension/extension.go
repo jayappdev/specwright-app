@@ -433,11 +433,20 @@ type RunResult struct {
 	Command    string   `json:"command"` // argv, quoted as a command template
 	Argv       []string `json:"argv,omitempty"`
 	Error      string   `json:"error,omitempty"`
+	// Truncated: the tool printed more than MaxToolOutput; Output is cut
+	Truncated bool `json:"truncated,omitempty"`
 	// AI is what the tool spent on AI itself (claude / copilot calls it
 	// made), when SpecWright's AI launchers were on its PATH.
 	AI []aishim.Record `json:"ai,omitempty"`
 }
 
+// MaxToolOutput is the most a tool's output keeps (stdout and stderr
+// together). It is passed on whole to flows; an agent gets results over
+// bigout.AgentLimit as a saved file and a summary (see the bridge).
+const MaxToolOutput = 32 << 20
+
+// maxOutput caps output that is only shown when a call fails (stderr of
+// Copilot extension tools).
 const maxOutput = 64 * 1024
 
 // Exec runs e in root with args and secret env values. No shell is
@@ -528,7 +537,8 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 		cmd.Stdin = strings.NewReader(*stdin)
 	}
 	var buf, errBuf bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &limited{w: &buf, n: maxOutput}, &limited{w: &buf, n: maxOutput}
+	lim := &limited{w: &buf, n: MaxToolOutput}
+	cmd.Stdout, cmd.Stderr = lim, lim
 	if e.Kind == KindCopilot {
 		// the result is what the tool returned; the extension's own logging
 		// (stderr) is shown only when the call fails
@@ -540,7 +550,7 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 	if err != nil && errBuf.Len() > 0 {
 		out = strings.TrimSpace(strings.Join([]string{out, strings.TrimSpace(errBuf.String())}, "\n"))
 	}
-	res := RunResult{Output: out, DurationMS: time.Since(start).Milliseconds(), Command: JoinWords(argv), Argv: argv}
+	res := RunResult{Output: out, DurationMS: time.Since(start).Milliseconds(), Command: JoinWords(argv), Argv: argv, Truncated: lim.over}
 	if usageFile != "" {
 		res.AI = aishim.ReadUsage(usageFile)
 	}
@@ -560,17 +570,21 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 var placeholderRE = regexp.MustCompile(`\{\{(\w+)\}\}`)
 
 type limited struct {
-	w *bytes.Buffer
-	n int
+	w    *bytes.Buffer
+	n    int
+	over bool // more was written than kept
 }
 
 func (l *limited) Write(p []byte) (int, error) {
 	if room := l.n - l.w.Len(); room > 0 {
 		if len(p) > room {
 			l.w.Write(p[:room])
+			l.over = true
 		} else {
 			l.w.Write(p)
 		}
+	} else if len(p) > 0 {
+		l.over = true
 	}
 	return len(p), nil
 }

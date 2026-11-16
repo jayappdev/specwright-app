@@ -4,6 +4,7 @@ package core
 // output files.
 
 import (
+	"codegen/internal/bigout"
 	"context"
 	"encoding/json"
 	"errors"
@@ -352,7 +353,7 @@ func flowAsk(inputs map[string]string) string {
 			continue
 		}
 		if len(v) > 300 {
-			v = v[:300] + "…"
+			v = bigout.SafeCut(v, 300) + "…"
 		}
 		fmt.Fprintf(&b, "%s: %s\n", k, v)
 	}
@@ -395,7 +396,7 @@ func (h *Hub) aiStepPrompt(f *flow.Flow, n *flow.Node, d flow.Data, parents int)
 	// the prompt does not mention it
 	if in := strings.TrimSpace(d.Input); in != "" && !flow.UsesUpstream(*n, f) {
 		if len(in) > 60000 {
-			in = in[:60000] + "\n…(shortened)"
+			in = bigout.SafeCut(in, 60000) + fmt.Sprintf("\n…(shortened: %s in all)", bigout.Human(len(in)))
 		}
 		prompt += "\n\n## Input from the previous step" + map[bool]string{true: "s", false: ""}[parents > 1] + "\n```\n" + in + "\n```"
 	}

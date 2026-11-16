@@ -1,6 +1,7 @@
 package extension
 
 import (
+	"codegen/internal/bigout"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -199,6 +200,7 @@ func (b *Bridge) handleCall(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	res := Exec(r.Context(), b.p.Root(), e, req.Arguments, secrets, b.p.Env(), 30*time.Second)
+	res.Output = forAgent(b.p.Root(), e.Name, res.Output, res.Truncated)
 	b.p.Observe(e.Name, req.Arguments, res)
 	writeJSON(w, res)
 }
@@ -216,6 +218,11 @@ func (b *Bridge) handleBuiltin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, BuiltinResult{Output: err.Error(), Error: err.Error()})
 		return
+	}
+	// read_file already pages (start_line/end_line) and would only read its
+	// own saved file back; every other built-in hands large results over saved
+	if req.Name != "read_file" {
+		out = forAgent(b.p.Root(), req.Name, out, false)
 	}
 	writeJSON(w, BuiltinResult{Output: out})
 }
@@ -274,4 +281,15 @@ func (b *Bridge) WriteMCPConfig(dir string, extensions bool) (string, error) {
 		return "", err
 	}
 	return filepath.Clean(f.Name()), nil
+}
+
+// forAgent is what an agent gets for a tool result: the result itself, or,
+// when it is too large to pass whole, a saved file and a valid summary
+// (bigout). cut says the tool printed more than MaxToolOutput.
+func forAgent(root, tool, out string, cut bool) string {
+	msg, _ := bigout.ForAgent(root, tool, out)
+	if cut {
+		msg += fmt.Sprintf("\n\n(The tool printed more than %s; only the first %s were kept.)", bigout.Human(MaxToolOutput), bigout.Human(MaxToolOutput))
+	}
+	return msg
 }

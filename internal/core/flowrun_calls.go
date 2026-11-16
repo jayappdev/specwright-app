@@ -3,6 +3,7 @@ package core
 // Flow runs: calls out of a step — tools, shell commands and the agent.
 
 import (
+	"codegen/internal/bigout"
 	"context"
 	"encoding/json"
 	"errors"
@@ -130,7 +131,12 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 			files["input_file"] = filepath.ToSlash(rel)
 		}
 	}
-	data := map[string]any{"_step": step, "tool": name, "id": id, "ok": res.OK, "output": res.Output, "exit_code": res.ExitCode, "duration_ms": res.DurationMS}
+	// the activity event shows the start; the whole output is in output_file
+	shown := res.Output
+	if len(shown) > 64<<10 {
+		shown = bigout.SafeCut(shown, 64<<10) + fmt.Sprintf("\n… (%s in all; the whole output is in the step's output file)", bigout.Human(len(res.Output)))
+	}
+	data := map[string]any{"_step": step, "tool": name, "id": id, "ok": res.OK, "output": shown, "exit_code": res.ExitCode, "duration_ms": res.DurationMS}
 	for k, v := range files {
 		data[k] = v
 	}
@@ -139,11 +145,15 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 		msg := firstNonEmpty(res.Error, fmt.Sprintf("exit code %d", res.ExitCode))
 		if t := strings.TrimSpace(res.Output); t != "" {
 			if len(t) > 600 {
-				t = t[len(t)-600:]
+				t = "…" + strings.ToValidUTF8(t[len(t)-600:], "")
 			}
 			msg += ": " + t
 		}
 		return res.Output, errors.New(msg)
+	}
+	if res.Truncated {
+		// passing on the first 32 MB would hand the next step broken data
+		return res.Output, fmt.Errorf("%s printed more than %s; the next step would get broken data. Make the tool write large results to a file and print its path", name, bigout.Human(extension.MaxToolOutput))
 	}
 	return res.Output, nil
 }

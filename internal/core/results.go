@@ -1,6 +1,7 @@
 package core
 
 import (
+	"codegen/internal/bigout"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -417,7 +418,7 @@ func (h *Hub) WriteRunResults(id string) error {
 			}
 			if out := strings.TrimSpace(c.out); out != "" {
 				if len(out) > 4000 {
-					out = out[:4000] + "\n…"
+					out = bigout.SafeCut(out, 4000) + fmt.Sprintf("\n…(%s in all; the whole output is in this call's output file)", bigout.Human(len(out)))
 				}
 				fmt.Fprintf(&t, "Result:\n\n```\n%s\n```\n\n", out)
 			}
@@ -521,7 +522,7 @@ func (h *Hub) summaryMD(r store.Run, d RunDigest, calls int) string {
 	b.WriteString("- `events.jsonl`: the full event log · `run.json`: the run's record\n")
 	if a := strings.TrimSpace(d.Answer); a != "" {
 		if len(a) > 1500 {
-			a = a[:1500] + "\n\n…(see answer.md)"
+			a = bigout.SafeCut(a, 1500) + "\n\n…(see answer.md)"
 		}
 		b.WriteString("\n## Answer\n\n" + a + "\n")
 	}
