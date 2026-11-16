@@ -128,6 +128,99 @@ export const GUIDE = [
     ],
   },
   {
+    type: "improve",
+    name: "Improve until done",
+    summary:
+      "Pairs the AI with a tool and repeats until the result is good enough: the AI fixes how the tool runs, or the tool checks what the AI wrote.",
+    when: [
+      "A search or query that needs a few tries to get right: too many matches, an error, the wrong rows.",
+      "Writing something a tool can check: code or config with tests, a linter or a validator after it.",
+      "Any fix-and-check work you would otherwise repeat by hand until it passes.",
+    ],
+    how: [
+      "Choose what it works with. “The tool before it”: connect one tool step into it. The tool runs; the AI judges the result and, when it is not good enough, changes the tool's arguments (or the input it gets) and runs it again.",
+      "“The tool after it”: connect it to one tool step. The AI produces a result (say what in the prompt); the tool checks it, and its findings go back to the AI, which revises the result.",
+      "Write “Done when”: what a good result looks like. Every round the AI judges against it and says why it is or is not done.",
+      "Choose who decides: the AI alone, the AI then a person confirms, or a person after every round. A person can approve, edit the result, stop, or send feedback for another round.",
+      "Its result is the final one: the tool's last output (tool before) or the AI's last version (tool after). Steps after it get that.",
+      "Each round the AI gets the goal, the current result and findings, and a short note per earlier round, not their full text, so long runs stay within its context window. Every round's result is saved in the run's results folder.",
+    ],
+    settings: [
+      ["Works with", "The tool before it (fix its run) or the tool after it (it checks the AI's result)."],
+      ["Prompt", "Tool after: what the AI should produce. Tool before: optional instructions."],
+      ["Done when", "What a good enough result is; the AI judges every round against it."],
+      ["At most", "How many rounds it may take (5 by default, up to 20)."],
+      [
+        "Who decides it is done",
+        "The AI alone; the AI, then a person confirms; or a person after every round.",
+      ],
+      ["When it never gets there", "The step fails, or (if ticked) the flow goes on with the last result."],
+    ],
+    examples: [
+      {
+        title: "Narrow a search until it finds the right place",
+        text: "Search text runs first with a broad query. The step judges the matches and changes the query (or the folder) until it points at where order totals are rounded; then the matches go on to the report. Below: round 1 found 214 matches, mostly Math.round in UI code and tests, so the AI changed the query and the path; round 2 found these 3 and was done.",
+        flowInputs: [
+          { name: "topic", label: "What to find", type: "text", default: "where order totals are rounded" },
+        ],
+        nodes: [
+          {
+            id: "search",
+            type: "tool",
+            title: "Search the code",
+            tool: "builtin:text_search",
+            args: { query: "round" },
+          },
+          {
+            id: "narrow",
+            type: "improve",
+            title: "Until it finds it",
+            pair: "before",
+            prompt: "Prefer a more exact query or a narrower path over raising max_results.",
+            goal: "The matches show {{inputs.topic}}, with at most 20 matches and none from tests.",
+            rounds: 5,
+            approve: "done",
+          },
+          out("found", "Where it is"),
+        ],
+        edges: chain("start", "search", "narrow", "found"),
+        focus: "narrow",
+        result:
+          "src/billing/Invoice.java\n  17: return total.setScale(2, RoundingMode.HALF_EVEN);\nsrc/billing/Totals.java\n  41: BigDecimal rounded = sum.setScale(2, RoundingMode.HALF_UP);\n  58: // round per currency",
+      },
+      {
+        title: "Write JSON until the validator accepts it",
+        text: "The AI writes a config file; Run command checks it with Python's JSON validator. Any error goes back to the AI, which fixes the JSON and the check runs again, until it passes.",
+        flowInputs: [{ name: "service", label: "Service", type: "text", default: "orders" }],
+        nodes: [
+          {
+            id: "config",
+            type: "improve",
+            title: "Write the config",
+            pair: "after",
+            prompt:
+              "Write the JSON health-check config for the {{inputs.service}} service: name, url, interval_seconds, timeout_seconds and a list of alerts (each with channel and after_failures). Reply with only the JSON.",
+            goal: "The check prints the JSON back with no error, and every field above is present.",
+            rounds: 4,
+            approve: "none",
+          },
+          {
+            id: "check",
+            type: "tool",
+            title: "Validate JSON",
+            tool: "builtin:run_command",
+            args: { command: "python3 -m json.tool {{input_file}}" },
+          },
+          out("file", "Config", "json"),
+        ],
+        edges: chain("start", "config", "check", "file"),
+        focus: "config",
+        result:
+          '{\n  "name": "orders",\n  "url": "https://orders.internal/health",\n  "interval_seconds": 30,\n  "timeout_seconds": 5,\n  "alerts": [\n    {"channel": "#orders-oncall", "after_failures": 3}\n  ]\n}',
+      },
+    ],
+  },
+  {
     type: "merge",
     name: "Merge",
     summary:

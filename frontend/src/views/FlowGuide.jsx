@@ -81,7 +81,7 @@ function Example({ g, ex, k }) {
     .filter((id) => id in steps);
   const after = flow.edges.filter((e) => e.from === ex.focus);
   useEffect(() => {
-    if (previews[key] || g.type === "ai") return;
+    if (previews[key] || g.type === "ai" || g.type === "improve") return;
     previews[key] = { busy: true };
     backend
       .PreviewFlowStep({ id: "guide", name: "guide", ...flow, skills: [], context: { text: "" } }, ex.focus, {
@@ -97,7 +97,10 @@ function Example({ g, ex, k }) {
         redraw((x) => x + 1);
       });
   }, [key]);
-  const res = g.type === "ai" ? { output: ex.result, ai: true } : previews[key] || { busy: true };
+  const res =
+    g.type === "ai" || g.type === "improve"
+      ? { output: ex.result, ai: true }
+      : previews[key] || { busy: true };
   // the path: every step in order, the example's step highlighted
   const order = [];
   const visit = (id) => {
