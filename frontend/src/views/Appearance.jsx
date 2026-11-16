@@ -403,9 +403,10 @@ export function Appearance() {
   );
 }
 
-// Copilot runs without a person at the keyboard, so it cannot ask before it
-// opens a web page: a page that is not allowed here is refused. (Claude asks
-// in the app instead.) Kept with the app preferences and sent at start.
+// Web pages Copilot may open without asking (--allow-url / --allow-all-urls).
+// Other pages go to its permission hook, which asks in the app; when the app
+// cannot be asked, Copilot refuses them. Kept with the app preferences and
+// sent at start.
 function CopilotWeb() {
   const w = S.setup.copilotWeb || { mode: "none", sites: [] };
   const [mode, setMode] = useState(w.mode || "none"); // shown; saved once valid
@@ -438,8 +439,8 @@ function CopilotWeb() {
     <div className="card">
       <h3>Web pages for Copilot</h3>
       <p className="muted" style={{ margin: "0 0 8px" }}>
-        Copilot runs unattended, so it cannot ask before opening a web page: pages not allowed here are
-        refused. Claude asks you in the app instead.
+        Pages allowed here open without asking. For any other page Copilot asks you in the app when it can,
+        and otherwise refuses it.
       </p>
       <div className="seg" role="group" aria-label="Web pages Copilot may open">
         {[
