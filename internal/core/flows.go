@@ -281,7 +281,7 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 			content = flow.Render(n.Template, sample)
 		}
 		out, err = flow.Convert(content, n.Format)
-	case "tool", "ai":
+	case "tool", "ai", "improve":
 		err = errors.New("tools and AI steps run when the flow runs; enter sample output for this step instead")
 	default:
 		err = errors.New("nothing to preview for this step")

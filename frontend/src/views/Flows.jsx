@@ -29,6 +29,11 @@ const clone = (x) => JSON.parse(JSON.stringify(x));
 
 export const STEP_TYPES = [
   { type: "ai", name: "AI prompt", help: "Ask the agent; uses the flow's context and skills" },
+  {
+    type: "improve",
+    name: "Improve until done",
+    help: "Pairs with a tool: fixes its run, or has it check the AI's result, round after round until done",
+  },
   { type: "merge", name: "Merge", help: "Combine several steps' outputs" },
   { type: "transform", name: "Transform", help: "Reshape data: JSON, CSV, text, Markdown → HTML, AI" },
   {
@@ -163,6 +168,16 @@ const TYPE_ICON = {
       <>
         <path d="M12 3l1.8 4.9L18.7 9.7 13.8 11.5 12 16.4 10.2 11.5 5.3 9.7 10.2 7.9z" />
         <path d="M18.5 15.5l.8 2 2 .8-2 .8-.8 2-.8-2-2-.8 2-.8z" />
+      </>,
+    ),
+  },
+  improve: {
+    color: "--ansi-blue",
+    Icon: sv(
+      <>
+        <path d="M20 12a8 8 0 1 1-2.3-5.6" />
+        <path d="M20 4v5h-5" />
+        <path d="M9 12l2 2 4-4" />
       </>,
     ),
   },
@@ -561,6 +576,13 @@ export function addNode(spec, x, y) {
     if (spec.tool === "builtin:fetch_webpage") n.args.format = "raw";
   } // in a flow, the response is data for the next steps
   if (spec.type === "ai") n.prompt = "";
+  if (spec.type === "improve") {
+    n.pair = f.sel && nodeOf(f.sel)?.type === "tool" ? "before" : "after";
+    n.prompt = "";
+    n.goal = "";
+    n.rounds = 5;
+    n.approve = "done";
+  }
   if (spec.type === "merge") {
     n.mode = "concat";
     n.separator = "\\n\\n";

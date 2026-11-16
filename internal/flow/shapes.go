@@ -103,6 +103,15 @@ func (f *Flow) Shapes(h ShapeHints) map[string]StepShape {
 			} else {
 				sample()
 			}
+		case "improve": // its result: the paired tool's (before) or the AI's (after)
+			switch {
+			case ImprovePair(*n) == "before" && len(parents) == 1 && out[parents[0]].Out != nil:
+				s.Out, s.Source = out[parents[0]].Out, out[parents[0]].Source
+			case ImprovePair(*n) == "after" && n.OutputSchema != nil:
+				s.Out, s.Source = n.OutputSchema, "declared"
+			default:
+				sample()
+			}
 		case "merge":
 			switch n.Mode {
 			case "json-object":

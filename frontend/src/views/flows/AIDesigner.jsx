@@ -96,6 +96,12 @@ function stepDetail(n) {
       );
     case "ai":
       return (n.prompt || "").slice(0, 140) + (n.outputSchema ? " → " + compact(n.outputSchema) : "");
+    case "improve":
+      return (
+        (n.pair === "after" ? "produce, the tool after checks" : "fix the tool before") +
+        " · done when " +
+        (n.goal || "").slice(0, 100)
+      );
     case "transform":
       return n.op + (n.expr ? " " + n.expr : "");
     case "filter":

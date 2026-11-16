@@ -112,6 +112,8 @@ type FlowStepState struct {
 	Iteration  int `json:"iteration,omitempty"`
 	Iterations int `json:"iterations,omitempty"`
 	Failed     int `json:"failedItems,omitempty"` // Loop: items that failed (with continue on error)
+	// Rounds: an Improve step's rounds (Iteration / Iterations: the round)
+	Rounds []ImproveRound `json:"rounds,omitempty"`
 	// Args are the arguments a tool step ran with; Why says how the agent
 	// chose them when the step was described in words.
 	Args map[string]any `json:"args,omitempty"`
@@ -145,6 +147,12 @@ type FlowReview struct {
 	Title  string `json:"title"`
 	Type   string `json:"type"`
 	Output string `json:"output"`
+	// an Improve step: the round, the AI's verdict and the rounds so far
+	Round   int            `json:"round,omitempty"`
+	Rounds  int            `json:"rounds,omitempty"`
+	Verdict string         `json:"verdict,omitempty"`
+	Reason  string         `json:"reason,omitempty"`
+	History []ImproveRound `json:"history,omitempty"`
 }
 
 // FlowRunState is a run as the UI shows it.
@@ -176,7 +184,7 @@ type FlowRunState struct {
 
 // FlowDecision answers a review.
 type FlowDecision struct {
-	Action  string     `json:"action"` // continue | stop | refine | command | edit | retry | no-more-reviews
+	Action  string     `json:"action"` // continue | stop | refine | command | edit | retry | no-more-reviews | next (an Improve step: another round, Prompt the feedback)
 	Prompt  string     `json:"prompt,omitempty"`
 	Command string     `json:"command,omitempty"`
 	Output  string     `json:"output,omitempty"`
@@ -195,6 +203,15 @@ type flowRun struct {
 	t0       time.Time
 	noReview bool
 	gathered map[string][]flow.ItemResult // a Gather's results, for execStep
+	// toolArgs: the arguments each tool step last ran with (secrets in
+	// place; memory only), for an Improve step that runs it again
+	toolArgs map[string]map[string]any
+	// paired: an Improve step's tool step's last result, for runNodes
+	paired map[string]pairedResult
+}
+
+type pairedResult struct {
+	out, err string
 }
 
 // ErrFlowStopped ends a run the user stopped.

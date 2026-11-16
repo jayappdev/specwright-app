@@ -22,8 +22,12 @@ import (
 
 func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.Node, d flow.Data, item string) (string, store.Usage, error) {
 	var u store.Usage
-	ctx, cancel := context.WithTimeout(withFlowStep(ctx, fr.st.ID, n.ID), stepTimeout(fr.st.Options, n))
-	defer cancel()
+	ctx = withFlowStep(ctx, fr.st.ID, n.ID)
+	if n.Type != "improve" { // an Improve step times its AI calls and tool runs one by one (and may wait for you)
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, stepTimeout(fr.st.Options, n))
+		defer cancel()
+	}
 	f := fr.flow
 	parents := f.Parents(n.ID)
 	if d.Live != nil { // only the steps on the path taken
@@ -42,54 +46,9 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 		b, _ := json.MarshalIndent(f.MaskSecrets(d.Inputs), "", "  ") // secrets: through {{inputs.name}} only
 		return string(b), u, nil
 	case "tool":
-		// the previous steps' output as a file, for {{input_file}} and
-		// $SPECWRIGHT_INPUT_FILE; written even when they printed nothing, so
-		// the path always names a real file
-		if len(parents) > 0 {
-			if p, done := h.flowInputFile(fr, n.ID, d.Input); p != "" {
-				defer done()
-				d.InputFile = p
-			}
-		}
-		args := map[string]any{}
-		for k, v := range n.Args {
-			if r := expandInputFile(flow.Render(v, d), d.InputFile); strings.TrimSpace(r) != "" || strings.TrimSpace(n.Instruction) == "" {
-				args[k] = r
-			}
-		}
-		why := ""
-		if req := strings.TrimSpace(flow.Render(n.Instruction, d)); req != "" {
-			// described in words: the agent investigates and builds the rest
-			actx, acancel := context.WithTimeout(ctx, 10*time.Minute)
-			// the agent sees secrets masked; the fixed values that hold one go
-			// back in after it answers
-			red := h.Store.Redactor()
-			got, w, au, err := h.aiToolArgs(actx, root, fr, n, red.String(req), redactAny(h, args), d)
-			acancel()
-			u.Add(au)
-			if err != nil {
-				return "", u, err
-			}
-			for k, v := range got { // the agent may refer to the file as {{input_file}}
-				if s, ok := v.(string); ok {
-					got[k] = expandInputFile(flow.Render(s, d), d.InputFile)
-				}
-			}
-			for k, v := range args {
-				if s, ok := v.(string); ok && red.String(s) != s {
-					got[k] = v
-				}
-			}
-			args, why = got, w
-		}
-		shown := redactAny(h, args) // the step as recorded: secrets masked
-		fr.update(func(st *FlowRunState) { s := fr.step(n.ID); s.Args, s.Why = shown, why })
-		out, err := h.flowTool(ctx, root, fr, n.ID, n.Tool, args, toolRunTimeout(fr.st.Options), flowInput{d.Input, d.InputFile})
-		u.ToolCalls++
-		if err != nil {
-			u.ToolErrors++
-		}
-		return out, u, err
+		return h.toolStep(ctx, root, fr, n, d, len(parents) > 0)
+	case "improve":
+		return h.runImprove(ctx, root, fr, n, d, len(parents))
 	case "ai":
 		out, u, err := h.flowAgent(ctx, root, fr, n.ID, h.aiStepPrompt(f, n, d, len(parents)), firstNonEmpty(n.Model, fr.st.Options.Model))
 		if err == nil && n.OutputSchema != nil {
@@ -213,6 +172,73 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 		return conv, u, nil
 	}
 	return "", u, fmt.Errorf("unknown step type %q", n.Type)
+}
+
+// toolStep runs a tool step: its arguments from the templates, or built by
+// the agent from the step's description; piped: steps are connected into it.
+func (h *Hub) toolStep(ctx context.Context, root string, fr *flowRun, n *flow.Node, d flow.Data, piped bool) (string, store.Usage, error) {
+	var u store.Usage
+	// the previous steps' output as a file, for {{input_file}} and
+	// $SPECWRIGHT_INPUT_FILE; written even when they printed nothing, so
+	// the path always names a real file
+	if piped {
+		if p, done := h.flowInputFile(fr, n.ID, d.Input); p != "" {
+			defer done()
+			d.InputFile = p
+		}
+	}
+	args := map[string]any{}
+	for k, v := range n.Args {
+		if r := expandInputFile(flow.Render(v, d), d.InputFile); strings.TrimSpace(r) != "" || strings.TrimSpace(n.Instruction) == "" {
+			args[k] = r
+		}
+	}
+	why := ""
+	if req := strings.TrimSpace(flow.Render(n.Instruction, d)); req != "" {
+		// described in words: the agent investigates and builds the rest
+		actx, acancel := context.WithTimeout(ctx, 10*time.Minute)
+		// the agent sees secrets masked; the fixed values that hold one go
+		// back in after it answers
+		red := h.Store.Redactor()
+		got, w, au, err := h.aiToolArgs(actx, root, fr, n, red.String(req), redactAny(h, args), d)
+		acancel()
+		u.Add(au)
+		if err != nil {
+			return "", u, err
+		}
+		for k, v := range got { // the agent may refer to the file as {{input_file}}
+			if s, ok := v.(string); ok {
+				got[k] = expandInputFile(flow.Render(s, d), d.InputFile)
+			}
+		}
+		for k, v := range args {
+			if s, ok := v.(string); ok && red.String(s) != s {
+				got[k] = v
+			}
+		}
+		args, why = got, w
+	}
+	out, err := h.runToolArgs(ctx, root, fr, n, args, why, d)
+	u.ToolCalls++
+	if err != nil {
+		u.ToolErrors++
+	}
+	return out, u, err
+}
+
+// runToolArgs runs a tool step's tool with args (secrets in place) and
+// records them, masked, in the step's state; the values themselves are kept
+// in memory for an Improve step that runs the tool again.
+func (h *Hub) runToolArgs(ctx context.Context, root string, fr *flowRun, n *flow.Node, args map[string]any, why string, d flow.Data) (string, error) {
+	shown := redactAny(h, args) // the step as recorded: secrets masked
+	fr.update(func(st *FlowRunState) { s := fr.step(n.ID); s.Args, s.Why = shown, why })
+	fr.mu.Lock()
+	if fr.toolArgs == nil {
+		fr.toolArgs = map[string]map[string]any{}
+	}
+	fr.toolArgs[n.ID] = args
+	fr.mu.Unlock()
+	return h.flowTool(ctx, root, fr, n.ID, n.Tool, args, toolRunTimeout(fr.st.Options), flowInput{d.Input, d.InputFile})
 }
 
 // saveFlowOutput writes an output inside the workspace.

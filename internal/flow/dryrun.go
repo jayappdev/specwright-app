@@ -371,6 +371,11 @@ func (x *dryRun) exec(n *Node, d Data, live []string) (string, bool, error) {
 		return mock(ToolOutput(t.Output, t.OutputBy, n.Args), "output"), true, nil
 	case "ai":
 		return mock(n.OutputSchema, "answer"), true, nil
+	case "improve":
+		if ImprovePair(*n) == "before" {
+			return in, false, nil // the tool's result, improved
+		}
+		return mock(n.OutputSchema, "result"), true, nil
 	case "transform":
 		if n.Source != "" {
 			in = Render(n.Source, d)

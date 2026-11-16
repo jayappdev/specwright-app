@@ -18,7 +18,125 @@ import { LIVE, STATUS_LABEL, decide, frs, pill } from "../FlowRun.jsx";
 
 // --- run view -----------------------------------------------------------------------
 
+// Rounds lists an Improve step's rounds: the AI's verdicts and a person's
+// feedback, each with what changed for the next round.
+function Rounds({ rounds }) {
+  return (
+    <ol className="fr-rounds" aria-label="Rounds">
+      {rounds.map((r, i) => (
+        <li key={i} className={r.by === "person" ? "by-person" : r.done ? "is-done" : ""}>
+          <b>
+            {r.by === "person" ? `You, after round ${r.round}` : `Round ${r.round}`}
+            {r.by === "ai" ? (r.done ? " · done" : " · not done yet") : ""}
+          </b>{" "}
+          <span>{r.reason}</span>
+          {r.changes && <small className="muted"> Changed: {r.changes}.</small>}
+          {r.file && (
+            <small>
+              {" "}
+              <FileLink path={r.file}>result</FileLink>
+            </small>
+          )}
+        </li>
+      ))}
+    </ol>
+  );
+}
+
+// ImproveReview: an Improve step waits for a person to approve its result
+// or send feedback for another round.
+function ImproveReview({ st }) {
+  const r = frs(),
+    rv = st.review,
+    d = r.decision;
+  const [edit, setEdit] = useState(false);
+  useEffect(() => {
+    d.edit = rv.output;
+    d.prompt = "";
+    update();
+  }, [rv.step, rv.round]);
+  const setD = (k, v) => {
+    d[k] = v;
+    update();
+  };
+  const done = rv.verdict === "done";
+  return (
+    <div className="card fr-review" role="region" aria-label="Review">
+      <div className="card-head">
+        <span className="fr-review-dot" />
+        <h3>
+          Review: {rv.title} · round {rv.round} of {rv.rounds}
+        </h3>
+        <span className={"badge " + (done ? "badge-ok" : "badge-warn")}>
+          {done ? "the AI thinks it is done" : rv.verdict}
+        </span>
+      </div>
+      {rv.reason && (
+        <p className="wf-desc">
+          <Icon.spark /> {rv.reason}
+        </p>
+      )}
+      {rv.history?.length > 1 && (
+        <details>
+          <summary className="muted">Earlier rounds ({rv.history.length})</summary>
+          <Rounds rounds={rv.history} />
+        </details>
+      )}
+      <ContentView title={rv.title} text={rv.output} />
+      <div className="row-actions">
+        <button className="btn primary" onClick={() => decide("continue")}>
+          <Icon.check /> Approve, continue the flow
+        </button>
+        <button className="btn secondary danger-text" onClick={() => decide("stop")}>
+          <Icon.x /> Stop the flow
+        </button>
+        <button className="link" onClick={() => setEdit(!edit)}>
+          {edit ? "Hide the editor" : "Edit the result by hand"}
+        </button>
+      </div>
+      {edit && (
+        <div className="fr-iter">
+          <textarea rows={8} value={d.edit ?? ""} onChange={(e) => setD("edit", e.target.value)} />
+          <div className="row-actions">
+            <button className="btn primary" onClick={() => decide("edit", { output: d.edit })}>
+              Use this result
+            </button>
+          </div>
+        </div>
+      )}
+      <div className="fr-iter">
+        <label className="field">
+          <span className="muted">
+            Not there yet? Say what to change; the AI takes it into the next round
+            {done ? "" : " (or leave it empty to let it go on)"}.
+          </span>
+          <textarea
+            rows={3}
+            value={d.prompt || ""}
+            placeholder="e.g. Also handle the empty case, and keep the column names"
+            onChange={(e) => setD("prompt", e.target.value)}
+          />
+        </label>
+        <div className="row-actions">
+          <button
+            className="btn secondary"
+            disabled={done && !d.prompt?.trim()}
+            onClick={() => decide("next", { prompt: d.prompt || "" })}
+          >
+            <Icon.spark /> Another round
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 function Review({ st }) {
+  if (st.review?.type === "improve") return <ImproveReview st={st} />;
+  return <ReviewStep st={st} />;
+}
+
+function ReviewStep({ st }) {
   const r = frs(),
     rv = st.review,
     d = r.decision,
@@ -288,7 +406,7 @@ function Steps({ st }) {
       <ol className="fr-steps">
         {st.steps.map((s) => {
           const n = f?.nodes.find((x) => x.id === s.id) || { type: s.type, tool: s.tool };
-          const can = !!(s.output || s.error || s.args);
+          const can = !!(s.output || s.error || s.args || s.rounds?.length);
           return (
             <li key={s.id} className={"fr-step s-" + s.status}>
               <button
@@ -306,9 +424,11 @@ function Steps({ st }) {
                         (s.why ? " · arguments by AI" : n.instruction ? " · AI builds the arguments" : "")
                       : s.type}
                     {s.iterations
-                      ? s.type === "loop"
-                        ? ` · ${s.status === "running" ? `item ${s.iteration || 0} of ${s.iterations}` : `${s.iterations} item${s.iterations === 1 ? "" : "s"}`}`
-                        : ` · ↻ item ${s.iteration}/${s.iterations}`
+                      ? s.type === "improve"
+                        ? ` · round ${s.iteration || 1} of at most ${s.iterations}`
+                        : s.type === "loop"
+                          ? ` · ${s.status === "running" ? `item ${s.iteration || 0} of ${s.iterations}` : `${s.iterations} item${s.iterations === 1 ? "" : "s"}`}`
+                          : ` · ↻ item ${s.iteration}/${s.iterations}`
                       : s.attempts > 1
                         ? ` · ${s.attempts} attempts`
                         : ""}
@@ -352,6 +472,7 @@ function Steps({ st }) {
                       ))}
                     </div>
                   )}
+                  {s.rounds?.length > 0 && <Rounds rounds={s.rounds} />}
                   {(s.output || s.outputFile) && (
                     <ContentView
                       title={s.title}

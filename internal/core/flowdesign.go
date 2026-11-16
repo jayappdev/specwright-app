@@ -191,6 +191,7 @@ Step types (node JSON; every node has "id" and "type" and may have "title"):
 - start: the flow's inputs; always present with id "start", nothing feeds it.
 - tool: {"tool": "<name>", "args": {"<param>": "<template>"}}
 - ai: {"prompt": "<template>", "outputSchema": <JSON Schema, optional>}
+- improve ("Improve until done"): {"pair": "before"|"after", "goal": "<when the result is good enough>", "prompt": "<pair after: what to produce; before: optional instructions>", "rounds": 5, "approve": "none"|"done"|"each"}. Pair "before": exactly one tool step connects into it; it judges that tool's result and runs it again with changed arguments until done. Pair "after": it produces a result and connects to exactly one tool step that checks it (tests, linter, validator); the findings go back to it until done. Use it for fix-and-check work.
 - transform: {"op": "<op>", "expr": "...", "template": "..."}; ops: ` + "%s" + `. json-path: expr is a path like items[*].id. json-template: template is the JSON to produce with {{this.<path>}} placeholders and {"{{#each this.<list>}}": {...}} blocks; expr is an optional list path to map over.
 - filter: {"mode": "keep"|"drop", "cond": <condition>, "orderBy": ["-total"], "max": 10}; works on rows (a JSON array).
 - aggregate: {"mode": "group"|"window", "groupBy": ["region"], "measures": [{"fn": "count|count_distinct|sum|avg|min|max|median|first|last|list|distinct|concat|row_number|rank|dense_rank|running_sum|running_count|running_avg|lag|lead|pct_of_total|ntile", "field": "total", "as": "revenue"}], "orderBy": ["-revenue"]}

@@ -453,23 +453,29 @@ export function Canvas() {
                         (n.actions || []).map((a) => a.type).join(", ")
                       : n.type === "ai"
                         ? (n.prompt || "").slice(0, 40) || "No prompt yet"
-                        : n.type === "loop"
-                          ? (SPLIT_MODES.find(([m]) => m === (n.split || "auto"))?.[1] || n.split) +
-                            (loops.gather[n.id]
-                              ? " → " + (nodeOf(loops.gather[n.id])?.title || loops.gather[n.id])
-                              : " · no Gather yet")
-                          : n.type === "gather"
-                            ? GATHER_MODES.find(([m]) => m === (n.mode || "concat"))?.[1] || n.mode
-                            : n.type === "decision"
-                              ? `${(n.branches || []).length} path${(n.branches || []).length === 1 ? "" : "s"} + otherwise` +
-                                (n.mode === "all" ? " · every match" : "")
-                              : n.type === "filter"
-                                ? (n.mode === "drop" ? "Drop" : "Keep") +
-                                  ` rows · ${condCount(n.cond)} condition${condCount(n.cond) === 1 ? "" : "s"}`
-                                : n.type === "aggregate"
-                                  ? (n.mode === "window" ? "Window" : "Group") +
-                                    ((n.groupBy || []).length ? " by " + n.groupBy.join(", ") : " · all rows")
-                                  : "";
+                        : n.type === "improve"
+                          ? (n.pair === "after" ? "Tool after checks · " : "Fixes the tool before · ") +
+                            `≤ ${n.rounds || 5} rounds` +
+                            ((n.approve || "done") !== "none" ? " · you confirm" : "")
+                          : n.type === "loop"
+                            ? (SPLIT_MODES.find(([m]) => m === (n.split || "auto"))?.[1] || n.split) +
+                              (loops.gather[n.id]
+                                ? " → " + (nodeOf(loops.gather[n.id])?.title || loops.gather[n.id])
+                                : " · no Gather yet")
+                            : n.type === "gather"
+                              ? GATHER_MODES.find(([m]) => m === (n.mode || "concat"))?.[1] || n.mode
+                              : n.type === "decision"
+                                ? `${(n.branches || []).length} path${(n.branches || []).length === 1 ? "" : "s"} + otherwise` +
+                                  (n.mode === "all" ? " · every match" : "")
+                                : n.type === "filter"
+                                  ? (n.mode === "drop" ? "Drop" : "Keep") +
+                                    ` rows · ${condCount(n.cond)} condition${condCount(n.cond) === 1 ? "" : "s"}`
+                                  : n.type === "aggregate"
+                                    ? (n.mode === "window" ? "Window" : "Group") +
+                                      ((n.groupBy || []).length
+                                        ? " by " + n.groupBy.join(", ")
+                                        : " · all rows")
+                                    : "";
           const inLoop = loops.stack[n.id] || [],
             loopName = inLoop.length
               ? nodeOf(inLoop[inLoop.length - 1])?.title || inLoop[inLoop.length - 1]

@@ -891,6 +891,7 @@ function StepInspector({ n }) {
               </div>
             </>
           )}
+          {n.type === "improve" && <ImproveInspector n={n} set={set} flow={flow} />}
           <DataPanel n={n} />
           {n.type === "decision" && <DecisionInspector n={n} set={set} />}
           {n.type === "filter" && <FilterInspector n={n} set={set} />}
@@ -1356,6 +1357,115 @@ export function Inspector() {
         <FlowSettings key={f.flow.id} />
       )}
     </aside>
+  );
+}
+
+// Improve until done: pairs with the tool step before it (runs it again with
+// changed arguments) or after it (the tool checks the AI's result).
+function ImproveInspector({ n, set, flow }) {
+  const after = n.pair === "after";
+  const partner = after
+    ? flow.edges.filter((e) => e.from === n.id).map((e) => e.to)
+    : parentsOf(flow, n.id).filter((p) => p !== "start");
+  const pn = partner.length === 1 ? flow.nodes.find((x) => x.id === partner[0]) : null;
+  const ok = pn?.type === "tool";
+  return (
+    <>
+      <Field label="Works with">
+        <div className="seg">
+          <button type="button" aria-pressed={!after} onClick={() => set("pair", "before")}>
+            The tool before it
+          </button>
+          <button type="button" aria-pressed={after} onClick={() => set("pair", "after")}>
+            The tool after it
+          </button>
+        </div>
+      </Field>
+      <p className="muted fl-builtin-desc">
+        {after
+          ? "The AI produces a result; the tool connected after this step checks it (tests, a linter, a validator). The tool's findings go back to the AI, which revises the result. Round after round, until it is done."
+          : "The tool connected into this step runs; the AI judges its result and, when it is not good enough, changes the tool's arguments (or the input it gets) and runs it again. Round after round, until it is done."}{" "}
+        {ok ? (
+          <span>
+            Paired with <b>{pn.title || pn.tool}</b>.
+          </span>
+        ) : (
+          <span className="danger-text">
+            {after ? "Connect this step to one tool step." : "Connect one tool step into this step."}
+          </span>
+        )}
+      </p>
+      <Field
+        label={after ? "What should the AI produce?" : "Instructions (optional)"}
+        hint="The flow's context and skills are added automatically."
+      >
+        <textarea
+          rows={after ? 6 : 3}
+          value={n.prompt || ""}
+          placeholder={
+            after
+              ? "e.g. Write a SQL migration that adds {{inputs.column}} to the orders table"
+              : "e.g. Prefer narrowing the date range over raising the limit"
+          }
+          {...track}
+          onChange={(e) => set("prompt", e.target.value)}
+        />
+      </Field>
+      <Field label="Done when" hint="The AI judges every round against this.">
+        <textarea
+          rows={3}
+          value={n.goal || ""}
+          placeholder={
+            after
+              ? "e.g. The check reports no errors and the migration can be rolled back"
+              : "e.g. The query returns rows, and every row has a customer id"
+          }
+          {...track}
+          onChange={(e) => set("goal", e.target.value)}
+        />
+      </Field>
+      <VarChips node={n} />
+      <div className="fl-row">
+        <Field label="At most" hint="rounds (1–20)">
+          <input
+            type="number"
+            min={1}
+            max={20}
+            value={n.rounds || 5}
+            onChange={(e) => set("rounds", Math.max(1, Math.min(20, +e.target.value || 5)))}
+          />
+        </Field>
+        <Field label="Who decides it is done">
+          <select value={n.approve || "done"} onChange={(e) => set("approve", e.target.value)}>
+            <option value="none">The AI alone</option>
+            <option value="done">The AI, then a person confirms</option>
+            <option value="each">A person, after every round</option>
+          </select>
+        </Field>
+      </div>
+      <small className="muted">
+        A person can approve the result, or send feedback for another round. Runs started with reviews off let
+        the AI decide.
+      </small>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!n.continueOnError}
+          onChange={(e) => set("continueOnError", e.target.checked)}
+        />{" "}
+        When it never gets there, go on with the last result (otherwise the step fails)
+      </label>
+      {after && <ExpectedReply n={n} set={set} />}
+      <div className="field fl-field">
+        <span className="muted">Model</span>
+        <ModelPicker value={n.model || ""} onChange={(v) => set("model", v)} label="Model" />
+      </div>
+      <small className="muted">
+        Each round the AI gets the goal, the current result and findings, and a short record of the earlier
+        rounds, not their full text, so long runs stay within its context window. Long results are cut (start
+        and end kept) and saved in the run's results folder, where the AI can read them whole.
+      </small>
+    </>
   );
 }
 

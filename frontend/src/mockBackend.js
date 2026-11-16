@@ -1557,6 +1557,40 @@ export function createMockBackend(methods) {
   }
 
   // --- flows (browser preview: a JS subset of the Go designer helpers) ---
+  // improvePartner: the tool step an Improve step runs with (flow/improve.go)
+  const improvePartner = (f, n) => {
+    const node = (id) => f.nodes.find((x) => x.id === id);
+    if (n.pair !== "after") {
+      const ps = f.edges.filter((e) => e.to === n.id).map((e) => e.from);
+      if (ps.length !== 1 || ps[0] === "start")
+        return { error: "connect exactly one tool step into it: the tool it runs again" };
+      const t = node(ps[0]);
+      if (t?.type !== "tool")
+        return { error: `the step connected into it (${t?.title || ps[0]}) must be a tool step` };
+      if (f.edges.filter((e) => e.from === t.id).length !== 1)
+        return {
+          error: `${t.title || t.id} is also connected to other steps, which would get its first result. Connect them after ${n.title || n.id} instead`,
+        };
+      return { id: t.id };
+    }
+    const cs = f.edges.filter((e) => e.from === n.id).map((e) => e.to);
+    if (!cs.length) return { error: "connect it to the tool step that checks its result" };
+    if (cs.length > 1)
+      return {
+        error:
+          "connect it to one step only: the tool that checks its result (connect the rest after that tool)",
+      };
+    const t = node(cs[0]);
+    if (t?.type !== "tool")
+      return {
+        error: `the step it is connected to (${t?.title || cs[0]}) must be a tool step that checks its result`,
+      };
+    if (f.edges.filter((e) => e.to === t.id).length !== 1)
+      return {
+        error: `${t.title || t.id} gets data from other steps too; only ${n.title || n.id} may be connected into it`,
+      };
+    return { id: t.id };
+  };
   const FLOW_OPS = {
     template: {
       name: "Fill a template",
@@ -2583,6 +2617,16 @@ export function createMockBackend(methods) {
       if (n.type === "ai") {
         if (!(n.prompt || "").trim()) add(n.id, "error", `${label} needs a prompt.`);
         check(n, label, n.prompt);
+      }
+      if (n.type === "improve") {
+        if (!(n.goal || "").trim())
+          add(n.id, "error", `${label}: say when the result is good enough (Done when).`);
+        if (n.pair === "after" && !(n.prompt || "").trim())
+          add(n.id, "error", `${label}: say what the AI should produce (the tool after it checks it).`);
+        const why = improvePartner(f, n).error;
+        if (why) add(n.id, "error", `${label}: ${why}.`);
+        check(n, label, n.prompt);
+        check(n, label + " › done when", n.goal);
       }
       if (n.type === "merge" && f.edges.filter((e) => e.to === n.id).length < 2)
         add(n.id, "warning", `${label} merges fewer than two steps.`);
@@ -3685,6 +3729,8 @@ export function createMockBackend(methods) {
         }
         case "ai":
           return ai(n.id, R(n.prompt, d) + (f.context?.text ? "\n\n## Context\n" + f.context.text : ""));
+        case "improve":
+          return improveStep(n, d);
         case "gather":
           return gatherItems(n, gathered[n.id] || [], d);
         case "merge": {
@@ -3793,6 +3839,120 @@ export function createMockBackend(methods) {
     };
     const stepOf = (nid) => st.steps.find((s) => s.id === nid);
     const gathered = {}; // a Gather's per-item results
+    const paired = {}; // an Improve step's checking tool's last result (pair after)
+    // Improve until done (browser preview): round 1 is not good enough, round 2 is
+    const improveStep = async (n, d) => {
+      const pid = improvePartner(f, n).id;
+      if (!pid) throw new Error("it is not paired with a tool step");
+      const t = f.nodes.find((x) => x.id === pid),
+        s = stepOf(n.id),
+        ts = stepOf(pid),
+        after = n.pair === "after",
+        hist = [];
+      let limit = Math.min(20, n.rounds || 5);
+      let approve = lr.noReview || o.review === "none" ? "none" : n.approve || "done";
+      const runTool = async (args, round) => {
+        Object.assign(ts, { status: "running", attempts: (ts.attempts || 0) + 1, args });
+        if (round > 1) ts.notes = [...(ts.notes || []), `Run again by ${s.title} (round ${round})`];
+        state();
+        const out = await tool(pid, t.tool, args);
+        Object.assign(ts, { status: "done", output: String(out).slice(0, 24000) });
+        return out;
+      };
+      const baseArgs = (dd) =>
+        Object.fromEntries(Object.entries(t.args || {}).map(([k, v]) => [k, R(v, dd)]));
+      let result = after ? await ai(n.id, R(n.prompt, d)) : d.steps[pid] || "";
+      let args = after ? null : { ...(ts.args || baseArgs(d)) };
+      if (after) paired[pid] = await runTool(baseArgs({ ...d, steps: { ...d.steps, [n.id]: result } }), 1);
+      let feedback = "";
+      for (let round = 1; ; round++) {
+        Object.assign(s, { iteration: round, iterations: limit });
+        state();
+        await ai(n.id, "You are improving the result, round " + round + ". Done when: " + R(n.goal || "", d));
+        const done = round >= 2 && !feedback;
+        const reason = done
+          ? "It meets the goal: " + R(n.goal || "", d).slice(0, 120)
+          : feedback
+            ? "Changing it as you asked: " + feedback.slice(0, 120)
+            : after
+              ? `${t.title || t.tool} found problems; revising the result.`
+              : "Not good enough yet; changing the arguments and running it again.";
+        const changes = done ? "" : after ? "the result" : "arguments: " + Object.keys(args || {}).join(", ");
+        feedback = "";
+        hist.push({ round, by: "ai", done, reason, changes });
+        s.rounds = [...hist];
+        pub(
+          "flow.improve",
+          `${s.title} · round ${round} of ${limit}: ${done ? "done" : "not done yet"} — ${reason}`,
+          {
+            step: n.id,
+            round,
+            rounds: limit,
+            done,
+          },
+        );
+        state();
+        const last = !done && round >= limit;
+        if (approve === "each" || (approve === "done" && (done || last))) {
+          st.status = "review";
+          st.review = {
+            step: n.id,
+            title: s.title,
+            type: "improve",
+            output: String(result).slice(0, 24000),
+            round,
+            rounds: limit,
+            verdict: done ? "done" : last ? `not done after ${round} rounds` : "not done yet",
+            reason,
+            history: [...hist],
+          };
+          s.status = "review";
+          state();
+          pub("flow.review", `Waiting for you: ${s.title}, round ${round}`, { step: n.id, node: n.id });
+          const dec = await new Promise((res) => {
+            lr.decide = res;
+          });
+          lr.decide = null;
+          st.status = "running";
+          st.review = null;
+          s.status = "running";
+          if (dec.action === "stop") throw Object.assign(new Error("stopped by you"), { stopped: true });
+          if (dec.action === "edit") return dec.output;
+          if (dec.action === "continue" || dec.action === "no-more-reviews") {
+            if (dec.action === "no-more-reviews") lr.noReview = true;
+            s.notes = [`Approved by you after round ${round}`];
+            return result;
+          }
+          const fb = (dec.prompt || "").trim();
+          if (fb) {
+            hist.push({ round, by: "person", reason: fb });
+            s.rounds = [...hist];
+            feedback = fb;
+          }
+          if (round >= limit) limit = round + 1; // one more round, asked for by a person
+          if (fb || done) continue;
+        } else {
+          if (done) return result;
+          if (last) {
+            if (n.continueOnError) return result;
+            throw new Error(`not done after ${round} rounds: ${reason}`);
+          }
+        }
+        if (after) {
+          result = "Revised: " + String(result).replace(/^Revised: /, "");
+          paired[pid] = await runTool(baseArgs({ ...d, steps: { ...d.steps, [n.id]: result } }), round + 1);
+        } else {
+          args = Object.fromEntries(
+            Object.entries(args || {}).map(([k, v]) => [
+              k,
+              String(v).replace(/ \(revised\)$/, "") + " (revised)",
+            ]),
+          );
+          result = await runTool(args, round + 1);
+          d.steps[pid] = result;
+        }
+      }
+    };
     const runStep = async (n, d) => {
       const s = stepOf(n.id),
         t = Date.now();
@@ -3831,6 +3991,7 @@ export function createMockBackend(methods) {
     const wants = (n) =>
       !lr.noReview &&
       n.type !== "start" &&
+      n.type !== "improve" && // it asks for approval itself
       (o.review === "each" ||
         (o.review === "marked"
           ? n.review
@@ -4185,6 +4346,12 @@ export function createMockBackend(methods) {
                 if (lr.stop) throw Object.assign(new Error("stopped by you"), { stopped: true });
                 const n = ln,
                   s = stepOf(nid);
+                if (nid in paired) {
+                  // the checking tool of an Improve step: it ran inside that step
+                  d.steps[nid] = paired[nid];
+                  delete paired[nid];
+                  continue;
+                }
                 const blocked = f.edges.some((e) => e.to === nid && bad.has(e.from));
                 if ((o.skip || []).includes(nid) || blocked) {
                   s.status = "skipped";

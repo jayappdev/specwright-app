@@ -2634,3 +2634,23 @@ select.fl-secret-pick {
 .ok-text {
   color: var(--ok);
 }
+
+/* Improve until done: its rounds */
+.fr-rounds {
+  margin: 6px 0 10px;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 6px;
+}
+.fr-rounds li {
+  border-left: 3px solid var(--border);
+  padding: 2px 0 2px 10px;
+  line-height: 1.45;
+}
+.fr-rounds li.is-done {
+  border-left-color: var(--ok);
+}
+.fr-rounds li.by-person {
+  border-left-color: var(--warn);
+}

@@ -245,8 +245,11 @@ func (h *Hub) runNodes(ctx context.Context, root string, fr *flowRun, ids []stri
 			}
 		}
 		blocked := ""
+		fixing := n.Type == "improve" && flow.ImprovePair(n) == "before" // it runs a failed tool again
 		for _, p := range f.Parents(id) {
-			if status[p] == "failed" {
+			ran := false // the tool ran and failed (not skipped because a step before it failed)
+			fr.update(func(st *FlowRunState) { s := fr.step(p); ran = s != nil && s.Status == "failed" })
+			if status[p] == "failed" && !(fixing && ran) {
 				blocked = "a step before it failed"
 			}
 		}
@@ -256,6 +259,17 @@ func (h *Hub) runNodes(ctx context.Context, root string, fr *flowRun, ids []stri
 			status[id] = "skipped"
 			if blocked != "" || n.Type == "loop" {
 				status[id] = "failed" // keep blocking the steps after it
+			}
+			if fixing { // the tool's result goes on as it is
+				for _, p := range f.Parents(id) {
+					d.Steps[id] = d.Steps[p]
+					if status[p] == "failed" {
+						status[id] = "failed"
+						if firstErr == nil {
+							firstErr = fmt.Errorf("%s failed, and %s, which runs it again, was skipped", firstNonEmpty(f.Node(p).Title, p), firstNonEmpty(n.Title, id))
+						}
+					}
+				}
 			}
 			h.flowState(fr)
 			continue
@@ -317,9 +331,42 @@ func (h *Hub) runNodes(ctx context.Context, root string, fr *flowRun, ids []stri
 			}
 			continue
 		}
+		partner := ""
+		if n.Type == "improve" {
+			partner, _ = f.ImprovePartner(n)
+			if flow.ImprovePair(n) == "after" {
+				handled[partner] = true // it runs inside the Improve step
+			}
+		}
 		dd := *d
 		dd.Live = live
 		out, err := h.runFlowStep(ctx, root, fr, &n, dd, item)
+		if partner != "" { // the paired tool's last run is its result
+			fr.mu.Lock()
+			pr, ok := fr.paired[partner]
+			delete(fr.paired, partner)
+			fr.mu.Unlock()
+			if ok {
+				d.Steps[partner] = pr.out
+				if p := h.flowOutputFile(fr, partner, pr.out); p != "" {
+					d.Files[partner] = p
+				}
+			}
+			status[partner] = map[bool]string{true: "failed", false: "done"}[err != nil]
+			if err == nil {
+				fr.update(func(st *FlowRunState) {
+					if s := fr.step(partner); s != nil && s.Status == "failed" {
+						s.Status = "done" // its error was the Improve step's to fix
+					}
+				})
+			} else if flow.ImprovePair(n) == "after" {
+				fr.update(func(st *FlowRunState) {
+					if s := fr.step(partner); s != nil && s.Status == "pending" {
+						s.Status, s.Error = "skipped", firstNonEmpty(n.Title, n.ID)+" failed"
+					}
+				})
+			}
+		}
 		if errors.Is(err, errFlowStopped) {
 			return err
 		}
@@ -337,7 +384,7 @@ func (h *Hub) runNodes(ctx context.Context, root string, fr *flowRun, ids []stri
 		}
 		if err != nil {
 			status[id] = "failed"
-			if firstErr == nil {
+			if firstErr == nil && !fixedNext(f, id) {
 				firstErr = fmt.Errorf("%s failed: %v", firstNonEmpty(n.Title, n.ID), err)
 			}
 			continue
@@ -519,8 +566,19 @@ func (h *Hub) runLoop(ctx context.Context, root string, fr *flowRun, n *flow.Nod
 	return nil
 }
 
+// fixedNext: the step after id is an Improve step that runs it again, so
+// its failure is that step's to fix (it fails if it cannot).
+func fixedNext(f *flow.Flow, id string) bool {
+	cs := f.Children(id)
+	if len(cs) != 1 {
+		return false
+	}
+	c := f.Node(cs[0])
+	return c != nil && c.Type == "improve" && flow.ImprovePair(*c) == "before"
+}
+
 func (h *Hub) wantsReview(fr *flowRun, n *flow.Node, inLoop bool) bool {
-	if fr.noReview || n.Type == "start" || n.Type == "gather" {
+	if fr.noReview || n.Type == "start" || n.Type == "gather" || n.Type == "improve" { // an Improve step asks for approval itself
 		return false
 	}
 	if inLoop && fr.st.Options.Review != "each" { // once per item would be too many: only marked steps

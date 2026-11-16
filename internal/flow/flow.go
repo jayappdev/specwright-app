@@ -62,7 +62,7 @@ func (f *Flow) EstimatedMinutes() int {
 		switch n.Type {
 		case "tool":
 			m += 10
-		case "ai":
+		case "ai", "improve":
 			m += 20
 		case "merge", "transform", "loop", "gather":
 			m += 5
@@ -177,7 +177,7 @@ type Skill struct {
 // Node is one step on the canvas.
 type Node struct {
 	ID    string  `json:"id"`
-	Type  string  `json:"type"` // start | tool | ai | merge | transform | loop | gather | decision | filter | aggregate | output
+	Type  string  `json:"type"` // start | tool | ai | improve | merge | transform | loop | gather | decision | filter | aggregate | output
 	Title string  `json:"title,omitempty"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
@@ -201,6 +201,13 @@ type Node struct {
 	// designer shows it to the steps after it, and the agent is asked to
 	// reply in that shape (the only shape metadata the AI is sent).
 	OutputSchema *Schema `json:"outputSchema,omitempty"`
+
+	// improve (see improve.go; Prompt, Model and OutputSchema as for ai,
+	// ContinueOnError: keep the last result when it never gets there)
+	Pair    string `json:"pair,omitempty"`    // before | after: the tool step it runs with
+	Goal    string `json:"goal,omitempty"`    // when the result is good enough
+	Rounds  int    `json:"rounds,omitempty"`  // at most this many rounds (0: DefaultImproveRounds)
+	Approve string `json:"approve,omitempty"` // none | done | each: when a person confirms
 
 	// merge
 	Mode      string `json:"mode,omitempty"`      // concat | json-object | json-array | template
@@ -259,7 +266,7 @@ type Edge struct {
 
 // NodeTypes, transform operations, merge modes and output formats.
 var (
-	NodeTypes   = []string{"start", "tool", "ai", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
+	NodeTypes   = []string{"start", "tool", "ai", "improve", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
 	MergeModes  = []string{"concat", "json-object", "json-array", "template"}
 	Formats     = []string{"md", "txt", "html", "csv", "json"}
 	InputTypes  = []string{"text", "multiline", "secret", "number", "boolean", "choice", "multichoice", "file", "files", "clipboard"}
@@ -624,6 +631,10 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				add(n.ID, "error", "%s needs a prompt.", label(n))
 			}
 			checkVars(n, label(n), n.Prompt)
+		case "improve":
+			f.checkImprove(n, add)
+			checkVars(n, label(n), n.Prompt)
+			checkVars(n, label(n)+" › done when", n.Goal)
 		case "merge":
 			if !contains(MergeModes, n.Mode) {
 				add(n.ID, "error", "%s: choose how to merge.", label(n))
@@ -791,8 +802,8 @@ func secretIssues(f *Flow) []Issue {
 	}
 	for _, n := range f.Nodes {
 		switch n.Type {
-		case "ai":
-			if s := uses(n.Prompt); s != "" {
+		case "ai", "improve":
+			if s := uses(n.Prompt + " " + n.Goal); s != "" {
 				is = append(is, Issue{Node: n.ID, Level: "warning", Message: fmt.Sprintf("%s sends the secret %q to the AI model. Give secrets to tools instead.", label(n), s)})
 			}
 		case "tool":
