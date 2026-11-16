@@ -128,6 +128,7 @@ const METHODS = [
   "PickCAFile",
   "FlowCommands",
   "ApproveFlowCommands",
+  "SetCopilotWeb",
 ];
 
 function wailsBackend() {

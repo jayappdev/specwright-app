@@ -119,6 +119,7 @@ async function boot() {
   if (S.setup.done && S.setup.provider && S.setup.provider !== "skipped") {
     // the chosen agent is a UI preference; any token was session-only
     await backend.SetAgent(S.setup.provider, "", S.setup.model || "").catch(() => {});
+    if (S.setup.copilotWeb) await backend.SetCopilotWeb(S.setup.copilotWeb).catch(() => {});
   }
   update();
   // the dev server's open folder wins (the remembered one may be the mock's)

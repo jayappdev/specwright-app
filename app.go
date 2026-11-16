@@ -6,6 +6,7 @@ import (
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"codegen/internal/agent"
 	"codegen/internal/bus"
 	"codegen/internal/core"
 	"codegen/internal/extension"
@@ -65,6 +66,9 @@ func (a *App) Info() core.Info                            { return val(a.hub.Inf
 func (a *App) DetectCredentials() []core.CredentialSource { return val(a.hub.DetectCredentials()) }
 func (a *App) SetAgent(name, token, model string) error   { return a.hub.SetAgent(name, token, model) }
 func (a *App) ClearToken()                                { a.hub.ClearToken() }
+
+// SetCopilotWeb sets which web pages Copilot may open in runs.
+func (a *App) SetCopilotWeb(w agent.WebAccess) error { return a.hub.SetCopilotWeb(w) }
 
 // --- workspace -----------------------------------------------------------
 

@@ -4434,6 +4434,12 @@ export function createMockBackend(methods) {
         },
       ];
     },
+    async SetCopilotWeb(w) {
+      if (w?.mode === "sites" && !(w.sites || []).length)
+        throw new Error("name at least one site, or choose no web access");
+      db.copilotWeb = w;
+      persist();
+    },
     async SetAgent(name, token) {
       if (!["claude", "copilot", "mock"].includes(name)) throw new Error(`unknown agent "${name}"`);
       if (name === "copilot" && token?.startsWith("ghp_"))

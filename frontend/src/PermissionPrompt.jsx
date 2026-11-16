@@ -10,13 +10,13 @@ import { Icon } from "./ui.jsx";
 import { CopyButton } from "./CopyButton.jsx";
 
 const KIND = [
-  [/^(Bash|run_command|.*shell.*)$/i, "run a command", "warn"],
+  [/^(Bash|run_command|.*shell.*|powershell)$/i, "run a command", "warn"],
   [
-    /^(Write|Edit|MultiEdit|NotebookEdit|create_file|edit_file|delete_path|move_path)$/i,
+    /^(Write|Edit|MultiEdit|NotebookEdit|create_file|edit_file|delete_path|move_path|write|create|edit)$/i,
     "change files",
     "warn",
   ],
-  [/^(WebFetch|WebSearch|fetch_webpage)$/i, "use the web", "info"],
+  [/^(WebFetch|WebSearch|fetch_webpage|web_fetch|url)$/i, "use the web", "info"],
   [/^mcp__/i, "use a connected tool", "info"],
 ];
 const kindOf = (tool) => KIND.find(([re]) => re.test(tool)) || [null, "use a tool", "info"];

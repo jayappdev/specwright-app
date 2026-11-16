@@ -47,9 +47,9 @@ func (h *Hub) DetectCredentials() []CredentialSource {
 	var out []CredentialSource
 
 	f, who := env("COPILOT_GITHUB_TOKEN")
-	out = append(out, CredentialSource{ID: "env-copilot", Provider: "copilot", Label: "COPILOT_GITHUB_TOKEN", Where: "environment variable", Found: f, Who: who})
+	out = append(out, CredentialSource{ID: "env-copilot", Provider: "copilot", Label: "COPILOT_GITHUB_TOKEN", Where: "environment variable", Found: f, Who: who, Warn: classicWarn("COPILOT_GITHUB_TOKEN")})
 	f, who = env("GH_TOKEN", "GITHUB_TOKEN")
-	out = append(out, CredentialSource{ID: "env-gh", Provider: "copilot", Label: "GH_TOKEN / GITHUB_TOKEN", Where: "environment variable", Found: f, Who: who})
+	out = append(out, CredentialSource{ID: "env-gh", Provider: "copilot", Label: "GH_TOKEN / GITHUB_TOKEN", Where: "environment variable", Found: f, Who: who, Warn: classicWarn("GH_TOKEN", "GITHUB_TOKEN")})
 	cp := filepath.Join(home, ".copilot", "config.json")
 	out = append(out, CredentialSource{ID: "copilot-cli", Provider: "copilot", Label: "Copilot CLI login", Where: "~/.copilot/config.json · keychain", Found: exists(cp), Who: map[bool]string{true: "signed in with `copilot`"}[exists(cp)]})
 	gh := CredentialSource{ID: "gh-cli", Provider: "copilot", Label: "GitHub CLI", Where: "gh auth token · github.com"}
@@ -416,4 +416,20 @@ func (h *Hub) Compile() (BuildResult, error) {
 	}
 	h.Bus.Publish(bus.Event{Type: "build.end", Summary: map[bool]string{true: "ok", false: "failed"}[res.OK], Data: map[string]any{"ok": res.OK}})
 	return res, nil
+}
+
+// classicWarn explains what happens with a classic GitHub token (ghp_…) in
+// these variables: the Copilot CLI rejects it, and it would win over the
+// `copilot` login, so SpecWright leaves it out when it starts Copilot.
+func classicWarn(names ...string) string {
+	var classic []string
+	for _, n := range names {
+		if strings.HasPrefix(strings.TrimSpace(os.Getenv(n)), "ghp_") {
+			classic = append(classic, n)
+		}
+	}
+	if len(classic) == 0 {
+		return ""
+	}
+	return strings.Join(classic, " and ") + " holds a classic token (ghp_…), which the Copilot CLI rejects. SpecWright leaves it out when it starts Copilot, so Copilot uses your `copilot` login or a fine-grained token (github_pat_…) pasted here."
 }

@@ -1,3 +1,4 @@
+import { useState } from "react";
 import { backend } from "../backend.js";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { S, update } from "../store.js";
@@ -396,7 +397,95 @@ export function Appearance() {
             </div>
           </div>
         )}
+        {tab === "agent" && <CopilotWeb />}
       </div>
     </section>
+  );
+}
+
+// Copilot runs without a person at the keyboard, so it cannot ask before it
+// opens a web page: a page that is not allowed here is refused. (Claude asks
+// in the app instead.) Kept with the app preferences and sent at start.
+function CopilotWeb() {
+  const w = S.setup.copilotWeb || { mode: "none", sites: [] };
+  const [mode, setMode] = useState(w.mode || "none"); // shown; saved once valid
+  const [sites, setSites] = useState((w.sites || []).join("\n"));
+  const [err, setErr] = useState("");
+  const list = () =>
+    sites
+      .split("\n")
+      .map((x) => x.trim())
+      .filter(Boolean);
+  const apply = async (m, l) => {
+    const next = { mode: m, sites: m === "sites" ? l : [] };
+    try {
+      await backend.SetCopilotWeb(next);
+      S.setup = { ...S.setup, copilotWeb: next };
+      setErr("");
+      update();
+    } catch (e) {
+      setErr(String(e?.message || e));
+    }
+  };
+  const choose = (m) => {
+    setMode(m);
+    setErr("");
+    // "only these sites" is saved once there is at least one site
+    if (m !== "sites" || list().length) apply(m, list());
+  };
+  const saved = w.mode || "none";
+  return (
+    <div className="card">
+      <h3>Web pages for Copilot</h3>
+      <p className="muted" style={{ margin: "0 0 8px" }}>
+        Copilot runs unattended, so it cannot ask before opening a web page: pages not allowed here are
+        refused. Claude asks you in the app instead.
+      </p>
+      <div className="seg" role="group" aria-label="Web pages Copilot may open">
+        {[
+          ["none", "None"],
+          ["sites", "Only these sites"],
+          ["all", "Any site"],
+        ].map(([m, l]) => (
+          <button key={m} type="button" aria-pressed={mode === m} onClick={() => choose(m)}>
+            {l}
+          </button>
+        ))}
+      </div>
+      {mode === "sites" && (
+        <label className="field" style={{ marginTop: 10 }}>
+          <span className="muted">
+            One domain or address per line, e.g. docs.github.com or https://*.npmjs.com
+          </span>
+          <textarea
+            rows={4}
+            value={sites}
+            aria-invalid={!!err || undefined}
+            onChange={(e) => setSites(e.target.value)}
+            onBlur={() => list().length && apply("sites", list())}
+          />
+          {saved !== "sites" && !err && <small className="muted">Not saved yet: add a site.</small>}
+        </label>
+      )}
+      {mode === "sites" && (
+        <div className="row-actions">
+          <button
+            type="button"
+            className="btn secondary"
+            disabled={!list().length}
+            onClick={() => apply("sites", list())}
+          >
+            Save sites
+          </button>
+          {saved === "sites" && <span className="muted">{(w.sites || []).length} site(s) allowed</span>}
+        </div>
+      )}
+      {err && <small className="field-error">{err}</small>}
+      {mode === "all" && (
+        <p className="muted" style={{ marginTop: 8 }}>
+          A page can contain instructions aimed at the AI; allow only sites you trust if you can.
+        </p>
+      )}
+    </div>
   );
 }

@@ -211,6 +211,49 @@ func (h *Hub) SetAgent(name, token, model string) error {
 	return nil
 }
 
+// SetCopilotWeb sets which web pages Copilot may open in runs ("none",
+// "sites" with a list of domains or https URLs, or "all"). Copilot runs
+// without a person at the keyboard, so a page it may not open is denied.
+func (h *Hub) SetCopilotWeb(w agent.WebAccess) error {
+	switch w.Mode {
+	case "", "none":
+		w = agent.WebAccess{Mode: "none"}
+	case "all":
+		w.Sites = nil
+	case "sites":
+		var sites []string
+		for _, s := range w.Sites {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			if strings.ContainsAny(s, " \t\n,;") {
+				return fmt.Errorf("%q: give one domain or URL per line", s)
+			}
+			if strings.Contains(s, "://") && !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "http://") {
+				return fmt.Errorf("%q: only http and https addresses", s)
+			}
+			sites = append(sites, s)
+		}
+		if len(sites) == 0 {
+			return errors.New("name at least one site, or choose no web access")
+		}
+		w.Sites = sites
+	default:
+		return fmt.Errorf("unknown web access %q", w.Mode)
+	}
+	d, err := h.Agents.Get("copilot")
+	if err != nil {
+		return err
+	}
+	cp, ok := d.(*agent.Copilot)
+	if !ok {
+		return errors.New("the Copilot driver cannot take web settings")
+	}
+	cp.SetWeb(w)
+	return nil
+}
+
 // ClearToken forgets the session token.
 func (h *Hub) ClearToken() { h.mu.Lock(); h.token = ""; h.mu.Unlock() }
 
