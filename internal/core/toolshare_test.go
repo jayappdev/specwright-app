@@ -18,10 +18,11 @@ func TestToolExportImport(t *testing.T) {
 		t.Fatal(err)
 	}
 	src.SetToolTags("greet", []string{"demo"})
-	file, err := src.ExportTools([]string{"greet"})
+	exp, err := src.ExportTools([]string{"greet"}, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
+	file := exp.File
 	for _, leak := range []string{"approved", "hash", "lastTest"} {
 		if strings.Contains(file, `"`+leak+`"`) {
 			t.Errorf("the file carries %q", leak)
@@ -32,7 +33,8 @@ func TestToolExportImport(t *testing.T) {
 	}
 
 	dst, _ := newHub(t)
-	items, err := dst.PreviewToolImport(file)
+	pv, err := dst.PreviewToolImport(file)
+	items := pv.Tools
 	if err != nil || len(items) != 1 || items[0].Exists || items[0].Tool.Script == "" {
 		t.Fatalf("preview: %+v %v", items, err)
 	}
@@ -48,7 +50,8 @@ func TestToolExportImport(t *testing.T) {
 		t.Fatal("tags not imported")
 	}
 	// importing again: the name is taken; default skips, copy renames, replace overwrites
-	items, _ = dst.PreviewToolImport(file)
+	pv, _ = dst.PreviewToolImport(file)
+	items = pv.Tools
 	if !items[0].Exists || items[0].Suggest != "greet-2" {
 		t.Fatalf("second preview: %+v", items[0])
 	}

@@ -18,12 +18,14 @@ const exportable = () =>
     (t) => (t.kind || "script") === "script" && t.scope !== "managed" && !t.managed,
   );
 
-export async function exportTools(names) {
-  if (!names.length) return toast("Choose at least one tool to export.", "error");
+export async function exportTools(names, exts = []) {
+  if (!names.length && !exts.length) return toast("Choose at least one tool to export.", "error");
   try {
-    const file = await backend.ExportTools(names);
-    const name = names.length === 1 ? `${names[0]}.tools.json` : `tools-${names.length}.tools.json`;
-    await saveText(name, file, "application/json");
+    const res = await backend.ExportTools(names, exts);
+    const n = names.length + exts.length;
+    const name = n === 1 ? `${names[0] || exts[0].split("/")[1]}.tools.json` : `tools-${n}.tools.json`;
+    await saveText(name, res.file, "application/json");
+    for (const w of res.warnings || []) toast(w, "error");
   } catch (e) {
     toast(errMsg(e), "error");
   }
@@ -36,12 +38,16 @@ export function ShareMenu() {
   const pick = async (file) => {
     try {
       const data = await file.text();
-      const items = await backend.PreviewToolImport(data);
+      const pv = await backend.PreviewToolImport(data);
+      const items = pv.tools || [],
+        extItems = pv.extensions || [];
       const actions = {};
       for (const it of items) actions[it.tool.name] = it.exists || it.managed ? "skip" : "import";
+      for (const x of extItems) actions["ext:" + x.name] = x.exists ? "skip" : "import";
       Object.assign(s, {
         mode: "import",
         items,
+        extItems,
         actions,
         data,
         copyNames: Object.fromEntries(items.map((it) => [it.tool.name, it.suggest || ""])),
@@ -58,8 +64,10 @@ export function ShareMenu() {
         items={[
           [
             "Export tools…",
-            () => {
-              Object.assign(s, { mode: "export", names: [] });
+            async () => {
+              Object.assign(s, { mode: "export", names: [], exts: [], extList: null });
+              update();
+              s.extList = (await backend.CopilotExtensions?.().catch(() => [])) || [];
               update();
             },
           ],
@@ -112,10 +120,11 @@ function ExportBody({ close }) {
         <h3 id="share-title">Export tools</h3>
       </div>
       <p className="wf-desc">
-        The file holds each tool's description, parameters, script, command, dependencies and tags, and the
-        names of the secrets it needs — never their values. Whoever imports it has to approve each tool.
+        The file holds each tool's description, parameters, script, command, dependencies and tags, the other
+        files of a tool's folder, and the names of the secrets it needs — never their values. Installed
+        packages are left out. Whoever imports it has to approve each tool.
       </p>
-      {list.length ? (
+      {list.length || (s.extList || []).length ? (
         <>
           <div className="row-actions">
             <button
@@ -147,10 +156,46 @@ function ExportBody({ close }) {
                     onChange={(e) => toggle(t.name, e.target.checked)}
                   />
                   <b>{t.name}</b> <span className="muted">{t.desc}</span>
+                  {t.dir && <span className="badge">folder</span>}
                 </label>
               </li>
             ))}
           </ul>
+          {(s.extList || []).length > 0 && (
+            <>
+              <h4 style={{ margin: "8px 0 0" }}>Copilot extensions</h4>
+              <ul className="share-list">
+                {s.extList.map((x) => {
+                  const id = x.source + "/" + x.name;
+                  return (
+                    <li key={id}>
+                      <label className="check">
+                        <input
+                          type="checkbox"
+                          checked={(s.exts || []).includes(id)}
+                          onChange={(e) => {
+                            s.exts = e.target.checked
+                              ? [...new Set([...(s.exts || []), id])]
+                              : s.exts.filter((v) => v !== id);
+                            update();
+                          }}
+                        />
+                        <b>{x.name}</b>{" "}
+                        <span className="badge">{x.source === "user" ? "yours" : "this project"}</span>{" "}
+                        <span className="muted">
+                          {(x.tools || []).map((t) => t.name).join(", ") || x.desc} · {(x.files || []).length}{" "}
+                          file(s)
+                        </span>
+                      </label>
+                    </li>
+                  );
+                })}
+              </ul>
+              <p className="muted">
+                Extensions go as their whole folder, without node_modules (installed again when approved).
+              </p>
+            </>
+          )}
         </>
       ) : (
         <p className="muted">
@@ -161,13 +206,14 @@ function ExportBody({ close }) {
       <div className="row-actions">
         <button
           className="btn primary"
-          disabled={!s.names.length}
+          disabled={!s.names.length && !(s.exts || []).length}
           onClick={async () => {
-            await exportTools(s.names);
+            await exportTools(s.names, s.exts || []);
             close();
           }}
         >
-          Export {s.names.length || ""} tool{s.names.length === 1 ? "" : "s"}
+          Export {s.names.length + (s.exts || []).length || ""} item
+          {s.names.length + (s.exts || []).length === 1 ? "" : "s"}
         </button>
         <button className="btn secondary" onClick={close}>
           Cancel
@@ -180,8 +226,11 @@ function ExportBody({ close }) {
 function ImportBody({ close }) {
   const s = share(),
     [open, setOpen] = useState({});
-  const items = s.items || [];
-  const n = items.filter((it) => s.actions[it.tool.name] !== "skip").length;
+  const items = s.items || [],
+    exts = s.extItems || [];
+  const n =
+    items.filter((it) => s.actions[it.tool.name] !== "skip").length +
+    exts.filter((x) => s.actions["ext:" + x.name] !== "skip").length;
   const act = (name, v) => {
     s.actions[name] = v;
     update();
@@ -192,13 +241,15 @@ function ImportBody({ close }) {
       const a = s.actions[it.tool.name];
       actions[it.tool.name] = a === "copy" ? "copy:" + (s.copyNames[it.tool.name] || "").trim() : a;
     }
+    for (const x of exts) actions["ext:" + x.name] = s.actions["ext:" + x.name];
     s.busy = true;
     update();
     try {
       const res = await backend.ImportTools(s.data, actions);
       await refreshExtensions();
+      import("../CopilotExts.jsx").then((m) => m.loadCopilotExts?.(true)).catch(() => {});
       toast(
-        `Imported ${res.imported?.length || 0} tool(s); each needs your approval before agents can use it.` +
+        `Imported ${res.imported?.length || 0} item(s); each needs your approval before agents can use it.` +
           (res.notes?.length ? " " + res.notes.join(". ") + "." : ""),
       );
       close();
@@ -214,6 +265,7 @@ function ImportBody({ close }) {
         <Icon.warn />
         <h3 id="share-title">
           Import {items.length} tool{items.length === 1 ? "" : "s"}
+          {exts.length ? ` and ${exts.length} Copilot extension${exts.length === 1 ? "" : "s"}` : ""}
         </h3>
       </div>
       <p className="wf-desc">
@@ -271,7 +323,7 @@ function ImportBody({ close }) {
               <button
                 className="link"
                 aria-expanded={!!open[t.name]}
-                onClick={() => setOpen({ ...open, [t.name]: !open[t.name] })}
+                onClick={() => setOpen((o) => ({ ...o, [t.name]: !o[t.name] }))}
               >
                 {open[t.name] ? "Hide" : "Show"} the command and script
               </button>
@@ -280,6 +332,50 @@ function ImportBody({ close }) {
                   <pre className="code share-code">$ {t.command}</pre>
                   {t.script && <pre className="code share-code">{t.script}</pre>}
                   {t.deps?.length > 0 && <pre className="code share-code">{t.deps.join("\n")}</pre>}
+                  {it.files?.length > 0 && (
+                    <small className="muted">Other files of its folder: {it.files.join(", ")}</small>
+                  )}
+                </>
+              )}
+            </li>
+          );
+        })}
+        {exts.map((x) => {
+          const k = "ext:" + x.name,
+            a = s.actions[k];
+          return (
+            <li key={k} className={a === "skip" ? "skipped" : ""}>
+              <div className="share-row">
+                <div className="grow">
+                  <b>{x.name}</b> <span className="badge">Copilot extension</span>
+                  {x.exists && <span className="badge badge-warn">already in this project</span>}
+                  <div className="muted">{x.desc}</div>
+                  <small className="muted">
+                    {x.tools?.length ? `adds ${x.tools.join(", ")} · ` : ""}
+                    {x.files.length} file(s) → .github/extensions/{x.name}/
+                  </small>
+                </div>
+                <select
+                  value={a}
+                  aria-label={`What to do with ${x.name}`}
+                  onChange={(e) => act(k, e.target.value)}
+                >
+                  {!x.exists && <option value="import">Import</option>}
+                  {x.exists && <option value="replace">Replace mine</option>}
+                  <option value="skip">Skip</option>
+                </select>
+              </div>
+              <button
+                className="link"
+                aria-expanded={!!open[k]}
+                onClick={() => setOpen((o) => ({ ...o, [k]: !o[k] }))}
+              >
+                {open[k] ? "Hide" : "Show"} its files and entry script
+              </button>
+              {open[k] && (
+                <>
+                  <small className="muted">{x.files.join(", ")}</small>
+                  {x.entry && <pre className="code share-code">{x.entry}</pre>}
                 </>
               )}
             </li>
@@ -288,7 +384,7 @@ function ImportBody({ close }) {
       </ul>
       <div className="row-actions">
         <button className="btn primary" disabled={!n || s.busy} onClick={run}>
-          {s.busy ? "Importing…" : `Import ${n} tool${n === 1 ? "" : "s"}`}
+          {s.busy ? "Importing…" : `Import ${n} item${n === 1 ? "" : "s"}`}
         </button>
         <button className="btn secondary" onClick={close}>
           Cancel

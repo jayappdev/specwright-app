@@ -39,6 +39,8 @@ type ToolBundle struct {
 	Version  int           `json:"version"`
 	Exported time.Time     `json:"exported"`
 	Tools    []BundledTool `json:"tools"`
+	// Copilot extension folders (each adds its own tools once approved)
+	Extensions []BundledExt `json:"extensions,omitempty"`
 }
 
 // BundledTool is one tool in a ToolBundle.
@@ -56,6 +58,9 @@ type BundledTool struct {
 	OutputBy map[string]map[string]*flow.Schema `json:"outputBy,omitempty"`
 	Prompt   string                             `json:"prompt,omitempty"` // what it was asked to do, when the AI wrote it
 	Tags     []string                           `json:"tags,omitempty"`
+	// Files of a tool with its own folder (helpers, templates, data, lock
+	// files), relative to the folder → base64; the entry script is Script.
+	Files map[string]string `json:"files,omitempty"`
 }
 
 // Exportable reports why e cannot be exported ("" when it can).
@@ -91,45 +96,82 @@ func Bundle(root string, e Extension, tags []string) (BundledTool, error) {
 			}
 		}
 	}
-	return BundledTool{Name: e.Name, Desc: e.Desc, Lang: e.Lang, Params: e.Params, Secrets: e.Secrets, Perms: e.Perms,
-		Command: e.Command, Script: script, Deps: e.Deps, Output: e.Output, OutputBy: e.OutputBy, Prompt: e.Prompt, Tags: tags}, nil
+	t := BundledTool{Name: e.Name, Desc: e.Desc, Lang: e.Lang, Params: e.Params, Secrets: e.Secrets, Perms: e.Perms,
+		Command: e.Command, Script: script, Deps: e.Deps, Output: e.Output, OutputBy: e.OutputBy, Prompt: e.Prompt, Tags: tags}
+	if e.Dir != "" {
+		files, err := folderFiles(filepath.Join(root, filepath.FromSlash(e.Dir)), EntryFile(e.Lang))
+		if err != nil {
+			return t, fmt.Errorf("%s: %v", e.Name, err)
+		}
+		if len(files) > 0 {
+			t.Files = files
+		}
+	}
+	return t, nil
 }
 
-// MarshalBundle writes tools as a tool file.
-func MarshalBundle(tools []BundledTool) (string, error) {
-	b, err := json.MarshalIndent(ToolBundle{Format: ToolBundleFormat, Version: 1, Exported: time.Now().UTC().Truncate(time.Second), Tools: tools}, "", "  ")
+// MarshalBundle writes tools (and Copilot extension folders) as a tool file.
+func MarshalBundle(tools []BundledTool, exts ...BundledExt) (string, error) {
+	b, err := json.MarshalIndent(ToolBundle{Format: ToolBundleFormat, Version: 1, Exported: time.Now().UTC().Truncate(time.Second), Tools: tools, Extensions: exts}, "", "  ")
 	return string(b), err
 }
 
 // ParseBundle reads a tool file and checks every tool in it.
 func ParseBundle(data string) ([]BundledTool, error) {
+	b, err := ParseToolFile(data)
+	return b.Tools, err
+}
+
+// ParseToolFile reads a tool file and checks every tool and extension in it.
+func ParseToolFile(data string) (ToolBundle, error) {
+	b, err := parseToolFile(data)
+	if err != nil {
+		return ToolBundle{}, err
+	}
+	seen := map[string]bool{}
+	for _, x := range b.Extensions {
+		if err := ValidCopilotExtName(x.Name); err != nil {
+			return ToolBundle{}, err
+		}
+		if seen[x.Name] {
+			return ToolBundle{}, fmt.Errorf("the file has two extensions named %s", x.Name)
+		}
+		seen[x.Name] = true
+		if err := checkFiles(x.Files); err != nil {
+			return ToolBundle{}, fmt.Errorf("extension %s: %v", x.Name, err)
+		}
+	}
+	return b, nil
+}
+
+func parseToolFile(data string) (ToolBundle, error) {
 	var b ToolBundle
 	if err := json.Unmarshal([]byte(data), &b); err != nil {
-		return nil, fmt.Errorf("not a tool file: %v", err)
+		return ToolBundle{}, fmt.Errorf("not a tool file: %v", err)
 	}
 	if b.Format != ToolBundleFormat {
-		return nil, errors.New("not a SpecWright tool file (format " + fmt.Sprintf("%q", b.Format) + ")")
+		return ToolBundle{}, errors.New("not a SpecWright tool file (format " + fmt.Sprintf("%q", b.Format) + ")")
 	}
 	if b.Version > 1 {
-		return nil, fmt.Errorf("this tool file is version %d; update SpecWright to import it", b.Version)
+		return ToolBundle{}, fmt.Errorf("this tool file is version %d; update SpecWright to import it", b.Version)
 	}
-	if len(b.Tools) == 0 {
-		return nil, errors.New("the file has no tools")
+	if len(b.Tools) == 0 && len(b.Extensions) == 0 {
+		return ToolBundle{}, errors.New("the file has no tools")
 	}
 	if len(b.Tools) > maxBundleTools {
-		return nil, fmt.Errorf("the file has %d tools; at most %d can be imported at once", len(b.Tools), maxBundleTools)
+		return ToolBundle{}, fmt.Errorf("the file has %d tools; at most %d can be imported at once", len(b.Tools), maxBundleTools)
 	}
 	seen := map[string]bool{}
 	for i, t := range b.Tools {
 		if err := t.check(); err != nil {
-			return nil, fmt.Errorf("tool %d (%s): %v", i+1, t.Name, err)
+			return ToolBundle{}, fmt.Errorf("tool %d (%s): %v", i+1, t.Name, err)
 		}
 		if seen[t.Name] {
-			return nil, fmt.Errorf("the file has two tools named %s", t.Name)
+			return ToolBundle{}, fmt.Errorf("the file has two tools named %s", t.Name)
 		}
 		seen[t.Name] = true
 	}
-	return b.Tools, nil
+	return b, nil
 }
 
 func (t BundledTool) check() error {
@@ -140,6 +182,9 @@ func (t BundledTool) check() error {
 		return errors.New("it has neither a command nor a script")
 	case len(t.Script) > maxScript:
 		return fmt.Errorf("its script is larger than %d MB", maxScript>>20)
+	}
+	if err := checkFiles(t.Files); err != nil {
+		return err
 	}
 	for _, s := range t.Secrets {
 		if strings.TrimSpace(s.Name) == "" {

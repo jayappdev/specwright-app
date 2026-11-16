@@ -68,10 +68,12 @@ func (a *App) SetAgent(name, token, model string) error   { return a.hub.SetAgen
 func (a *App) ClearToken()                                { a.hub.ClearToken() }
 
 // ExportTools returns a tool file (*.tools.json) with the named tools.
-func (a *App) ExportTools(names []string) (string, error) { return ok(a.hub.ExportTools(names)) }
+func (a *App) ExportTools(names, exts []string) (core.ToolExport, error) {
+	return ok(a.hub.ExportTools(names, exts))
+}
 
 // PreviewToolImport lists the tools in a tool file for review before importing.
-func (a *App) PreviewToolImport(data string) ([]core.ToolImportItem, error) {
+func (a *App) PreviewToolImport(data string) (core.ToolImportPreview, error) {
 	return ok(a.hub.PreviewToolImport(data))
 }
 

@@ -1,33 +1,72 @@
 package core
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"slices"
+	"sort"
 	"strings"
 
 	"codegen/internal/extension"
 	"codegen/internal/flow"
 )
 
-// ExportTools returns a tool file with the named tools of this project.
-func (h *Hub) ExportTools(names []string) (string, error) {
-	if _, err := h.need(); err != nil {
-		return "", err
+// ToolExport is an exported tool file and what the user should know about it.
+type ToolExport struct {
+	File     string   `json:"file"`
+	Warnings []string `json:"warnings,omitempty"`
+}
+
+// ExportTools returns a tool file with the named tools of this project and
+// Copilot extension folders (exts: "project/<name>" or "user/<name>").
+// Warnings name files a tool's command uses that are not part of the tool.
+func (h *Hub) ExportTools(names, exts []string) (ToolExport, error) {
+	root, err := h.need()
+	if err != nil {
+		return ToolExport{}, err
 	}
-	if len(names) == 0 {
-		return "", errors.New("choose at least one tool to export")
+	if len(names) == 0 && len(exts) == 0 {
+		return ToolExport{}, errors.New("choose at least one tool to export")
 	}
+	var res ToolExport
 	var out []extension.BundledTool
 	for _, n := range names {
 		t, err := h.bundleTool(n)
 		if err != nil {
-			return "", err
+			return ToolExport{}, err
 		}
 		out = append(out, t)
+		if e, err := h.exts.Get(n); err == nil {
+			if files := extension.OutsideFiles(root, e); len(files) > 0 {
+				res.Warnings = append(res.Warnings, fmt.Sprintf("%s's command uses %s, which is not part of the tool and is not in the file; the project that imports it needs the same file", n, strings.Join(files, ", ")))
+			}
+		}
 	}
-	return extension.MarshalBundle(out)
+	var bx []extension.BundledExt
+	all := extension.ListCopilotExts(root)
+	for _, id := range exts {
+		src, name, _ := strings.Cut(id, "/")
+		var found *extension.CopilotExt
+		for i := range all {
+			if all[i].Source == src && all[i].Name == name {
+				found = &all[i]
+			}
+		}
+		if found == nil {
+			return ToolExport{}, fmt.Errorf("no Copilot extension %s", id)
+		}
+		x, err := extension.BundleCopilotExt(*found)
+		if err != nil {
+			return ToolExport{}, err
+		}
+		bx = append(bx, x)
+	}
+	res.File, err = extension.MarshalBundle(out, bx...)
+	return res, err
 }
 
 func (h *Hub) bundleTool(name string) (extension.BundledTool, error) {
@@ -46,31 +85,76 @@ type ToolImportItem struct {
 	Tool extension.BundledTool `json:"tool"`
 	// Exists: this project already has a tool with this name; Managed: the
 	// name is an admin-managed tool (it can only be imported under a new name)
-	Exists  bool   `json:"exists"`
-	Managed bool   `json:"managed"`
-	Suggest string `json:"suggest"` // a free name for "import as a copy"
+	Exists  bool     `json:"exists"`
+	Managed bool     `json:"managed"`
+	Suggest string   `json:"suggest"`         // a free name for "import as a copy"
+	Files   []string `json:"files,omitempty"` // the tool folder's own files that come with it
 }
 
-// PreviewToolImport reads a tool file and lists its tools with what would
-// happen to each, so the user can review the scripts before importing.
-func (h *Hub) PreviewToolImport(data string) ([]ToolImportItem, error) {
-	if _, err := h.need(); err != nil {
-		return nil, err
-	}
-	tools, err := extension.ParseBundle(data)
+// ExtImportItem is one Copilot extension folder of a file being imported.
+type ExtImportItem struct {
+	Name   string   `json:"name"`
+	Desc   string   `json:"desc,omitempty"`
+	Tools  []string `json:"tools,omitempty"`
+	Files  []string `json:"files"`
+	Entry  string   `json:"entry,omitempty"` // its extension.mjs (or .cjs / .js), shown in the review
+	Exists bool     `json:"exists"`          // .github/extensions/<name> is already in the project
+}
+
+// ToolImportPreview is what a tool file holds, for review before importing.
+type ToolImportPreview struct {
+	Tools      []ToolImportItem `json:"tools"`
+	Extensions []ExtImportItem  `json:"extensions,omitempty"`
+}
+
+// PreviewToolImport reads a tool file and lists its tools and extension
+// folders with what would happen to each, so the user can review the
+// scripts before importing. File contents are not sent back (except the
+// scripts and extension entry files), only their names.
+func (h *Hub) PreviewToolImport(data string) (ToolImportPreview, error) {
+	root, err := h.need()
 	if err != nil {
-		return nil, err
+		return ToolImportPreview{}, err
 	}
-	out := make([]ToolImportItem, 0, len(tools))
-	for _, t := range tools {
+	b, err := extension.ParseToolFile(data)
+	if err != nil {
+		return ToolImportPreview{}, err
+	}
+	var out ToolImportPreview
+	for _, t := range b.Tools {
 		_, exErr := h.exts.Get(t.Name)
-		it := ToolImportItem{Tool: t, Exists: exErr == nil, Managed: h.isManagedName(t.Name)}
+		it := ToolImportItem{Tool: t, Exists: exErr == nil, Managed: h.isManagedName(t.Name), Files: sortedKeys(t.Files)}
+		it.Tool.Files = nil
 		if it.Exists || it.Managed {
 			it.Suggest = h.freeToolName(t.Name)
 		}
-		out = append(out, it)
+		out.Tools = append(out.Tools, it)
+	}
+	for _, x := range b.Extensions {
+		it := ExtImportItem{Name: x.Name, Desc: x.Desc, Tools: x.Tools, Files: sortedKeys(x.Files)}
+		for _, e := range []string{"extension.mjs", "extension.cjs", "extension.js"} {
+			if enc, ok := x.Files[e]; ok {
+				if s, err := base64.StdEncoding.DecodeString(enc); err == nil {
+					it.Entry = string(s)
+				}
+				break
+			}
+		}
+		if _, err := os.Lstat(filepath.Join(root, filepath.FromSlash(extension.ProjectCopilotExtDir), x.Name)); err == nil {
+			it.Exists = true
+		}
+		out.Extensions = append(out.Extensions, it)
 	}
 	return out, nil
+}
+
+func sortedKeys(m map[string]string) []string {
+	out := make([]string, 0, len(m))
+	for k := range m {
+		out = append(out, k)
+	}
+	sort.Strings(out)
+	return out
 }
 
 // freeToolName is name-2, name-3 … (within the 40-character limit) not used yet.
@@ -106,12 +190,33 @@ func (h *Hub) ImportTools(data string, actions map[string]string) (ToolImportRes
 	if _, err := h.need(); err != nil {
 		return ToolImportResult{}, err
 	}
-	tools, err := extension.ParseBundle(data)
+	b, err := extension.ParseToolFile(data)
 	if err != nil {
 		return ToolImportResult{}, err
 	}
 	var res ToolImportResult
-	for _, t := range tools {
+	for _, x := range b.Extensions {
+		a := actions["ext:"+x.Name]
+		if a == "" {
+			if _, err := os.Lstat(filepath.Join(h.Root(), filepath.FromSlash(extension.ProjectCopilotExtDir), x.Name)); err != nil {
+				a = "import"
+			}
+		}
+		if a == "" || a == "skip" {
+			res.Skipped = append(res.Skipped, "extension "+x.Name)
+			continue
+		}
+		if a != "import" && a != "replace" {
+			return res, fmt.Errorf("unknown import action %q for extension %s", a, x.Name)
+		}
+		rel, err := extension.WriteCopilotExt(h.Root(), x, a == "replace", h.toTrash)
+		if err != nil {
+			return res, err
+		}
+		res.Imported = append(res.Imported, "extension "+x.Name)
+		res.Notes = append(res.Notes, fmt.Sprintf("Copilot extension %s is in %s: approve it on the Tools screen (its packages install then)", x.Name, rel))
+	}
+	for _, t := range b.Tools {
 		name, note, err := h.importTool(t, actions[t.Name])
 		switch {
 		case err != nil:
@@ -163,7 +268,12 @@ func (h *Hub) importTool(t extension.BundledTool, action string) (string, string
 		// the command runs the file Save writes; point it at that file
 		e.Command = extension.RepointScript(e.Command, t.Name, ".codegen/tools/project/"+t.Name+extension.ScriptExt(e.Lang))
 	}
-	if _, err := h.exts.Save(e); err != nil {
+	saved, err := h.exts.Save(e)
+	if err != nil {
+		return "", "", fmt.Errorf("%s: %v", t.Name, err)
+	}
+	// a tool with its own folder: its other files (helpers, templates, data)
+	if err := extension.RestoreToolFiles(h.Root(), saved.Dir, t); err != nil {
 		return "", "", fmt.Errorf("%s: %v", t.Name, err)
 	}
 	if _, err := h.exts.MarkUnapproved(t.Name); err != nil {

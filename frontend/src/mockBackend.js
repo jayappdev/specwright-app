@@ -5117,8 +5117,8 @@ export function createMockBackend(methods) {
       savAdm();
     },
     // tool files (mirrors internal/core/toolshare.go)
-    async ExportTools(names) {
-      if (!names?.length) throw new Error("choose at least one tool to export");
+    async ExportTools(names = [], exts = []) {
+      if (!names?.length && !exts?.length) throw new Error("choose at least one tool to export");
       const tags = db.toolTags || {};
       const tools = names.map((n) => {
         const e = db.exts.find((x) => x.name === n);
@@ -5141,7 +5141,18 @@ export function createMockBackend(methods) {
           tags: tags[n],
         };
       });
-      return JSON.stringify({ format: "specwright-tools", version: 1, exported: now(), tools }, null, 2);
+      const extensions = exts.map((id) => ({
+        name: id.split("/")[1],
+        files: { "extension.mjs": btoa("export default {}\n") },
+      }));
+      return {
+        file: JSON.stringify(
+          { format: "specwright-tools", version: 1, exported: now(), tools, extensions },
+          null,
+          2,
+        ),
+        warnings: [],
+      };
     },
     async PreviewToolImport(data) {
       let b;
@@ -5151,23 +5162,47 @@ export function createMockBackend(methods) {
         throw new Error("not a tool file: " + e.message);
       }
       if (b.format !== "specwright-tools") throw new Error("not a SpecWright tool file");
-      if (!b.tools?.length) throw new Error("the file has no tools");
+      if (!b.tools?.length && !b.extensions?.length) throw new Error("the file has no tools");
       const free = (n) => {
         for (let k = 2; ; k++)
           if (!db.exts.some((x) => x.name === n + "-" + k) && !isManaged(n + "-" + k)) return n + "-" + k;
       };
-      return b.tools.map((t) => {
+      const tools = (b.tools || []).map((t) => {
         if (!/^[a-z][a-z0-9_-]{0,39}$/.test(t.name || ""))
           throw new Error(`tool ${t.name}: not a valid name`);
         const exists = db.exts.some((x) => x.name === t.name),
           managed = isManaged(t.name);
-        return { tool: t, exists, managed, suggest: exists || managed ? free(t.name) : "" };
+        return {
+          tool: { ...t, files: undefined },
+          exists,
+          managed,
+          suggest: exists || managed ? free(t.name) : "",
+          files: Object.keys(t.files || {}).sort(),
+        };
       });
+      const extensions = (b.extensions || []).map((x) => ({
+        name: x.name,
+        desc: x.desc,
+        tools: x.tools,
+        files: Object.keys(x.files || {}).sort(),
+        entry: x.files?.["extension.mjs"] ? atob(x.files["extension.mjs"]) : "",
+        exists: false,
+      }));
+      return { tools, extensions };
     },
     async ImportTools(data, actions = {}) {
-      const items = await api.PreviewToolImport(data);
+      const pv = await api.PreviewToolImport(data);
       const res = { imported: [], skipped: [], notes: [] };
-      for (const it of items) {
+      for (const x of pv.extensions) {
+        if ((actions["ext:" + x.name] || "import") === "skip") res.skipped.push("extension " + x.name);
+        else {
+          res.imported.push("extension " + x.name);
+          res.notes.push(
+            `Copilot extension ${x.name} is in .github/extensions/${x.name}: approve it on the Tools screen`,
+          );
+        }
+      }
+      for (const it of pv.tools) {
         let a = actions[it.tool.name] || (it.exists || it.managed ? "skip" : "import"),
           name = it.tool.name;
         if (a === "skip") {
