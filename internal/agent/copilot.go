@@ -104,16 +104,6 @@ func (c *Copilot) extraArgs(ctx context.Context, bin string) []string {
 			}
 		}
 	}
-	// Reloading Copilot extensions needs a person to approve it in Copilot
-	// itself, which a -p run cannot do (and it bypasses no hook), so the
-	// call is always denied. The app's runs do not need it: every run starts
-	// a fresh Copilot that loads the extensions, and a changed extension is
-	// approved again on the Tools screen. Hidden, the agent edits the files
-	// and finishes instead of failing on the reload. Last: the flag takes a
-	// list.
-	if c.hasFlag(ctx, bin, "--excluded-tools") {
-		args = append(args, "--excluded-tools", "extensions_reload")
-	}
 	return args
 }
 

@@ -28,6 +28,7 @@ func PermissionHook(in io.Reader, out io.Writer) error {
 		return err
 	}
 	tool, input := hookRequest(raw)
+	describeCopilotTool(tool, input)
 	// file edits inside the project (or a folder the run added) need no
 	// question, as with Claude's acceptEdits; edits elsewhere are asked
 	if editInside(tool, input, hookDirs(raw)) {
@@ -89,6 +90,31 @@ func hookRequest(raw []byte) (string, map[string]any) {
 		tool = "tool"
 	}
 	return tool, input
+}
+
+// describeCopilotTool says in words what Copilot's own extension tools
+// do, for the question in the app (they come with no arguments to show).
+// Reloading lets the agent use an extension it just fixed in the same run;
+// "Allow for this run" covers the reloads after it.
+func describeCopilotTool(tool string, input map[string]any) {
+	if _, ok := input["description"]; ok {
+		return
+	}
+	switch tool {
+	case "extensions_reload":
+		input["description"] = "Reload the Copilot extensions in this session, so the changes just made take effect and the agent can run the extension again. This starts the extensions' current code."
+	case "extensions_manage":
+		op, _ := input["operation"].(string)
+		name, _ := input["name"].(string)
+		d := "Copilot extension: " + firstNonBlank(op, "manage")
+		if name != "" {
+			d += " " + name
+		}
+		if op == "scaffold" {
+			d += " (creates its folder and a starter extension.mjs)"
+		}
+		input["description"] = d
+	}
 }
 
 // editTools are Copilot's file-changing tools.
