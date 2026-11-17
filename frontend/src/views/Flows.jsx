@@ -12,7 +12,8 @@ import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, saveText, refreshExtensions } from "../store.js";
 import { Icon, Menu, usePopover } from "../ui.jsx";
-import { AIDesigner, openDesigner } from "./flows/AIDesigner.jsx";
+import { AIDesigner } from "./flows/AIDesigner.jsx";
+import { FlowWizard, openWizard, wz } from "./flows/FlowWizard.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { ToolIcon } from "../ToolTile.jsx";
 import { openFlowGuide } from "./FlowGuide.jsx";
@@ -1049,8 +1050,8 @@ export function Flows() {
         <div style={{ padding: "0 8px 8px", display: "grid", gap: 4, justifyItems: "start" }}>
           <button
             className="link"
-            title="Describe what you want; the AI designer proposes flows built from your tools"
-            onClick={() => openDesigner("new")}
+            title="Describe what you want: the AI works out the requirements with you, plans, and builds draft flows to try"
+            onClick={() => openWizard()}
           >
             <Icon.spark /> New flow with AI
           </button>
@@ -1132,7 +1133,7 @@ export function Flows() {
                 v === "+new"
                   ? newFlow()
                   : v === "+ai"
-                    ? openDesigner("new")
+                    ? openWizard()
                     : v === "+paste"
                       ? pasteFromClipboard(true)
                       : v === "+import"
@@ -1239,6 +1240,7 @@ export function Flows() {
             <Canvas />
             <Inspector />
             {f.ai?.open && <AIDesigner />}
+            {wz().open && <FlowWizard />}
           </div>
         </div>
       ) : (
@@ -1258,8 +1260,8 @@ export function Flows() {
               explains every step with examples you can open here.
             </p>
             <div className="row-actions">
-              <button className="btn primary" onClick={() => openDesigner("new")}>
-                <Icon.spark /> Describe it to the AI designer
+              <button className="btn primary" onClick={() => openWizard()}>
+                <Icon.spark /> Describe it to the AI
               </button>
               <button className="btn secondary" onClick={newFlow}>
                 Create a flow
@@ -1270,6 +1272,7 @@ export function Flows() {
             </div>
           </div>
           {f.ai?.open && <AIDesigner inline />}
+          {wz().open && <FlowWizard />}
         </section>
       )}
     </div>

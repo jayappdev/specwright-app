@@ -47,7 +47,7 @@ export function openDesigner(mode) {
   update();
 }
 
-function PathChips({ flow }) {
+export function PathChips({ flow }) {
   const order = [],
     node = (id) => flow.nodes.find((x) => x.id === id);
   const visit = (id) => {
@@ -232,7 +232,7 @@ function OptionCard({ o, improving, apply }) {
 
 // How an option's trial run went: each step with its (sample) output, and the checks.
 const TRIAL_ICON = { done: "✓", failed: "✗", blocked: "✗", off: "–", "not run": "·" };
-function TrialReport({ t }) {
+export function TrialReport({ t }) {
   const [open, setOpen] = useState(!t.ok);
   const passed = t.checks.filter((c) => c.ok).length;
   return (

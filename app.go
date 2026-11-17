@@ -311,6 +311,67 @@ func (a *App) DesignFlows(r core.DesignRequest) (core.DesignResult, error) {
 	return ok(a.hub.DesignFlows(r))
 }
 
+// --- flow wizard: requirements → clarify → plan → draft flows → apply ---
+
+// WizardList lists the project's flow wizard sessions.
+func (a *App) WizardList() ([]core.WizardSummary, error) { return ok(a.hub.WizardList()) }
+
+// WizardLoad returns one flow wizard session.
+func (a *App) WizardLoad(id string) (core.WizardSession, error) { return ok(a.hub.WizardLoad(id)) }
+
+// WizardDelete removes a flow wizard session (to the trash).
+func (a *App) WizardDelete(id string) error { return a.hub.WizardDelete(id) }
+
+// WizardStart starts a session: the AI derives the requirements and asks.
+func (a *App) WizardStart(request, model string) (core.WizardSession, error) {
+	return ok(a.hub.WizardStart(request, model))
+}
+
+// WizardUpdate saves edits (answers, requirements, plan…) without the AI.
+func (a *App) WizardUpdate(id string, e core.WizardEdit) (core.WizardSession, error) {
+	return ok(a.hub.WizardUpdate(id, e))
+}
+
+// WizardClarify sends the answers to the AI, which updates the requirements.
+func (a *App) WizardClarify(id string, e core.WizardEdit) (core.WizardSession, error) {
+	return ok(a.hub.WizardClarify(id, e))
+}
+
+// WizardPlan has the AI write or revise the plan.
+func (a *App) WizardPlan(id, feedback string) (core.WizardSession, error) {
+	return ok(a.hub.WizardPlan(id, feedback))
+}
+
+// WizardDraft makes draft flows from the plan.
+func (a *App) WizardDraft(id string, n int, feedback string) (core.WizardSession, error) {
+	return ok(a.hub.WizardDraft(id, n, feedback))
+}
+
+// WizardRevise has the AI revise one draft.
+func (a *App) WizardRevise(id, draftID, feedback string) (core.WizardSession, error) {
+	return ok(a.hub.WizardRevise(id, draftID, feedback))
+}
+
+// WizardDiscard hides (or restores) a draft.
+func (a *App) WizardDiscard(id, draftID string, discard bool) (core.WizardSession, error) {
+	return ok(a.hub.WizardDiscard(id, draftID, discard))
+}
+
+// WizardSaveDraftTest changes a draft's sample data and tries it again.
+func (a *App) WizardSaveDraftTest(id, draftID string, test flow.DryTest) (core.WizardSession, error) {
+	return ok(a.hub.WizardSaveDraftTest(id, draftID, test))
+}
+
+// WizardRunDraft runs a draft for real without saving it as a flow.
+func (a *App) WizardRunDraft(id, draftID string, o core.FlowRunOptions) (core.FlowRunState, error) {
+	return ok(a.hub.WizardRunDraft(id, draftID, o))
+}
+
+// WizardApply saves a draft as a flow.
+func (a *App) WizardApply(id, draftID, name string) (core.FlowState, error) {
+	return ok(a.hub.WizardApply(id, draftID, name))
+}
+
 // SaveFlowVersion saves a flow as a new version of another.
 func (a *App) SaveFlowVersion(baseID string, f flow.Flow) (core.FlowState, error) {
 	return ok(a.hub.SaveFlowVersion(baseID, f))

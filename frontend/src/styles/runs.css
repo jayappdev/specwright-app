@@ -2666,3 +2666,234 @@ select.fl-secret-pick {
   width: auto;
   min-width: 12em;
 }
+
+/* ---- flow wizard: requirements → clarify → plan → drafts → apply ----------------- */
+.fwz-scrim {
+  z-index: 46;
+}
+.fwz {
+  position: relative;
+  width: min(1240px, 100%);
+  height: calc(100vh - 48px);
+  display: grid;
+  grid-template-rows: auto auto 1fr;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--bg, var(--panel-bg, #fff));
+  box-shadow: 0 24px 60px rgba(1, 4, 9, 0.45);
+  overflow: hidden;
+}
+.fwz-head {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  padding: 12px 16px 6px;
+}
+.fwz-head h3 {
+  margin: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fwz-steps {
+  display: flex;
+  gap: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 4px 16px 10px;
+  border-bottom: 1px solid var(--border);
+  flex-wrap: wrap;
+}
+.fwz-steps button {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  background: none;
+  color: var(--muted, inherit);
+  cursor: pointer;
+}
+.fwz-steps li.reached button {
+  color: var(--fg, inherit);
+}
+.fwz-steps li.on button {
+  border-color: var(--accent, var(--btn-bg));
+  font-weight: 600;
+}
+.fwz-steps button:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+.fwz-num {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--border);
+  font-size: 11px;
+}
+.fwz-steps li.reached .fwz-num {
+  background: var(--btn-bg);
+  border-color: var(--btn-bg);
+  color: var(--btn-fg, #fff);
+}
+.fwz-body {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(240px, 320px);
+  min-height: 0;
+}
+.fwz-main {
+  overflow: auto;
+  padding: 14px 18px 24px;
+  display: grid;
+  gap: 10px;
+  align-content: start;
+}
+.fwz-main:only-child {
+  grid-column: 1 / -1;
+}
+.fwz-main h4 {
+  margin: 8px 0 0;
+}
+.fwz-busy {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.fwz-activity {
+  border-left: 1px solid var(--border);
+  overflow: auto;
+  padding: 12px 14px;
+}
+.fwz-activity h4 {
+  margin: 0 0 8px;
+}
+.fwz-activity ol {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 10px;
+}
+.fwz-activity li {
+  border-left: 3px solid var(--border);
+  padding-left: 8px;
+  display: grid;
+  gap: 2px;
+}
+.fwz-activity li.bad {
+  border-left-color: var(--err, #d33);
+}
+.fwz-activity pre {
+  max-height: 280px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.fwz-list,
+.fwz-reqs {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 6px;
+}
+.fwz-del {
+  margin-left: 8px;
+}
+.fwz-reqs li {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.fwz-reqs li.unclear {
+  border-left: 3px solid var(--warn);
+  padding-left: 6px;
+}
+.fwz-req-text {
+  flex: 1 1 260px;
+  min-width: 0;
+}
+.fwz-unclear {
+  flex-basis: 100%;
+}
+.fwz-questions {
+  display: grid;
+  gap: 12px;
+}
+.fwz-q {
+  display: grid;
+  gap: 6px;
+}
+.fwz-q textarea,
+.fwz-iter textarea {
+  width: 100%;
+}
+.fwz-q .chip.on,
+.fwz-q .chip[aria-checked="true"] {
+  border-color: var(--btn-bg);
+  background: color-mix(in srgb, var(--btn-bg) 18%, transparent);
+}
+.fwz-other {
+  min-width: 180px;
+}
+.fwz-spec {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+  gap: 6px 16px;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+}
+.fwz-spec ul {
+  margin: 4px 0;
+  padding-left: 18px;
+}
+.fwz-spec select {
+  margin-left: 6px;
+}
+.fwz-tools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: center;
+}
+.fwz-plan-edit {
+  width: 100%;
+  font-family: var(--font-mono);
+}
+.fwz-iter {
+  display: grid;
+  gap: 6px;
+  padding-top: 6px;
+}
+.fwz-actions {
+  flex-wrap: wrap;
+}
+.fwz-drafts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(340px, 1fr));
+  gap: 10px;
+}
+.fwz-draft.discarded {
+  opacity: 0.6;
+}
+.fwz-draft.applied {
+  border-color: var(--ok);
+}
+.fwz-run summary {
+  cursor: pointer;
+}
+@media (max-width: 900px) {
+  .fwz-body {
+    grid-template-columns: 1fr;
+  }
+  .fwz-activity {
+    border-left: 0;
+    border-top: 1px solid var(--border);
+    max-height: 40vh;
+  }
+}

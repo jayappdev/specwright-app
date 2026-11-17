@@ -256,6 +256,15 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 	if err != nil {
 		return FlowRunState{}, err
 	}
+	if err := h.prepareRun(root, f, &o); err != nil {
+		return FlowRunState{}, err
+	}
+	return h.startFlow(root, f, o, nil)
+}
+
+// prepareRun checks f and the run's inputs (types, required values,
+// secrets) before it starts.
+func (h *Hub) prepareRun(root string, f *flow.Flow, o *FlowRunOptions) error {
 	var errs []string
 	for _, is := range h.ValidateFlow(*f) {
 		if is.Level == "error" {
@@ -263,7 +272,7 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 		}
 	}
 	if len(errs) > 0 {
-		return FlowRunState{}, fmt.Errorf("fix the flow first: %s", strings.Join(errs, " "))
+		return fmt.Errorf("fix the flow first: %s", strings.Join(errs, " "))
 	}
 	if o.Inputs == nil {
 		o.Inputs = map[string]string{}
@@ -271,19 +280,19 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 	for _, in := range f.Inputs {
 		v, err := flowInputValue(root, in, o.Inputs[in.Name], o.Files[in.Name])
 		if err != nil {
-			return FlowRunState{}, err
+			return err
 		}
 		if in.Type == "secret" {
-			if v, err = h.secretInput(in, v, &o); err != nil {
-				return FlowRunState{}, err
+			if v, err = h.secretInput(in, v, o); err != nil {
+				return err
 			}
 		}
 		if in.Required && strings.TrimSpace(v) == "" && (o.ForEach == nil || o.ForEach.Input != in.Name) && !(in.Type == "secret" && in.SecretSource() == "prompt") {
-			return FlowRunState{}, fmt.Errorf("%s is required", firstNonEmpty(in.Label, in.Name))
+			return fmt.Errorf("%s is required", firstNonEmpty(in.Label, in.Name))
 		}
 		if in.Type == "secret" {
 			if o.ForEach != nil && o.ForEach.Input == in.Name {
-				return FlowRunState{}, fmt.Errorf("%s is a secret: a run cannot repeat once per line of it", firstNonEmpty(in.Label, in.Name))
+				return fmt.Errorf("%s is a secret: a run cannot repeat once per line of it", firstNonEmpty(in.Label, in.Name))
 			}
 			if o.Secrets == nil {
 				o.Secrets = map[string]string{}
@@ -297,10 +306,10 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 	}
 	if o.ForEach != nil && o.ForEach.Filter != "" {
 		if _, err := regexp.Compile(o.ForEach.Filter); err != nil {
-			return FlowRunState{}, fmt.Errorf("the filter is not a valid pattern: %v", err)
+			return fmt.Errorf("the filter is not a valid pattern: %v", err)
 		}
 	}
-	return h.startFlow(root, f, o, nil)
+	return nil
 }
 
 // startFlow starts a run of f (a saved flow, or a trial copy).

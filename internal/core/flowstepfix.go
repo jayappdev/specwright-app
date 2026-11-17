@@ -48,6 +48,8 @@ type FlowTrial struct {
 	Steps   []TrialStep `json:"steps"`   // the changed steps (a trial of a trial adds to them)
 	Reused  []string    `json:"reused"`  // the steps it did not run again
 	Applied bool        `json:"applied,omitempty"`
+	// Draft: a run of a flow wizard draft ("<session>/<draft>"), not saved as a flow
+	Draft string `json:"draft,omitempty"`
 }
 
 // TrialStep is one changed step.

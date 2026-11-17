@@ -419,6 +419,12 @@ export function onHubEvent(e) {
           at: Date.now(),
         });
       break;
+    case "design.progress": // the flow wizard's AI calls: what it is doing now
+      if (e.wizard) {
+        S.wizProgress = { id: e.wizard, phase: e.phase || "", msg: e.summary || "", at: Date.now() };
+        update();
+      }
+      break;
     case "permission.request":
       if (!S.permAsks.some((r) => r.id === e.id))
         S.permAsks.push({

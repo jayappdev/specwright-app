@@ -2425,6 +2425,258 @@ export function createMockBackend(methods) {
       usage: { input_tokens: 5400, output_tokens: 1300, premium_requests: 0, cost_usd: 0 },
     };
   };
+
+  // --- the flow wizard (browser preview: scripted, with the same phases and log) ---
+  const wizards = () => (db.wizard ||= {});
+  const wizGet = (id) => {
+    const s = wizards()[id];
+    if (!s) throw new Error(`no wizard session "${id}"`);
+    return s;
+  };
+  const wizSave = (s) => {
+    s.updated = now();
+    wizards()[s.id] = s;
+    persist();
+    return clone(s);
+  };
+  const wizLog = (s, phase, summary, prompt, answer, ms) =>
+    s.log.push({
+      at: now(),
+      phase,
+      summary,
+      prompt: prompt || "",
+      answer: answer || "",
+      durationMs: ms || 0,
+      usage: prompt
+        ? {
+            input_tokens: 3200,
+            output_tokens: 700,
+            premium_requests: agent === "copilot" ? 1 : 0,
+            cost_usd: agent === "copilot" ? 0 : 0.021,
+          }
+        : {},
+    });
+  const wizUsage = (s) => {
+    const u = { input_tokens: 0, output_tokens: 0, premium_requests: 0, cost_usd: 0 };
+    for (const e of s.log) for (const k of Object.keys(u)) u[k] += e.usage?.[k] || 0;
+    s.usage = u;
+  };
+  const wizProgress = (s, phase, msg) => emit({ type: "design.progress", summary: msg, wizard: s.id, phase });
+  const wizEdit = (s, e = {}) => {
+    if (e.request != null) s.request = String(e.request).trim();
+    if (e.title) s.title = e.title;
+    if (e.requirements) s.requirements = e.requirements;
+    if (e.spec) s.spec = e.spec;
+    if (e.plan != null) s.plan = e.plan;
+    if (e.model != null) s.model = e.model;
+    for (const q of s.questions)
+      if (e.answers && q.id in e.answers) q.answer = String(e.answers[q.id] || "").trim();
+  };
+  const wizUnderstand = async (s) => {
+    const first = !s.requirements.length;
+    wizProgress(
+      s,
+      first ? "requirements" : "clarify",
+      first ? "Deriving the requirements from your request" : "Understanding the answers",
+    );
+    await wait(1100);
+    const q = s.request.toLowerCase(),
+      answers = Object.fromEntries(s.questions.filter((x) => x.answer).map((x) => [x.id, x.answer]));
+    const round = Math.max(1, ...s.questions.map((x) => (x.round || 0) + 1));
+    if (first) {
+      const parts = s.request
+        .split(/[,.;]| and | then /i)
+        .map((x) => x.trim())
+        .filter((x) => x.length > 3);
+      s.requirements = (parts.length ? parts : [s.request]).slice(0, 5).map((t, i) => ({
+        id: "R" + (i + 1),
+        text: t[0].toUpperCase() + t.slice(1),
+        status: "clear",
+      }));
+      s.requirements.push({
+        id: "R" + (s.requirements.length + 1),
+        text: "Deliver the result",
+        status: "not-clear",
+        unclear: "where the result goes and in which format",
+      });
+      const last = s.requirements[s.requirements.length - 1].id;
+      s.questions = [
+        {
+          id: "Q1",
+          req: last,
+          topic: "output",
+          text: "Where should the result go?",
+          kind: "choice",
+          options: ["Show it in the app", "Save it as a file", "Copy it to the clipboard"],
+          round,
+        },
+        {
+          id: "Q2",
+          req: last,
+          topic: "output",
+          text: "Which format do you want?",
+          kind: "choice",
+          options: ["Markdown", "HTML", "JSON", "CSV"],
+          round,
+        },
+        {
+          id: "Q3",
+          topic: "secret",
+          text: "Does any tool need a password, token or API key?",
+          kind: "yesno",
+          options: ["Yes", "No"],
+          round,
+        },
+        {
+          id: "Q4",
+          topic: "constraint",
+          text: /every|daily|morning|week/.test(q)
+            ? "What time should it run?"
+            : "Anything it must not do, or a limit on how much it reports?",
+          kind: "text",
+          round,
+        },
+      ];
+      s.spec = {
+        inputs: /ticket|jira/.test(q)
+          ? [{ name: "ticket", type: "text", description: "The ticket key", required: true }]
+          : [],
+        outputs: [{ name: "report", type: "md", description: "The result" }],
+        constraints: [],
+        secrets: [],
+      };
+      s.title = s.request.split(/[,.]/)[0].slice(0, 60);
+      wizLog(
+        s,
+        "requirements",
+        "Deriving the requirements from your request",
+        `(browser preview) Derive the requirements from: ${s.request}`,
+        JSON.stringify({ requirements: s.requirements, questions: s.questions }, null, 2),
+        1100,
+      );
+    } else {
+      const fmt = { Markdown: "md", HTML: "html", JSON: "json", CSV: "csv" }[answers.Q2] || "md";
+      s.requirements = s.requirements.map((r) =>
+        r.status === "not-clear"
+          ? {
+              id: r.id,
+              status: "clear",
+              text: `Deliver the result as ${answers.Q2 || "Markdown"}: ${(answers.Q1 || "show it in the app").replace(/^./, (c) => c.toLowerCase())}`,
+            }
+          : r,
+      );
+      if (answers.Q4) s.spec.constraints = [answers.Q4];
+      s.spec.outputs = [
+        {
+          name: "report",
+          type: fmt,
+          destination: /file/i.test(answers.Q1 || "") ? "save to out/report." + fmt : "show",
+        },
+      ];
+      if (answers.Q3 === "Yes") {
+        s.spec.inputs = [
+          ...s.spec.inputs.filter((i) => i.name !== "api_token"),
+          { name: "api_token", type: "secret", required: true, description: "Token for the tool" },
+        ];
+        s.spec.secrets = [
+          {
+            name: "api_token",
+            usedBy: "sonar-scan",
+            source: s.spec.secrets[0]?.source || "",
+            why: "the tool needs it",
+          },
+        ];
+      }
+      wizLog(
+        s,
+        "clarify",
+        `Understanding the answers (round ${round})`,
+        `(browser preview) Update the requirements with the answers: ${JSON.stringify(answers)}`,
+        JSON.stringify({ requirements: s.requirements }, null, 2),
+        1100,
+      );
+    }
+    s.phase = "clarify";
+  };
+  const wizPlan = async (s, fb) => {
+    wizProgress(s, "plan", fb ? "Revising the plan" : "Writing the plan");
+    await wait(1300);
+    const tl = extensions()
+      .filter((e) => e.approved)
+      .slice(0, 2);
+    s.planInfo = {
+      tools: tl.map((t) => ({ name: t.name, why: t.desc })),
+      steps: ["Run the tool", "Keep what matters", "Write the report"],
+      risks: ["The tool finds nothing: the report says so"],
+    };
+    s.spec.secrets = s.spec.secrets.map((x) => ({ ...x, source: x.source || "keychain" }));
+    const md = [
+      "## Goal",
+      s.request,
+      "## Requirements",
+      ...s.requirements.map((r) => `- **${r.id}** ${r.text}`),
+      "## Tools in context",
+      ...(tl.length ? tl.map((t) => `- \`${t.name}\`: ${t.desc}`) : ["- None: plain steps only"]),
+      "## Inputs",
+      ...(s.spec.inputs.length
+        ? s.spec.inputs.map((i) => `- \`${i.name}\` (${i.type}${i.required ? ", required" : ""})`)
+        : ["- None"]),
+      "## Outputs",
+      ...s.spec.outputs.map((o) => `- ${o.name}: ${o.type}${o.destination ? " → " + o.destination : ""}`),
+      "## Secrets",
+      ...(s.spec.secrets.length
+        ? s.spec.secrets.map(
+            (x) =>
+              `- \`${x.name}\` for ${x.usedBy}: from the ${x.source === "env" ? "environment" : "Keychain"}; never sent to AI steps`,
+          )
+        : ["None"]),
+      "## Steps",
+      ...s.planInfo.steps.map((x, i) => `${i + 1}. ${x}`),
+      "## Risks and checks",
+      ...s.planInfo.risks.map((x) => `- ${x}`),
+      ...(fb ? ["", `_Revised: ${fb}_`] : []),
+    ].join("\n");
+    s.plan = md;
+    wizLog(
+      s,
+      "plan",
+      fb ? "Revising the plan: " + fb : "Writing the plan",
+      "(browser preview) Write the plan from the clarified requirements and the tools' contracts.",
+      md,
+      1300,
+    );
+    s.phase = "plan";
+  };
+  const wizAddDraft = (s, o, parent, feedback) => {
+    const n = Math.max(0, ...s.drafts.map((d) => +d.id.slice(1) || 0)) + 1,
+      p = s.drafts.find((d) => d.id === parent);
+    const d = {
+      id: "d" + n,
+      title: p ? p.title : o.title,
+      summary: o.summary,
+      why: o.why,
+      version: p ? p.version + 1 : 1,
+      parent: parent || "",
+      feedback: feedback || "",
+      flow: clone(o.flow),
+      issues: o.issues,
+      errors: o.errors,
+      aiSteps: o.aiSteps,
+      tools: o.tools,
+      test: o.test || {},
+      trial: o.trial,
+      runs: [],
+      changes: p ? [`Changed as asked: ${feedback || "fixed and improved"}`] : [],
+      recommended: o.recommended,
+    };
+    for (const i of d.flow.inputs || [])
+      if (i.type === "secret") {
+        const x = s.spec.secrets.find((y) => y.name.toLowerCase() === i.name.toLowerCase());
+        if (x?.source) i.source = x.source;
+      }
+    s.drafts.push(d);
+    return d;
+  };
   const flowSummary = (f) => ({
     id: f.id,
     name: f.name,
@@ -5647,6 +5899,167 @@ export function createMockBackend(methods) {
     async DesignFlows(r) {
       await wait(1200);
       return designFlows(r);
+    },
+    async WizardList() {
+      await wait(40);
+      return Object.values(wizards())
+        .map((s) => ({
+          id: s.id,
+          title: s.title,
+          phase: s.phase,
+          updated: s.updated,
+          drafts: s.drafts.filter((d) => !d.discarded).length,
+          unclear: s.requirements.filter((r) => r.status === "not-clear").length,
+        }))
+        .sort((a, b) => String(b.updated).localeCompare(String(a.updated)));
+    },
+    async WizardLoad(id) {
+      await wait(40);
+      return clone(wizGet(id));
+    },
+    async WizardDelete(id) {
+      delete wizards()[id];
+      persist();
+    },
+    async WizardStart(request, model) {
+      if (!String(request || "").trim()) throw new Error("describe what the flow should do");
+      const s = {
+        id: new Date().toISOString().replace(/\D/g, "").slice(0, 14) + "-" + slug(request.slice(0, 40)),
+        title: request.slice(0, 80),
+        created: now(),
+        phase: "requirements",
+        request: request.trim(),
+        model: model || "",
+        requirements: [],
+        questions: [],
+        spec: { inputs: [], outputs: [], constraints: [], secrets: [] },
+        plan: "",
+        drafts: [],
+        log: [{ at: now(), phase: "requirements", summary: "You described the flow", usage: {} }],
+        applied: [],
+      };
+      await wizUnderstand(s);
+      wizUsage(s);
+      return wizSave(s);
+    },
+    async WizardUpdate(id, e) {
+      const s = wizGet(id);
+      wizEdit(s, e);
+      if (e.phase) s.phase = e.phase;
+      return wizSave(s);
+    },
+    async WizardClarify(id, e) {
+      const s = wizGet(id);
+      wizEdit(s, e);
+      await wizUnderstand(s);
+      wizUsage(s);
+      return wizSave(s);
+    },
+    async WizardPlan(id, fb) {
+      const s = wizGet(id);
+      await wizPlan(s, fb);
+      wizUsage(s);
+      return wizSave(s);
+    },
+    async WizardDraft(id, n, fb) {
+      const s = wizGet(id);
+      wizProgress(s, "drafts", `Making ${n} draft flows from the ${s.plan ? "plan" : "request"}`);
+      await wait(1500);
+      const r = designFlows({ prompt: s.request + " " + (fb || "") });
+      const made = r.options.slice(0, Math.max(1, Math.min(4, n || 3))).map((o) => wizAddDraft(s, o));
+      wizLog(
+        s,
+        "drafts",
+        `Making ${made.length} draft flows from the ${s.plan ? "plan" : "request"}`,
+        "(browser preview) Build flows that follow the plan; try each with sample data.",
+        "Drafts: " +
+          made.map((d) => `${d.title} (${d.errors ? d.errors + " problems" : "checks out"})`).join("; "),
+        1500,
+      );
+      s.phase = "drafts";
+      wizUsage(s);
+      return wizSave(s);
+    },
+    async WizardRevise(id, draftID, fb) {
+      const s = wizGet(id),
+        p = s.drafts.find((d) => d.id === draftID);
+      if (!p) throw new Error(`no draft "${draftID}"`);
+      wizProgress(s, "drafts", `Revising ${p.title} v${p.version}`);
+      await wait(1300);
+      const o =
+        designFlows({ prompt: s.request + " " + (fb || "") }).options.find((x) => x.title === p.title) ||
+        designFlows({ prompt: s.request }).options[0];
+      const d = wizAddDraft(s, { ...o, flow: { ...o.flow, name: p.flow.name } }, p.id, fb);
+      wizLog(
+        s,
+        "drafts",
+        `Revising ${p.title} v${p.version}: ${fb || "fix and improve"}`,
+        `(browser preview) Revise this draft: ${fb}`,
+        `${d.title} v${d.version}: ${d.errors ? "problems" : "checks out"}`,
+        1300,
+      );
+      wizUsage(s);
+      return wizSave(s);
+    },
+    async WizardDiscard(id, draftID, discard) {
+      const s = wizGet(id),
+        d = s.drafts.find((x) => x.id === draftID);
+      if (!d) throw new Error(`no draft "${draftID}"`);
+      d.discarded = !!discard;
+      return wizSave(s);
+    },
+    async WizardSaveDraftTest(id, draftID, test) {
+      const s = wizGet(id),
+        d = s.drafts.find((x) => x.id === draftID);
+      if (!d) throw new Error(`no draft "${draftID}"`);
+      d.test = test;
+      return wizSave(s);
+    },
+    async WizardRunDraft(id, draftID, o = {}) {
+      const s = wizGet(id),
+        d = s.drafts.find((x) => x.id === draftID);
+      if (!d) throw new Error(`no draft "${draftID}"`);
+      const f = {
+        ...clone(d.flow),
+        id: ("draft-" + s.id + "-" + d.id).slice(0, 60),
+        name: d.title + " (draft)",
+      };
+      const st = startFlowRun(f, {
+        inputs: o.inputs || {},
+        review: "none",
+        trial: { draft: s.id + "/" + d.id },
+      });
+      d.runs = [...(d.runs || []), st.id];
+      wizLog(s, "drafts", `You ran ${d.title} v${d.version} for real (run ${st.id})`);
+      wizSave(s);
+      return st;
+    },
+    async WizardApply(id, draftID, name) {
+      const s = wizGet(id),
+        d = s.drafts.find((x) => x.id === draftID);
+      if (!d) throw new Error(`no draft "${draftID}"`);
+      const nm = String(name || d.flow.name || d.title).trim();
+      const f = {
+        ...clone(d.flow),
+        id: uniqueFlowId(slug(nm)),
+        name: nm,
+        description: d.flow.description || d.summary,
+        designed: `Made with the flow wizard: “${s.request.slice(0, 200)}”.`,
+        context: {
+          text:
+            "Requirements (from the flow wizard):\n" + s.requirements.map((r) => "- " + r.text).join("\n"),
+          files: [],
+        },
+        skills: d.flow.skills || [],
+        updated: new Date().toISOString(),
+      };
+      db.flows[f.id] = f;
+      d.applied = f.id;
+      s.applied = [...(s.applied || []), { draft: d.id, flow: f.id, at: now() }];
+      s.phase = "applied";
+      wizLog(s, "apply", `You applied ${d.title} v${d.version} as the flow ${f.name}`);
+      wizSave(s);
+      return { flow: clone(f), issues: validateFlow(f) };
     },
     // fixing one step from Run flows (scripted here)
     async FixFlowStep(r) {

@@ -39,6 +39,10 @@ type DesignRequest struct {
 	FlowID  string `json:"flowId,omitempty"`  // improve this flow (new versions of it)
 	Options int    `json:"options,omitempty"` // how many options (2–4, default 3)
 	Model   string `json:"model,omitempty"`
+	// Base: improve this unsaved flow (a wizard draft) instead of FlowID
+	Base *flow.Flow `json:"-"`
+	// Min: the fewest options (default 2); the wizard asks for one revision
+	Min int `json:"-"`
 }
 
 // FlowOption is one design to choose from.
@@ -78,8 +82,8 @@ func (h *Hub) DesignFlows(r DesignRequest) (DesignResult, error) {
 		return DesignResult{}, err
 	}
 	r.Prompt = strings.TrimSpace(r.Prompt)
-	var base *flow.Flow
-	if r.FlowID != "" {
+	base := r.Base
+	if r.FlowID != "" && base == nil {
 		if base, err = flow.Load(root, r.FlowID); err != nil {
 			return DesignResult{}, err
 		}
@@ -87,8 +91,14 @@ func (h *Hub) DesignFlows(r DesignRequest) (DesignResult, error) {
 	if r.Prompt == "" && base == nil {
 		return DesignResult{}, errors.New("describe what the flow should do")
 	}
-	if r.Options < 2 || r.Options > 4 {
-		r.Options = 3
+	if r.Min < 1 {
+		r.Min = 2
+	}
+	if r.Options < r.Min || r.Options > 4 {
+		r.Options = max(r.Min, 3)
+		if r.Min == 1 && r.Options > 1 {
+			r.Options = 1
+		}
 	}
 	tools := h.designTools()
 	var baseIssues []flow.Issue
