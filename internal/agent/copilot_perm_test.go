@@ -82,11 +82,23 @@ func TestCopilotTokenEnvAndWeb(t *testing.T) {
 	if a := c.extraArgs(ctx, "copilot"); !slices.Contains(a, "--allow-all-urls") {
 		t.Fatalf("all: %q", a)
 	}
-	// extensions_reload stays available: the run asks in the app (the
-	// permission hook), so the agent can reload a fixed extension and use it
-	// in the same session
-	c.help += " --excluded-tools"
-	if a := c.extraArgs(ctx, "copilot"); slices.Contains(a, "--excluded-tools") || slices.Contains(a, "extensions_reload") {
-		t.Fatalf("extensions_reload must not be hidden: %q", a)
+}
+
+// With project extensions and the app's bridge, Copilot's reload (always
+// denied in -p) is hidden and the agent is told to run a changed extension
+// through the bridge.
+func TestCopilotReloadNote(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, ".github", "extensions", "greet"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	_ = os.WriteFile(filepath.Join(dir, ".github", "extensions", "greet", "extension.mjs"), []byte("x"), 0o644)
+	c := NewCopilot()
+	a := c.argsWith(Request{Prompt: "fix it", Dir: dir}, "/plugin")
+	if !strings.HasPrefix(a[1], "fix it") || !strings.Contains(a[1], "extension_managed") || !slices.Equal(a[len(a)-2:], []string{"--excluded-tools", "extensions_reload"}) {
+		t.Fatalf("%q", a)
+	}
+	if a := c.argsWith(Request{Prompt: "fix it", Dir: dir}, ""); a[1] != "fix it" || slices.Contains(a, "--excluded-tools") {
+		t.Fatalf("no bridge: unchanged: %q", a)
 	}
 }

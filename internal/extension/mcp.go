@@ -281,7 +281,7 @@ func (c *bridgeClient) list() ([]ToolInfo, error) {
 
 func (c *bridgeClient) call(name string, args map[string]any) (RunResult, error) {
 	var out RunResult
-	return out, c.do("POST", "/call", map[string]any{"name": name, "arguments": args}, &out)
+	return out, c.do("POST", "/call", map[string]any{"name": name, "arguments": args, "agent": c.agent}, &out)
 }
 
 // decodeArgs accepts tool arguments as an object or a JSON-encoded string

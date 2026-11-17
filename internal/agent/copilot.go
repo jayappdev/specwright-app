@@ -164,9 +164,23 @@ func (c *Copilot) argsWith(req Request, pluginDir string) []string {
 	}
 	if hasProjectExtensions(req.Dir) {
 		args = append(args, "--experimental") // Copilot extensions are experimental
+		if pluginDir != "" {
+			// Copilot cannot reload extensions in a -p run (it denies the
+			// reload without asking anyone), so it is hidden; the agent runs
+			// a changed extension through SpecWright instead, which asks the
+			// user. Last: the flag takes a list.
+			args[1] += reloadNote
+			args = append(args, "--excluded-tools", "extensions_reload")
+		}
 	}
 	return args
 }
+
+// reloadNote tells the agent how to run an extension it changed.
+const reloadNote = "\n\n(Note from SpecWright: Copilot extensions cannot be reloaded in this run. " +
+	"The tools of this project's extensions are also offered by the agentbridge MCP server (extension_managed), " +
+	"which runs each extension's current files: after you change an extension, call its tool through extension_managed " +
+	"to run the new version in this session. The user is asked before a changed version runs.)"
 
 // hasProjectExtensions reports whether dir has Copilot extensions in
 // .github/extensions (each a folder with extension.mjs/.cjs/.js).

@@ -76,6 +76,23 @@ func TestLoadedCopilotExtensionIsAProjectTool(t *testing.T) {
 		t.Fatalf("step output %q (%+v)", out, st.Steps)
 	}
 
+	// an agent fixes the extension: not runnable as approved any more, but
+	// listed as changed, so the bridge can run it after asking the user
+	ws := h.Root()
+	ext := filepath.Join(ws, ".github", "extensions", "greeter", "extension.mjs")
+	b, _ := os.ReadFile(ext)
+	if err := os.WriteFile(ext, append(b, []byte("\n// fixed\n")...), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range h.Callable() {
+		if e.Name == "greet" {
+			t.Fatal("a changed extension is not callable as approved")
+		}
+	}
+	if ch := h.ChangedTools(); len(ch) != 1 || ch[0].Name != "greet" {
+		t.Fatalf("changed: %+v", ch)
+	}
+
 	if _, err := h.RemoveCopilotExtension("greeter"); err != nil {
 		t.Fatal(err)
 	}

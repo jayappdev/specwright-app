@@ -28,6 +28,31 @@ func (h *Hub) Callable() []extension.Extension {
 	return h.callableLocked()
 }
 
+// ChangedTools implements extension.ChangedTools: tools of the project's
+// Copilot extensions approved before whose files changed since.
+func (h *Hub) ChangedTools() []extension.Extension {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.exts == nil {
+		return nil
+	}
+	all, err := h.exts.List()
+	if err != nil {
+		return nil
+	}
+	managed := map[string]bool{}
+	for _, e := range h.managedTools() {
+		managed[e.Name] = true
+	}
+	var out []extension.Extension
+	for _, e := range all {
+		if e.Kind == extension.KindCopilot && e.Scope == "project" && e.Approved && e.Hash != e.Fingerprint() && !managed[e.Name] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 func (h *Hub) callableLocked() []extension.Extension {
 	// verified managed tools (global, admin-signed) come first and cannot be
 	// shadowed by a workspace tool of the same name
