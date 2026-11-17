@@ -82,4 +82,10 @@ func TestCopilotTokenEnvAndWeb(t *testing.T) {
 	if a := c.extraArgs(ctx, "copilot"); !slices.Contains(a, "--allow-all-urls") {
 		t.Fatalf("all: %q", a)
 	}
+	// a CLI that can hide tools: extensions_reload (always denied in -p) is
+	// hidden, as the last flag (it takes a list)
+	c.help += " --excluded-tools"
+	if a := c.extraArgs(ctx, "copilot"); !slices.Equal(a[len(a)-2:], []string{"--excluded-tools", "extensions_reload"}) {
+		t.Fatalf("excluded: %q", a)
+	}
 }
