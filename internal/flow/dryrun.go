@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"strings"
+	"time"
 )
 
 // Dry runs: a flow is tried end to end without side effects. Tools and AI
@@ -428,6 +429,10 @@ func sampleInput(in Input) string {
 		return "3"
 	case "boolean":
 		return "true"
+	case "date", "datetime":
+		if v, err := DateInput(in.Type, firstNonEmptyStr(in.Default, "today"), time.Now()); err == nil {
+			return v
+		}
 	case "choice", "multichoice":
 		if len(in.Options) > 0 {
 			return in.Options[0]

@@ -336,6 +336,25 @@ function InputsEditor() {
                 />
               </Field>
             )}
+            {["date", "datetime"].includes(i.type) && (
+              <Field
+                label="Default value"
+                hint={
+                  i.type === "date"
+                    ? "A date (2026-11-17), or relative: today, today-7d, today+1w. Worked out when the run starts."
+                    : "A date and time (2026-11-17T09:00), or relative: now, now-2h, now+30m, today. Worked out when the run starts."
+                }
+              >
+                <input
+                  value={i.default || ""}
+                  placeholder={i.type === "date" ? "e.g. today-7d" : "e.g. now-1h"}
+                  onChange={(e) => {
+                    i.default = e.target.value;
+                    changed();
+                  }}
+                />
+              </Field>
+            )}
             {["text", "multiline", "number", "clipboard", "choice"].includes(i.type) && (
               <Field label="Default value">
                 {i.type === "multiline" || i.type === "clipboard" ? (

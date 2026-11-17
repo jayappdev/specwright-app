@@ -4,6 +4,7 @@
 //            the review panel (accept, stop, refine with AI, run a command,
 //            edit, change settings and retry), outputs and activity
 //   sidebar  progress and metrics: steps, elapsed time, tokens, credits, tools
+import { dateDefault } from "../dates.js";
 import { useEffect, useState } from "react";
 import { FLOW_STATUS_LABEL as STATUS_LABEL } from "../labels.js";
 export { STATUS_LABEL };
@@ -83,7 +84,12 @@ export async function loadFlow(id) {
     r.inputs = {};
     r.files = {};
     for (const i of r.flow.inputs) {
-      r.inputs[i.name] = i.type === "secret" ? "" : i.default || "";
+      r.inputs[i.name] =
+        i.type === "secret"
+          ? ""
+          : i.type === "date" || i.type === "datetime"
+            ? dateDefault(i.type, i.default)
+            : i.default || "";
       r.files[i.name] = (i.files || []).map((p) => ({
         path: p,
         name: p.split("/").pop(),

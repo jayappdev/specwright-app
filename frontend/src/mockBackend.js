@@ -2,6 +2,7 @@
 // It mirrors the Go API method-for-method and emits events with the same
 // flattened shape as bus.Event, driven by a scripted agent.
 
+import { resolveDate, dateDefault } from "./dates.js";
 import { stepNames, isStepField, isLoopField, applyStepIDs } from "./flowNames.js";
 import { shapes as flowShapes, parseSchema, checkPaths, sampleOf, toolOutput } from "./schema.js";
 import {
@@ -1758,7 +1759,11 @@ export function createMockBackend(methods) {
         i.name,
         test.inputs?.[i.name] ||
           i.default ||
-          (i.type === "number" ? "3" : i.options?.[0] || "sample " + (i.label || i.name)),
+          (i.type === "number"
+            ? "3"
+            : i.type === "date" || i.type === "datetime"
+              ? dateDefault(i.type, i.default || "today")
+              : i.options?.[0] || "sample " + (i.label || i.name)),
       ]),
     );
     const mock = (n, shape, what) => {
@@ -2482,6 +2487,13 @@ export function createMockBackend(methods) {
           "error",
           `Input "${i.name}" is a secret: remove its default value, which would be saved in the flow file.`,
         );
+    for (const i of f.inputs)
+      if (i.type === "date" || i.type === "datetime")
+        try {
+          resolveDate(i.type, i.default);
+        } catch (e) {
+          add("start", "error", `Input "${i.name}": the default value ${e.message}.`);
+        }
     const { names: stepAlias } = stepNames(f),
       byID = (h) => {
         const id = stepAlias[h],
@@ -4467,6 +4479,13 @@ export function createMockBackend(methods) {
     if (i.type === "number") {
       if (t && isNaN(Number(t))) throw new Error(`${label} must be a number, not "${t}"`);
       return t;
+    }
+    if (i.type === "date" || i.type === "datetime") {
+      try {
+        return resolveDate(i.type, t);
+      } catch (e) {
+        throw new Error(`${label}: ${e.message}`);
+      }
     }
     if (i.type === "boolean") return /^(true|yes|y|1|on)$/i.test(t) ? "true" : "false";
     if (i.type === "multichoice") {

@@ -2654,3 +2654,15 @@ select.fl-secret-pick {
 .fr-rounds li.by-person {
   border-left-color: var(--warn);
 }
+
+/* date and date-time inputs: the picker, then Today / Now and Clear */
+.date-field {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.date-field input {
+  width: auto;
+  min-width: 12em;
+}

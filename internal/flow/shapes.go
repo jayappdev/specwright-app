@@ -80,6 +80,12 @@ func (f *Flow) Shapes(h ShapeHints) map[string]StepShape {
 			o := &Schema{Type: "object", Description: "the flow's inputs (each is text)"}
 			for _, i := range f.Inputs {
 				p := &Schema{Type: "string", Description: firstNonEmptyStr(i.Label, i.Name)}
+				switch i.Type {
+				case "date":
+					p.Format = "date"
+				case "datetime":
+					p.Format = "date-time"
+				}
 				if len(i.Options) > 0 && i.Type == "choice" {
 					for _, v := range i.Options {
 						p.Enum = append(p.Enum, v)

@@ -1,4 +1,5 @@
 // Run flows: setting up a run — inputs (incl. secrets), credentials and options.
+import { resolveDate } from "../../dates.js";
 import { ModelPicker } from "../../ModelPicker.jsx";
 import { backend } from "../../backend.js";
 import { update, toast, errMsg, kcName, isWindows } from "../../store.js";
@@ -148,6 +149,33 @@ function InputField({ i }) {
     case "number":
       field = <input type="number" step="any" value={v} onChange={(e) => set(e.target.value)} />;
       break;
+    case "date":
+    case "datetime": {
+      const dt = i.type === "datetime";
+      field = (
+        <span className="date-field">
+          <input
+            type={dt ? "datetime-local" : "date"}
+            value={v}
+            aria-label={i.label || i.name}
+            onChange={(e) => set(e.target.value)}
+          />
+          <button
+            type="button"
+            className="link"
+            onClick={() => set(resolveDate(i.type, dt ? "now" : "today"))}
+          >
+            {dt ? "Now" : "Today"}
+          </button>
+          {v && (
+            <button type="button" className="link" onClick={() => set("")}>
+              Clear
+            </button>
+          )}
+        </span>
+      );
+      break;
+    }
     case "boolean":
       field = (
         <label className="check">

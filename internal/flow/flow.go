@@ -77,7 +77,7 @@ func (f *Flow) EstimatedMinutes() int {
 type Input struct {
 	Name        string   `json:"name"`  // used as {{inputs.name}}
 	Label       string   `json:"label"` // shown to the user
-	Type        string   `json:"type"`  // text | multiline | secret | number | boolean | choice | multichoice | file | files | clipboard
+	Type        string   `json:"type"`  // text | multiline | secret | number | boolean | date | datetime | choice | multichoice | file | files | clipboard
 	Required    bool     `json:"required,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Files       []string `json:"files,omitempty"`   // default files (workspace paths)
@@ -269,7 +269,7 @@ var (
 	NodeTypes   = []string{"start", "tool", "ai", "improve", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
 	MergeModes  = []string{"concat", "json-object", "json-array", "template"}
 	Formats     = []string{"md", "txt", "html", "csv", "json"}
-	InputTypes  = []string{"text", "multiline", "secret", "number", "boolean", "choice", "multichoice", "file", "files", "clipboard"}
+	InputTypes  = []string{"text", "multiline", "secret", "number", "boolean", "date", "datetime", "choice", "multichoice", "file", "files", "clipboard"}
 	ActionTypes = []string{"save", "tool", "clipboard", "show"}
 )
 
@@ -451,6 +451,11 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 		}
 		if (in.Type == "choice" || in.Type == "multichoice") && len(in.Options) == 0 {
 			add("start", "error", "Input %q is a choice but has no options.", in.Name)
+		}
+		if in.Type == "date" || in.Type == "datetime" {
+			if _, err := DateInput(in.Type, in.Default, time.Now()); err != nil {
+				add("start", "error", "Input %q: the default value %v.", in.Name, err)
+			}
 		}
 		if in.Type == "secret" {
 			if in.Default != "" {

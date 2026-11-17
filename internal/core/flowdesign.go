@@ -202,7 +202,7 @@ Step types (node JSON; every node has "id" and "type" and may have "title"):
 - output: {"format": "md|txt|html|csv|json", "template": "<optional>", "actions": [{"type": "show"}, {"type": "save", "path": "out/report.md"}]}; ends a path.
 Condition: {"match": "all|any|none", "rules": [{"field": "status", "op": "eq", "value": "open"}, {"group": <condition>}]}; ops: eq ne gt gte lt lte contains not_contains starts ends matches in not_in between empty not_empty exists not_exists true false len_eq len_gt len_lt. Fields are paths into the data (customer.tier, items[*].qty).
 Edge: {"from": "<id>", "to": "<id>", "branch": "<only out of a decision>"}.
-Inputs: [{"name": "ticket", "label": "Ticket", "type": "text|multiline|secret|number|boolean|choice|multichoice|file|files|clipboard", "required": true, "options": ["a","b"]}]. Passwords, API keys and tokens: type "secret" (no default), given to tools as {{inputs.<name>}} in their args, never to AI steps.
+Inputs: [{"name": "ticket", "label": "Ticket", "type": "text|multiline|secret|number|boolean|date|datetime|choice|multichoice|file|files|clipboard", "required": true, "options": ["a","b"]}]. Passwords, API keys and tokens: type "secret" (no default), given to tools as {{inputs.<name>}} in their args, never to AI steps.
 Refer to steps by id: {{<step id>.buffer_output}}. Step ids: letters, digits, - or _, starting with a letter.`
 
 func designPrompt(r DesignRequest, base *flow.Flow, baseIssues []flow.Issue, tools []designTool) string {

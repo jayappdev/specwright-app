@@ -75,6 +75,8 @@ export const INPUT_TYPES = [
   ["multiline", "Long text"],
   ["secret", "Secret"],
   ["number", "Number"],
+  ["date", "Date"],
+  ["datetime", "Date and time"],
   ["boolean", "Yes / no"],
   ["choice", "Choice"],
   ["multichoice", "Multiple choice"],
