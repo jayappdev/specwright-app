@@ -137,9 +137,27 @@ export const savePrefsNow = () => savePrefs();
 // burst of streamed events) share one notification, sent in a microtask: it
 // still runs before any timer, so code that does update() then setTimeout(…)
 // sees the new render.
+//
+// Typing is the exception: a text box bound to S must re-render inside the
+// input event. Otherwise React puts the old value back when the event ends
+// and the new one arrives a moment later, which moves the caret to the end,
+// so text could only be typed at the end of a box. React batches these
+// notifications itself and renders once, before the event ends.
 let pending = false;
+const TYPING = new Set([
+  "input",
+  "change",
+  "beforeinput",
+  "compositionend",
+  "paste",
+  "cut",
+  "drop",
+  "keydown",
+]);
 export function update() {
   version++;
+  const ev = typeof window !== "undefined" ? window.event : undefined;
+  if (ev && TYPING.has(ev.type)) subs.forEach((f) => f());
   if (pending) return;
   pending = true;
   queueMicrotask(() => {
