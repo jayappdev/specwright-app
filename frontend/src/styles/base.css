@@ -1264,3 +1264,17 @@ input[type="range"] {
   z-index: 200;
   box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
 }
+
+/* DateTimeField: a date and a time side by side */
+.dt-field {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.dt-field input[type="date"] {
+  min-width: 10.5em;
+}
+.dt-field input[type="time"] {
+  min-width: 7em;
+}

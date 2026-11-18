@@ -1,3 +1,4 @@
+import { DateTimeField } from "../DateTimeField.jsx";
 import { useEffect } from "react";
 import { backend } from "../backend.js";
 import { EmptyState } from "../ui.jsx";
@@ -183,22 +184,22 @@ function RangeBar() {
           <label className="muted" htmlFor="mr-from">
             From
           </label>
-          <input
+          <DateTimeField
             id="mr-from"
-            type="datetime-local"
+            label="From"
             value={r.from}
             max={r.to || undefined}
-            onChange={(e) => set({ from: e.target.value }, false)}
+            onChange={(v) => set({ from: v }, false)}
           />
           <label className="muted" htmlFor="mr-to">
             To
           </label>
-          <input
+          <DateTimeField
             id="mr-to"
-            type="datetime-local"
+            label="To"
             value={r.to}
             min={r.from || undefined}
-            onChange={(e) => set({ to: e.target.value }, false)}
+            onChange={(v) => set({ to: v }, false)}
           />
           <button className="btn secondary small" onClick={loadMetrics}>
             Apply

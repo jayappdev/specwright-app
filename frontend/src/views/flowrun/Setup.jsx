@@ -1,4 +1,5 @@
 // Run flows: setting up a run — inputs (incl. secrets), credentials and options.
+import { DateTimeField } from "../../DateTimeField.jsx";
 import { resolveDate } from "../../dates.js";
 import { ModelPicker } from "../../ModelPicker.jsx";
 import { backend } from "../../backend.js";
@@ -154,12 +155,16 @@ function InputField({ i }) {
       const dt = i.type === "datetime";
       field = (
         <span className="date-field">
-          <input
-            type={dt ? "datetime-local" : "date"}
-            value={v}
-            aria-label={i.label || i.name}
-            onChange={(e) => set(e.target.value)}
-          />
+          {dt ? (
+            <DateTimeField value={v} label={i.label || i.name} onChange={set} />
+          ) : (
+            <input
+              type="date"
+              value={v}
+              aria-label={i.label || i.name}
+              onChange={(e) => set(e.target.value)}
+            />
+          )}
           <button
             type="button"
             className="link"
@@ -522,7 +527,7 @@ function Options() {
         )}
         <label className="field">
           <span className="muted">Start</span>
-          <input type="datetime-local" value={o.startAt} onChange={(e) => set("startAt", e.target.value)} />
+          <DateTimeField value={o.startAt} label="Start" onChange={(v) => set("startAt", v)} />
           <small className="muted">{o.startAt ? "Waits until then (keep the app open)" : "Empty: now"}</small>
         </label>
         <label className="field">

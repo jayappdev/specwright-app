@@ -11,6 +11,7 @@
 // Sessions are saved in the project (.codegen/flow-wizard) and can be
 // resumed. The Activity panel shows every AI call: what was asked, what came
 // back, how long it took and what it used.
+import { DateTimeField } from "../../DateTimeField.jsx";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { backend } from "../../backend.js";
@@ -1066,6 +1067,12 @@ function RunForm({ s, d, done }) {
               value={vals[i.name]}
               onChange={(e) => setVals({ ...vals, [i.name]: e.target.value })}
             />
+          ) : i.type === "datetime" ? (
+            <DateTimeField
+              value={vals[i.name]}
+              label={i.label || i.name}
+              onChange={(v) => setVals({ ...vals, [i.name]: v })}
+            />
           ) : (
             <input
               type={
@@ -1075,9 +1082,7 @@ function RunForm({ s, d, done }) {
                     ? "number"
                     : i.type === "date"
                       ? "date"
-                      : i.type === "datetime"
-                        ? "datetime-local"
-                        : "text"
+                      : "text"
               }
               value={vals[i.name]}
               onChange={(e) => setVals({ ...vals, [i.name]: e.target.value })}

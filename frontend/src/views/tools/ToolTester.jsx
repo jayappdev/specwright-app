@@ -2,6 +2,7 @@
 // parameters (the right field for each type and format, its secrets masked),
 // a direct run with the result checked, saved test cases, and the tool's
 // parameters refined without AI (Infer) or with it (Refine with AI).
+import { DateTimeField } from "../../DateTimeField.jsx";
 import { useEffect, useState } from "react";
 import { backend } from "../../backend.js";
 import { S, update, toast, errMsg, fmtMs, refreshExtensions } from "../../store.js";
@@ -98,9 +99,7 @@ function ArgField({ p, v, set }) {
     case "date":
       return <input type="date" value={v} aria-label={p.name} onChange={(e) => set(e.target.value)} />;
     case "date-time":
-      return (
-        <input type="datetime-local" value={v} aria-label={p.name} onChange={(e) => set(e.target.value)} />
-      );
+      return <DateTimeField value={v} label={p.name} onChange={set} />;
     case "multiline":
       return (
         <textarea
