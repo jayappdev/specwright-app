@@ -1,6 +1,8 @@
 package flow
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -84,8 +86,30 @@ func TestGlobMatch(t *testing.T) {
 		}
 	}
 	w := FileWatch{Paths: []string{"**"}, Ignore: []string{"*.log"}, Ops: []string{"modified"}}
-	if w.Matches(".codegen/runs/x.md", "modified") || w.Matches("a.log", "modified") || w.Matches("a.md", "created") || !w.Matches("a.md", "modified") {
+	if w.Matches(".codegen/runs/x.md", "/p/.codegen/runs/x.md", "modified") || w.Matches("a.log", "/p/a.log", "modified") || w.Matches("a.md", "/p/a.md", "created") || !w.Matches("a.md", "/p/a.md", "modified") {
 		t.Fatal("FileWatch.Matches")
+	}
+	// absolute patterns: a folder outside the project, ~ for the home folder
+	home, _ := os.UserHomeDir()
+	ext := FileWatch{Paths: []string{"/Users/me/Downloads/testtrigger/**", "~/inbox", "/data/report.csv"}, Ignore: []string{"*.tmp"}}
+	for _, c := range []struct {
+		rel, abs string
+		ok       bool
+	}{
+		{"", "/Users/me/Downloads/testtrigger/a.txt", true},
+		{"", "/Users/me/Downloads/testtrigger/sub/b.txt", true},
+		{"", "/Users/me/Downloads/testtrigger/x.tmp", false},
+		{"", "/Users/me/Downloads/other.txt", false},
+		{"", filepath.ToSlash(filepath.Join(home, "inbox", "n.md")), true},
+		{"", "/data/report.csv", true},
+		{"report.csv", "/p/report.csv", false}, // a relative path does not match an absolute pattern
+	} {
+		if ext.Matches(c.rel, c.abs, "created") != c.ok {
+			t.Errorf("Matches(%q, %q) != %v", c.rel, c.abs, c.ok)
+		}
+	}
+	if GlobBase("/Users/me/Downloads/testtrigger/**") != "/Users/me/Downloads/testtrigger" || GlobBase("/a/b/*.csv") != "/a/b" || GlobBase("/data/report.csv") != "/data/report.csv" || GlobBase("/**") != "/" {
+		t.Fatal("GlobBase")
 	}
 	if got := FillTriggerVars("{{trigger.flow}} {{ trigger.files }}{{trigger.nope}}", map[string]string{"flow": "a", "files": "x"}); got != "a x" {
 		t.Fatal(got)

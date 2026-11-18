@@ -89,6 +89,9 @@ func (h *Hub) SaveFlow(f flow.Flow) (FlowState, error) {
 	if err := flow.Save(root, &f); err != nil {
 		return FlowState{}, err
 	}
+	if len(f.Triggers) > 0 {
+		h.kickTriggers(root) // a files trigger may name a folder outside the project
+	}
 	return FlowState{Flow: &f, Issues: flow.Validate(&f, h.flowTools())}, nil
 }
 

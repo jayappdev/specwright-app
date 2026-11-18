@@ -74,7 +74,8 @@ type Hub struct {
 	perms     permissionState // permission prompts (permissions.go)
 	runs      map[string]*workflow.Run
 	testCalls chan testCall
-	trig      *triggerStore // triggers.go: the open project's trigger state
+	trig      *triggerStore  // triggers.go: the open project's trigger state
+	sched     sync.WaitGroup // the triggers' scheduler goroutines (Close waits for them)
 
 }
 
@@ -142,7 +143,8 @@ func (h *Hub) Close() {
 	}
 	h.mu.Unlock()
 	h.cancel()
-	for _, r := range live { // let runs record their end before we return
+	waitTimeout(&h.sched, 3*time.Second) // the scheduler and its folder watchers stop
+	for _, r := range live {             // let runs record their end before we return
 		select {
 		case <-r.Done():
 		case <-time.After(3 * time.Second):
@@ -355,7 +357,11 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	h.mu.Unlock()
 	w.Poll() // take the baseline snapshot now
 	go w.Run(wctx, h.onFiles)
-	go h.runScheduler(wctx, abs) // the project's triggers (schedules); triggers.go
+	h.sched.Add(1)
+	go func() { // the project's triggers (schedules, files, after flows); triggers.go
+		defer h.sched.Done()
+		h.runScheduler(wctx, abs)
+	}()
 	h.Bus.Publish(bus.Event{Type: "workspace.opened", Summary: abs, Data: map[string]any{"root": abs}})
 	return h.Workspace()
 }
@@ -927,4 +933,14 @@ func (h *Hub) UseWorkflow(w *workflow.Workflow) error {
 	h.wf = w
 	h.mu.Unlock()
 	return workflow.Save(root, w)
+}
+
+// waitTimeout waits for wg, at most d.
+func waitTimeout(wg *sync.WaitGroup, d time.Duration) {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d):
+	}
 }

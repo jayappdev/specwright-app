@@ -266,6 +266,8 @@ function TriggerCard({ t, v, remove, reload }) {
         {st.lastRun ? ` · last ${when(st.lastRun)} (${st.lastStatus || "…"})` : ""}
         {st.missed ? ` · ${st.missed} missed` : ""}
         {st.done ? " · finished" : st.nextRun && t.enabled ? ` · next ${when(st.nextRun)}` : ""}
+        {st.watching?.length > 0 && <div>Watching {st.watching.join(", ")} (outside the project)</div>}
+        {st.watchError && <div className="ai-trial-err">Not watched: {st.watchError}</div>}
         {st.lastError && <div className="ai-trial-err">{st.lastError}</div>}
       </div>
       <div className="row-actions">
@@ -551,7 +553,7 @@ function FilesFields({ t }) {
         <textarea
           rows={2}
           value={paths}
-          placeholder={"src/**/*.java\napi/openapi.yaml"}
+          placeholder={"src/**/*.java\napi/openapi.yaml\n~/Downloads/inbox/**"}
           aria-label="Files to watch"
           onChange={(e) => {
             setPaths(e.target.value);
@@ -583,8 +585,17 @@ function FilesFields({ t }) {
         <code className="inline-code" data-nofile>
           **
         </code>{" "}
-        any folders; a pattern without / matches a file name in any folder. SpecWright&apos;s .codegen folder
-        never counts, nor changes made while this flow runs.
+        any folders; a pattern without / matches a file name in any folder. Patterns are relative to the
+        project, or a full path (
+        <code className="inline-code" data-nofile>
+          /Users/me/Downloads/in/**
+        </code>
+        ,{" "}
+        <code className="inline-code" data-nofile>
+          ~/Downloads/in
+        </code>
+        ) to watch a folder outside it. SpecWright&apos;s .codegen folder never counts, nor changes made while
+        this flow runs.
       </p>
       <div className="field">
         <span className="muted">When a file is</span>

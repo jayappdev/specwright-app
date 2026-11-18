@@ -22,7 +22,11 @@ package core
 // collects the project's file changes that match it (noteFileChanges) and
 // starts one run once they have been quiet for a few seconds; changes
 // while the flow itself is running, and SpecWright's own .codegen folder,
-// do not count, so a flow does not start itself again.
+// do not count, so a flow does not start itself again. A pattern for a
+// folder outside the project (/Users/me/Downloads/in/**) gets a watcher of
+// its own while a trigger needs it (syncExternalWatches); a folder that is
+// too broad (the home folder, /) or too big is refused, and said on the
+// trigger.
 
 import (
 	"context"
@@ -71,6 +75,10 @@ type TriggerState struct {
 	Runs       int       `json:"runs"`
 	Missed     int       `json:"missed"`
 	Done       bool      `json:"done,omitempty"` // no more runs (once, Until, Count)
+	// files triggers: the folders outside the project it watches, and why
+	// one cannot be watched
+	Watching   []string `json:"watching,omitempty"`
+	WatchError string   `json:"watchError,omitempty"`
 	// Secrets: name → encrypted value (base64 of nonce+ciphertext)
 	Secrets map[string]string `json:"secrets,omitempty"`
 }
@@ -95,7 +103,16 @@ type triggerStore struct {
 	data map[string]*TriggerState // "<flow>/<trigger>" → state
 	// pend: file changes a "files" trigger collected, waiting to be quiet
 	pend map[string]*filePend
+	// ext: watchers of folders outside the project (folder → stop), while
+	// the scheduler (ctx) runs
+	ext map[string]context.CancelFunc
+	ctx context.Context
+	// kick wakes the scheduler to look at the triggers again (a flow saved)
+	kick chan struct{}
 }
+
+// maxExternalFiles is the most files a watched folder outside the project may hold.
+const maxExternalFiles = 20000
 
 type filePend struct {
 	files map[string]bool
@@ -118,7 +135,7 @@ func (h *Hub) triggers(root string) *triggerStore {
 	if h.trig != nil && h.trig.path != "" && strings.Contains(h.trig.path, workspaceKey(root)) {
 		return h.trig
 	}
-	ts := &triggerStore{path: filepath.Join(h.Store.Dir(), "triggers", workspaceKey(root)+".json"), data: map[string]*TriggerState{}}
+	ts := &triggerStore{path: filepath.Join(h.Store.Dir(), "triggers", workspaceKey(root)+".json"), data: map[string]*TriggerState{}, kick: make(chan struct{}, 1)}
 	if b, err := os.ReadFile(ts.path); err == nil {
 		_ = json.Unmarshal(b, &ts.data)
 	}
@@ -483,6 +500,19 @@ func (h *Hub) fireTrigger(root string, f *flow.Flow, t flow.Trigger, why string,
 // runScheduler checks the project's triggers until ctx ends (the project
 // closes or the app quits).
 func (h *Hub) runScheduler(ctx context.Context, root string) {
+	ts := h.triggers(root)
+	ts.mu.Lock()
+	ts.ctx = ctx
+	ts.mu.Unlock()
+	defer func() { // the project closed: stop watching outside folders
+		ts.mu.Lock()
+		for d, stop := range ts.ext {
+			stop()
+			delete(ts.ext, d)
+		}
+		ts.ctx = nil
+		ts.mu.Unlock()
+	}()
 	h.checkTriggers(root)
 	t := time.NewTicker(triggerTick)
 	defer t.Stop()
@@ -492,6 +522,8 @@ func (h *Hub) runScheduler(ctx context.Context, root string) {
 			return
 		case <-t.C:
 			h.checkTriggers(root)
+		case <-ts.kick:
+			h.syncExternalWatches(root)
 		}
 	}
 }
@@ -580,6 +612,7 @@ func (h *Hub) checkTriggers(root string) {
 	for _, d := range fire {
 		_, _ = h.fireTrigger(root, d.f, d.t, d.why, nil, nil)
 	}
+	h.syncExternalWatches(root)
 }
 
 var flowLive = []string{"running", "review", "scheduled"}
@@ -689,9 +722,29 @@ func (h *Hub) onFlowFinished(root string, run FlowRunState) {
 
 // --- when files change -------------------------------------------------------------
 
+// fileChange is a change for files triggers: rel is "" outside the project.
+type fileChange struct{ rel, abs, op string }
+
 // noteFileChanges collects the project's file changes (those no step run
 // made) for the "files" triggers they match.
 func (h *Hub) noteFileChanges(root string, chs []watch.Change) {
+	var list []fileChange
+	for _, c := range chs {
+		list = append(list, fileChange{c.Path, filepath.ToSlash(filepath.Join(root, filepath.FromSlash(c.Path))), c.Op})
+	}
+	h.noteChanges(root, list)
+}
+
+// noteExternalChanges: changes in a watched folder outside the project.
+func (h *Hub) noteExternalChanges(root, dir string, chs []watch.Change) {
+	var list []fileChange
+	for _, c := range chs {
+		list = append(list, fileChange{"", filepath.ToSlash(filepath.Join(dir, filepath.FromSlash(c.Path))), c.Op})
+	}
+	h.noteChanges(root, list)
+}
+
+func (h *Hub) noteChanges(root string, chs []fileChange) {
 	if len(chs) == 0 || !h.rootIs(root) {
 		return
 	}
@@ -711,8 +764,8 @@ func (h *Hub) noteFileChanges(root string, chs []watch.Change) {
 			}
 			var hit []string
 			for _, c := range chs {
-				if t.Files.Matches(c.Path, c.Op) {
-					hit = append(hit, c.Path)
+				if t.Files.Matches(c.rel, c.abs, c.op) {
+					hit = append(hit, firstNonEmpty(c.rel, c.abs)) // outside the project: the full path
 				}
 			}
 			if len(hit) == 0 || h.flowRunning(f.ID) { // changes while it runs are likely its own
@@ -785,4 +838,155 @@ func (h *Hub) fireFiles(root, flowID, trigID string) {
 	}
 	vars := map[string]string{"files": strings.Join(shown, "\n"), "file": files[0]}
 	_, _ = h.fireTrigger(root, f, *t, fmt.Sprintf("%d file(s) changed", len(files)), vars, nil)
+}
+
+// --- folders outside the project ---------------------------------------------------
+
+// syncExternalWatches starts a watcher for each folder outside the project
+// that an enabled files trigger names, and stops those no longer named.
+func (h *Hub) syncExternalWatches(root string) {
+	if !h.rootIs(root) {
+		return
+	}
+	list, err := flow.List(root)
+	if err != nil {
+		return
+	}
+	want := map[string][]string{} // folder → trigger keys
+	problem := map[string]string{}
+	keys := map[string]flow.Trigger{}
+	for _, sum := range list {
+		f, err := flow.Load(root, sum.ID)
+		if err != nil {
+			continue
+		}
+		for _, t := range f.Triggers {
+			if t.Kind != "files" || t.Files == nil {
+				continue
+			}
+			key := trigKey(f.ID, t.ID)
+			keys[key] = t
+			if !t.Enabled {
+				continue
+			}
+			for _, g := range t.Files.Paths {
+				if !flow.IsAbsPattern(g) {
+					continue
+				}
+				dir := filepath.FromSlash(flow.GlobBase(g))
+				fi, err := os.Stat(dir)
+				switch {
+				case err != nil:
+					problem[key] = fmt.Sprintf("%s: there is no such folder", dir)
+					continue
+				case !fi.IsDir():
+					dir = filepath.Dir(dir) // one file: watch its folder
+				}
+				if inside(root, dir) {
+					continue // the project's own watcher sees it
+				}
+				if p := tooBroad(dir); p != "" {
+					problem[key] = p
+					continue
+				}
+				want[dir] = append(want[dir], key)
+			}
+		}
+	}
+	ts := h.triggers(root)
+	ts.mu.Lock()
+	ctx := ts.ctx
+	if ts.ext == nil {
+		ts.ext = map[string]context.CancelFunc{}
+	}
+	for d, stop := range ts.ext {
+		if _, ok := want[d]; !ok {
+			stop()
+			delete(ts.ext, d)
+		}
+	}
+	var start []string
+	for d := range want {
+		if ts.ext[d] == nil {
+			start = append(start, d)
+		}
+	}
+	ts.mu.Unlock()
+	sort.Strings(start)
+	for _, d := range start {
+		if ctx == nil {
+			break
+		}
+		if n := len(watch.ListFiles(d, maxExternalFiles+1)); n > maxExternalFiles {
+			for _, k := range want[d] {
+				problem[k] = fmt.Sprintf("%s has more than %d files: choose a smaller folder", d, maxExternalFiles)
+			}
+			delete(want, d)
+			continue
+		}
+		w := watch.New(d, time.Second)
+		w.Poll() // the baseline: files already there do not count
+		c, stop := context.WithCancel(ctx)
+		ts.mu.Lock()
+		if ts.ext[d] != nil {
+			ts.mu.Unlock()
+			stop()
+			continue
+		}
+		ts.ext[d] = stop
+		ts.mu.Unlock()
+		dir := d
+		go w.Run(c, func(chs []watch.Change) { h.noteExternalChanges(root, dir, chs) })
+	}
+	// say on each trigger what it watches outside the project, or why not
+	ts.mu.Lock()
+	changed := false
+	for k, t := range keys {
+		var dirs []string
+		for d, ks := range want {
+			if slicesContains(ks, k) && ts.ext[d] != nil {
+				dirs = append(dirs, d)
+			}
+		}
+		sort.Strings(dirs)
+		s := ts.current(k, t, triggerNow())
+		if strings.Join(s.Watching, "\n") != strings.Join(dirs, "\n") || s.WatchError != problem[k] {
+			s.Watching, s.WatchError = dirs, problem[k]
+			changed = true
+		}
+	}
+	if changed {
+		_ = ts.save()
+	}
+	ts.mu.Unlock()
+}
+
+// inside says whether dir is root or in it.
+func inside(root, dir string) bool {
+	r, err := filepath.Rel(root, dir)
+	return err == nil && r != ".." && !strings.HasPrefix(r, ".."+string(filepath.Separator)) && !filepath.IsAbs(r)
+}
+
+// tooBroad refuses folders that hold too much to watch: /, the home
+// folder and the folders above it.
+func tooBroad(dir string) string {
+	d := filepath.Clean(dir)
+	if d == string(filepath.Separator) || filepath.Dir(d) == d {
+		return "watching the whole disk is too much: choose a folder"
+	}
+	if home, err := os.UserHomeDir(); err == nil {
+		home = filepath.Clean(home)
+		if d == home || strings.HasPrefix(home, d+string(filepath.Separator)) {
+			return fmt.Sprintf("watching all of %s is too much: choose a folder in it (e.g. %s)", d, filepath.Join(home, "Downloads", "in"))
+		}
+	}
+	return ""
+}
+
+// kickTriggers wakes the project's scheduler (a flow with triggers was saved).
+func (h *Hub) kickTriggers(root string) {
+	select {
+	case h.triggers(root).kick <- struct{}{}:
+	default: // already woken
+	}
 }

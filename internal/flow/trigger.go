@@ -5,6 +5,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"os"
 	"path/filepath"
 	"regexp"
 	"slices"
@@ -70,8 +71,11 @@ func (a AfterFlow) Matches(status string) bool {
 // FileWatch: a "files" trigger starts when files matching Paths (and none
 // of Ignore) change as Ops says, once the changes have been quiet for Wait
 // seconds (a burst of saves starts one run). Patterns are relative to the
-// project: * is any name part, ** any folders, a pattern without / matches
-// a file name in any folder (*.java).
+// project, or absolute (/Users/me/Downloads/in/**, ~/Downloads/in): a
+// folder outside the project is then watched too. * is any name part, **
+// any folders, a pattern without / matches a file name in any folder
+// (*.java), and a pattern without * is that file, or everything in that
+// folder.
 type FileWatch struct {
 	Paths  []string `json:"paths"`
 	Ignore []string `json:"ignore,omitempty"`
@@ -92,30 +96,78 @@ func (w FileWatch) Quiet() time.Duration {
 	return time.Duration(w.Wait) * time.Second
 }
 
-// Matches says whether a change (path relative to the project, op) counts.
-// SpecWright's own folder (.codegen: flows, run results) never does, so a
-// flow's results do not start it again.
-func (w FileWatch) Matches(p, op string) bool {
-	p = strings.TrimPrefix(filepath.ToSlash(p), "./")
-	if p == ".codegen" || strings.HasPrefix(p, ".codegen/") {
+// Matches says whether a change counts: rel is its path relative to the
+// project ("" for a file outside it), abs its absolute path. SpecWright's
+// own folder (.codegen: flows, run results) never counts, so a flow's
+// results do not start it again.
+func (w FileWatch) Matches(rel, abs, op string) bool {
+	rel = strings.TrimPrefix(filepath.ToSlash(rel), "./")
+	abs = filepath.ToSlash(abs)
+	if rel != "" && (rel == ".codegen" || strings.HasPrefix(rel, ".codegen/")) {
 		return false
 	}
 	if len(w.Ops) > 0 && !slices.Contains(w.Ops, op) {
 		return false
 	}
+	match := func(g string) bool {
+		g = strings.TrimSpace(g)
+		switch {
+		case IsAbsPattern(g):
+			return abs != "" && GlobMatch(ExpandPattern(g), abs)
+		case !strings.Contains(g, "/"): // a name, anywhere
+			return (rel != "" && GlobMatch(g, rel)) || (abs != "" && GlobMatch(g, abs))
+		default:
+			return rel != "" && GlobMatch(g, rel)
+		}
+	}
 	hit := false
 	for _, g := range w.Paths {
-		hit = hit || GlobMatch(g, p)
+		hit = hit || match(g)
 	}
 	if !hit {
 		return false
 	}
 	for _, g := range w.Ignore {
-		if GlobMatch(g, p) {
+		if match(g) {
 			return false
 		}
 	}
 	return true
+}
+
+// IsAbsPattern: a pattern from the top of the disk (/…) or the home folder (~/…).
+func IsAbsPattern(g string) bool {
+	g = strings.TrimSpace(g)
+	return filepath.IsAbs(g) || strings.HasPrefix(g, "/") || g == "~" || strings.HasPrefix(g, "~/")
+}
+
+// ExpandPattern puts the home folder for a leading ~.
+func ExpandPattern(g string) string {
+	g = strings.TrimSpace(g)
+	if g == "~" || strings.HasPrefix(g, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			g = home + g[1:]
+		}
+	}
+	return filepath.ToSlash(g)
+}
+
+// GlobBase is the part of a pattern before its first wildcard: the folder
+// (or file) to watch for it.
+func GlobBase(g string) string {
+	g = strings.TrimRight(ExpandPattern(g), "/")
+	parts := strings.Split(g, "/")
+	for i, p := range parts {
+		if strings.ContainsAny(p, "*?{[") {
+			parts = parts[:i]
+			break
+		}
+	}
+	b := strings.Join(parts, "/")
+	if b == "" && strings.HasPrefix(g, "/") {
+		b = "/"
+	}
+	return b
 }
 
 // GlobMatch matches a slash path against a pattern (see FileWatch).
@@ -131,7 +183,15 @@ func GlobMatch(pattern, p string) bool {
 		pattern = "**/" + pattern
 	}
 	re, err := globRE(pattern)
-	return err == nil && re.MatchString(p)
+	if err == nil && re.MatchString(p) {
+		return true
+	}
+	// no wildcards: that file, or everything in that folder
+	if !strings.ContainsAny(pattern, "*?{[") {
+		re, err = globRE(strings.TrimRight(pattern, "/") + "/**")
+		return err == nil && re.MatchString(p)
+	}
+	return false
 }
 
 func globRE(pattern string) (*regexp.Regexp, error) {

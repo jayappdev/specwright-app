@@ -6564,6 +6564,22 @@ export function createMockBackend(methods) {
               nextRun: up[0] ? up[0].toISOString() : "",
               done: ok && !up.length,
               lastStatus: db.runs.find((r) => r.id === st.lastRunId)?.state || st.lastStatus,
+              // the folders outside the project a files trigger watches (the part before a wildcard)
+              watching:
+                t.kind === "files" && t.enabled
+                  ? (t.files?.paths || [])
+                      .filter((g) => /^[/~]/.test(g.trim()))
+                      .map(
+                        (g) =>
+                          g
+                            .trim()
+                            .split("/")
+                            .filter(
+                              (x, i, a) => !/[*?{[]/.test(x) && !a.slice(0, i).some((y) => /[*?{[]/.test(y)),
+                            )
+                            .join("/") || "/",
+                      )
+                  : undefined,
             },
             describe:
               t.kind === "schedule"
