@@ -6708,6 +6708,7 @@ export function createMockBackend(methods) {
     },
     async PreviewFile(path) {
       await wait(80);
+      if (String(path).includes("old-go-empty")) return { path: "/w/out/old-go-empty.md", rel: "out/old-go-empty.md", name: "old-go-empty.md", size: 0, kind: "text" }; // TEMP
       const p = String(path || "")
         .trim()
         .replace(/^[`'"]|[`'"]$/g, "")

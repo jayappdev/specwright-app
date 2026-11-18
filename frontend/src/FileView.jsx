@@ -55,6 +55,16 @@ export function loadFileInto(slot, path) {
   backend.PreviewFile(path).then(
     (d) => {
       if (gone || slot.path !== path) return;
+      // fields the backend leaves out when empty (an empty file, an empty
+      // folder): present, so the view never trips over a missing one
+      d = { ...(d || {}) };
+      d.kind ||= "binary";
+      d.name ||= String(d.path || path)
+        .split(/[\\/]/)
+        .pop();
+      // TEMP off
+      if (d.kind === "dir") d.entries = d.entries || [];
+      d.matches = d.matches || [];
       slot.data = d;
       slot.loading = false;
       if ((d.kind === "pdf" || d.kind === "image") && d.data) slot.url = b64ToBlobUrl(d.data, d.mime);

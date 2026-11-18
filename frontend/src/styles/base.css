@@ -1240,3 +1240,27 @@ input[type="range"] {
   font-family: var(--font-mono);
   resize: vertical;
 }
+
+/* a part of the app that failed to render (ErrorBoundary) */
+.err-boundary {
+  margin: 16px;
+  max-width: 760px;
+  border-color: var(--error, #d33);
+}
+.err-boundary.full {
+  margin: 48px auto;
+}
+.err-boundary-msg {
+  max-height: 200px;
+  overflow: auto;
+  white-space: pre-wrap;
+}
+.err-boundary.floating {
+  position: fixed;
+  top: 56px;
+  right: 16px;
+  width: min(460px, calc(100vw - 32px));
+  margin: 0;
+  z-index: 200;
+  box-shadow: 0 12px 40px rgba(0, 0, 0, 0.35);
+}

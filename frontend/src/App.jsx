@@ -1,3 +1,4 @@
+import { ErrorBoundary } from "./ErrorBoundary.jsx";
 import { useEffect, useSyncExternalStore } from "react";
 import { backend } from "./backend.js";
 import {
@@ -285,7 +286,9 @@ export function App() {
           />
         )}
         <main className="main" data-view={S.view}>
-          <view.C />
+          <ErrorBoundary name={view.label || "This view"} resetKey={S.view}>
+            <view.C />
+          </ErrorBoundary>
         </main>
         <footer className="statusbar">
           <span className="status-item status-brand">
@@ -391,14 +394,38 @@ export function App() {
           </span>
         </footer>
       </div>
-      <RulesEditors />
-      <SecretPrompt />
-      <PermissionPrompt />
-      <FilePreview />
-      <LibraryEditor />
-      <RunPicker />
-      <DialogHost />
-      <CommandPalette />
+      <ErrorBoundary floating name="The rules editor">
+        <RulesEditors />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="The secret prompt">
+        <SecretPrompt />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="The permission prompt">
+        <PermissionPrompt />
+      </ErrorBoundary>
+      <ErrorBoundary
+        floating
+        name="The file preview"
+        resetKey={S.preview?.path || ""}
+        onClose={() => {
+          S.preview = null;
+          update();
+        }}
+      >
+        <FilePreview />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="The library editor">
+        <LibraryEditor />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="The run picker">
+        <RunPicker />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="The dialog">
+        <DialogHost />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="The command palette">
+        <CommandPalette />
+      </ErrorBoundary>
       <div className="toast" aria-live="polite" onMouseEnter={toastHold} onMouseLeave={toastRelease}>
         {S.toast && S.toastKind !== "error" && <div className="banner">{S.toast}</div>}
       </div>
