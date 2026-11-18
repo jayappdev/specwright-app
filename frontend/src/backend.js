@@ -132,6 +132,19 @@ const METHODS = [
   "ExportTools",
   "PreviewToolImport",
   "ImportTools",
+  "WizardList",
+  "WizardLoad",
+  "WizardDelete",
+  "WizardStart",
+  "WizardUpdate",
+  "WizardClarify",
+  "WizardPlan",
+  "WizardDraft",
+  "WizardRevise",
+  "WizardDiscard",
+  "WizardSaveDraftTest",
+  "WizardRunDraft",
+  "WizardApply",
 ];
 
 function wailsBackend() {
