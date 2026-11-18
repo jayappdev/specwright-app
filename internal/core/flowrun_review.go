@@ -71,6 +71,8 @@ func (h *Hub) reviewStep(ctx context.Context, root string, fr *flowRun, n *flow.
 			out, note = got, "Refined with AI: "+fb
 			if dec.Save {
 				h.saveImprovement(root, fr, n, "refine", fb)
+			} else {
+				h.learnFromReview(fr, n.ID, fb, "refine") // later runs of this step get it (lessons.go)
 			}
 		case "command":
 			cmd := strings.TrimSpace(dec.Command)

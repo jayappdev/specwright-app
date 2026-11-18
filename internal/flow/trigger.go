@@ -243,6 +243,31 @@ type Trigger struct {
 	// asleep runs once when it is back (otherwise the trigger waits for
 	// its next time)
 	CatchUp bool `json:"catchUp,omitempty"`
+	// IfBusy: when a run is due while this flow is still running (or too
+	// many triggered runs are going): "wait" for its turn (the default) or
+	// "skip" this time
+	IfBusy string `json:"ifBusy,omitempty"`
+	// Retries: a run of this trigger that fails is tried again this many
+	// times (0–3), RetryWait minutes apart (default DefaultRetryWait)
+	Retries   int `json:"retries,omitempty"`
+	RetryWait int `json:"retryWait,omitempty"`
+}
+
+// Busy choices, the most retries, and the default wait between them.
+const (
+	MaxRetries       = 3
+	DefaultRetryWait = 5
+)
+
+// Skips says the trigger skips a run that is due while it cannot start.
+func (t Trigger) Skips() bool { return t.IfBusy == "skip" }
+
+// RetryAfter is the wait before a retry.
+func (t Trigger) RetryAfter() time.Duration {
+	if t.RetryWait <= 0 {
+		return DefaultRetryWait * time.Minute
+	}
+	return time.Duration(t.RetryWait) * time.Minute
 }
 
 // Schedule is when a schedule trigger runs. Times are local time, written
@@ -520,6 +545,15 @@ func (f *Flow) checkTriggers(add func(node, level, format string, a ...any)) {
 					add("start", "error", "Trigger %s: wait 0 to 3600 seconds.", name)
 				}
 			}
+		}
+		if t.IfBusy != "" && t.IfBusy != "wait" && t.IfBusy != "skip" {
+			add("start", "error", "Trigger %s: when the flow is busy it waits or skips, not %q.", name, t.IfBusy)
+		}
+		if t.Retries < 0 || t.Retries > MaxRetries {
+			add("start", "error", "Trigger %s: retries 0 to %d.", name, MaxRetries)
+		}
+		if t.RetryWait < 0 || t.RetryWait > 1440 {
+			add("start", "error", "Trigger %s: wait 0 to 1440 minutes between retries.", name)
 		}
 		for k, v := range t.Inputs {
 			for _, m := range triggerVarRE.FindAllStringSubmatch(v, -1) {

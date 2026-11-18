@@ -3057,3 +3057,56 @@ select.fl-secret-pick {
   border-radius: 2px;
   padding: 0 1px;
 }
+/* tool reliability (tiles, the Flow Designer's tool step) */
+.tt-rel {
+  display: block;
+  font-size: 0.8em;
+}
+.tt-rel.rel-ok {
+  color: var(--muted);
+}
+.tt-rel.rel-warn {
+  color: var(--warn);
+}
+.tt-rel.rel-bad {
+  color: var(--error);
+  font-weight: 600;
+}
+/* lessons from reviews (AI and Improve steps) */
+.fl-lessons summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.fl-lesson {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0;
+}
+.fl-lesson textarea {
+  width: 100%;
+  max-width: 100%;
+}
+.fl-lesson.off textarea {
+  opacity: 0.6;
+}
+.fl-lesson-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  font-size: 0.85em;
+}
+.fl-lesson-meta > span {
+  flex: 1 1 auto;
+}
+.fl-lesson-add {
+  display: flex;
+  gap: 6px;
+}
+.fl-lesson-add input {
+  flex: 1;
+  min-width: 0;
+}
+.fl-trigger-busy summary {
+  cursor: pointer;
+}

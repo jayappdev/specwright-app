@@ -196,6 +196,7 @@ func (h *Hub) runImprove(ctx context.Context, root string, fr *flowRun, n *flow.
 			case "next": // another round, with the person's feedback if any
 				fb := strings.TrimSpace(dec.Prompt)
 				if fb != "" {
+					h.learnFromReview(fr, n.ID, fb, "improve") // later runs of this step get it (lessons.go)
 					p.history = append(p.history, ImproveRound{Round: round, By: "person", Reason: clipText(fb, 2000)})
 					h.flowPublish(fr, "gate.changes", "Another round: "+fb, map[string]any{"_step": n.ID, "feedback": fb})
 					h.improveState(fr, p)
@@ -487,6 +488,7 @@ func (h *Hub) improvePrompt(fr *flowRun, p *improvePair, d flow.Data, round, lim
  "output": "<only when done and the result needs a small fix the tool cannot make: the complete fixed result>"}
 When not done, give the arguments to change for the next run (only the ones that change) and, only if the input itself must change, the new input. Leave out what you do not change.`)
 	}
+	b.WriteString(h.lessonsNote(f.ID, n.ID))
 	b.WriteString(h.aiSuffix(f, d))
 	return b.String()
 }

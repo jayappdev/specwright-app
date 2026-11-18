@@ -4384,6 +4384,25 @@ export function createMockBackend(methods) {
               : dec.prompt + "\n\nData:\n```\n" + out + "\n```",
           );
           note = "Refined with AI: " + dec.prompt;
+          if (!dec.save) {
+            // kept as a lesson for later runs of this step (core/lessons.go)
+            (db.lessons ||= []).unshift({
+              id: Date.now(),
+              workspace: db.root,
+              flow: f.id,
+              step: n.id,
+              text: dec.prompt,
+              source: "refine",
+              runId: id,
+              created: now(),
+              used: 0,
+            });
+            pub("flow.lesson", "Kept for later runs of this step: " + dec.prompt, {
+              step: n.id,
+              text: dec.prompt,
+            });
+            persist();
+          }
           if (dec.save) {
             const fl = db.flows[f.id],
               cur = fl.nodes.find((x) => x.id === n.id);
@@ -5534,6 +5553,79 @@ export function createMockBackend(methods) {
     },
     async Runs(limit) {
       return clone(db.runs.filter((r) => r.workspace === db.root).slice(0, limit || 50));
+    },
+    // lessons from reviews (core/lessons.go)
+    async FlowLessons(flowID) {
+      return clone((db.lessons || []).filter((l) => l.flow === flowID && l.workspace === db.root));
+    },
+    async AddFlowLesson(flowID, step, text) {
+      text = String(text || "").trim();
+      if (!text) throw new Error("a lesson needs some text");
+      const same = (db.lessons ||= []).find(
+        (l) => l.flow === flowID && l.step === step && l.text.toLowerCase() === text.toLowerCase(),
+      );
+      if (same) return clone(Object.assign(same, { off: false }));
+      const l = {
+        id: Date.now(),
+        workspace: db.root,
+        flow: flowID,
+        step,
+        text,
+        source: "manual",
+        created: now(),
+        used: 0,
+      };
+      db.lessons.unshift(l);
+      persist();
+      return clone(l);
+    },
+    async UpdateLesson(id, text, off) {
+      const l = (db.lessons || []).find((x) => x.id === id);
+      if (!l) throw new Error("no such lesson");
+      Object.assign(l, { text: String(text).trim() || l.text, off: !!off });
+      persist();
+    },
+    async DeleteLesson(id) {
+      db.lessons = (db.lessons || []).filter((x) => x.id !== id);
+      persist();
+    },
+    // tool reliability (core/toolstats.go): from the recorded tool results
+    async ToolStats() {
+      const calls = [];
+      for (const r of db.runs.filter((x) => x.workspace === db.root))
+        for (const e of db.events[r.id] || [])
+          if (e.type === "tool.result" && e.tool) calls.push({ ...e, at: e.ts });
+      calls.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+      const out = {};
+      for (const c of calls) {
+        const s = (out[c.tool] ||= { tool: c.tool, calls: 0, failed: 0, recent: [], typicalMs: 0, ms: [] });
+        if (!s.lastAt) s.lastAt = c.at;
+        if (c.ok === false && !s.lastError)
+          Object.assign(s, { lastError: String(c.output || "failed").slice(0, 200), lastFailAt: c.at });
+        if (s.calls < 10) {
+          s.calls++;
+          s.recent.push(c.ok !== false);
+          if (c.ok === false) s.failed++;
+        }
+        if (c.ok !== false && c.duration_ms) s.ms.push(c.duration_ms);
+      }
+      for (const s of Object.values(out)) {
+        s.ms.sort((a, b) => a - b);
+        s.typicalMs = s.ms[Math.floor(s.ms.length / 2)] || 0;
+        delete s.ms;
+      }
+      return out;
+    },
+    async ToolArgExamples(tool) {
+      const seen = new Set(),
+        out = [];
+      for (const r of db.runs.filter((x) => x.workspace === db.root))
+        for (const e of db.events[r.id] || [])
+          if (e.type === "tool.call" && e.tool === tool && e.args && Object.keys(e.args).length) {
+            const k = JSON.stringify(e.args);
+            if (!seen.has(k) && out.length < 3) seen.add(k) && out.push(e.args);
+          }
+      return out;
     },
     // search inside runs (core: the history database's full-text index): all
     // words must appear, the last may be the start of one; snippets mark

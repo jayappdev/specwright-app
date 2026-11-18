@@ -26,6 +26,7 @@ import (
 
 	"codegen/internal/extension"
 	"codegen/internal/flow"
+	"codegen/internal/store"
 )
 
 // ToolInspect is what InspectTool found.
@@ -382,6 +383,10 @@ func (h *Hub) RunToolWith(e extension.Extension, args map[string]any, secrets ma
 	}
 	run.Command = show(res.Command)
 	run.Output, run.Error, run.OK = show(res.Output), show(res.Error), res.OK
+	if e.Name != "" { // a saved tool (or a draft of one): its reliability (toolstats.go)
+		h.recordToolCall(store.ToolCall{Workspace: root, Tool: e.Name, Source: "test", OK: res.OK, DurationMS: run.DurationMS, Args: checked,
+			Error: firstNonEmpty(run.Error, map[bool]string{true: "", false: fmt.Sprintf("exit code %d", res.ExitCode)}[res.OK])})
+	}
 	x := extension.ToolExpect{}
 	if expect != nil {
 		x = *expect

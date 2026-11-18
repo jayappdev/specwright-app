@@ -177,6 +177,7 @@ type designTool struct {
 // contracts.
 func (h *Hub) designTools() []designTool {
 	var out []designTool
+	stats, _ := h.Store.ToolStats(h.Root(), "")
 	if exts, err := h.Extensions(); err == nil {
 		for _, e := range exts {
 			if extension.IsManagedScope(e.Scope) && (e.Managed == nil || e.Managed.Status != extension.ManagedVerified) {
@@ -185,7 +186,8 @@ func (h *Hub) designTools() []designTool {
 			if !e.Approved && !extension.IsManagedScope(e.Scope) {
 				continue // not runnable yet
 			}
-			out = append(out, designTool{Name: e.Name, Desc: e.Desc, Params: e.Params, Output: e.Output, OutputBy: e.OutputBy})
+			st, ok := stats[e.Name]
+			out = append(out, designTool{Name: e.Name, Desc: e.Desc + reliabilityNote(st, ok), Params: e.Params, Output: e.Output, OutputBy: e.OutputBy})
 		}
 	}
 	for _, e := range h.FlowBuiltinTools() {

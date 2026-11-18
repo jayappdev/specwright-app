@@ -17,6 +17,7 @@ import (
 	"codegen/internal/aishim"
 	"codegen/internal/bus"
 	"codegen/internal/extension"
+	"codegen/internal/store"
 )
 
 // --- extension.Provider -------------------------------------------------
@@ -106,6 +107,8 @@ func (h *Hub) Observe(name string, args map[string]any, res extension.RunResult)
 	h.mu.RLock()
 	tc := h.testCalls
 	h.mu.RUnlock()
+	h.recordToolCall(store.ToolCall{Tool: name, Source: "agent", OK: res.OK, DurationMS: res.DurationMS, Args: args,
+		Error: firstNonEmpty(res.Error, map[bool]string{true: "", false: fmt.Sprintf("exit code %d", res.ExitCode)}[res.OK])}) // toolstats.go
 	if tc != nil {
 		select {
 		case tc <- testCall{name: name, args: args, res: res}:

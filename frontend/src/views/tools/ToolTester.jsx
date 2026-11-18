@@ -317,6 +317,22 @@ export function ToolTester({ tb, d }) {
           >
             Fill with examples
           </button>
+          {d.name && (
+            <button
+              className="link"
+              title="The arguments of its latest successful runs in this project"
+              onClick={async () => {
+                const ex = await backend.ToolArgExamples(d.name).catch(() => []);
+                if (!ex?.length) return toast("No successful run of this tool recorded yet.");
+                t.exIndex = ((t.exIndex ?? -1) + 1) % ex.length;
+                for (const p of params) t.vals[p.name] = ex[t.exIndex][p.name] ?? "";
+                toast(`Arguments of a run that worked (${t.exIndex + 1} of ${ex.length}).`);
+                update();
+              }}
+            >
+              Arguments that worked
+            </button>
+          )}
         </div>
         {t.running && (
           <AiProgress phases={["Checking the arguments", "Running the tool", "Checking the output"]} />

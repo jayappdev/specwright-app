@@ -431,5 +431,5 @@ func (h *Hub) aiStepPrompt(f *flow.Flow, n *flow.Node, d flow.Data, parents int)
 	if n.OutputSchema != nil && n.OutputSchema.Known() {
 		prompt += "\n\nReply with only JSON in this shape, with no explanation and no code fences:\n" + n.OutputSchema.Compact()
 	}
-	return prompt + h.aiSuffix(f, d)
+	return prompt + h.lessonsNote(f.ID, n.ID) + h.aiSuffix(f, d)
 }

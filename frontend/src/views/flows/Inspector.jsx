@@ -1,6 +1,8 @@
 // The Flow designer's inspector: flow settings, inputs (incl. secret sources),
 // each step type's settings, decisions, filters, aggregates, connections, the
 // data panel (what a step gets and gives) and variable chips.
+import { LessonsEditor } from "./Lessons.jsx";
+import { Reliability } from "../../ToolTile.jsx";
 import { TriggersEditor } from "./Triggers.jsx";
 import { ModelPicker } from "../../ModelPicker.jsx";
 import { stepRef, toolRef, isBuiltin, loopInfo } from "../../flowNames.js";
@@ -831,6 +833,7 @@ function StepInspector({ n }) {
                   <ToolOptions />
                 </select>
               </Field>
+              {n.tool && <Reliability name={n.tool} long />}
               {isBuiltin(n.tool) && (
                 <p className="muted fl-builtin-desc">
                   {(tools().find((x) => x.name === n.tool)?.desc || "").replace(/^[^:]*:\s*/, "")}{" "}
@@ -912,9 +915,15 @@ function StepInspector({ n }) {
                   Default: the model chosen when the flow runs, else the app's model.
                 </small>
               </div>
+              <LessonsEditor n={n} />
             </>
           )}
-          {n.type === "improve" && <ImproveInspector n={n} set={set} flow={flow} />}
+          {n.type === "improve" && (
+            <>
+              <ImproveInspector n={n} set={set} flow={flow} />
+              <LessonsEditor n={n} />
+            </>
+          )}
           <DataPanel n={n} />
           {n.type === "decision" && <DecisionInspector n={n} set={set} />}
           {n.type === "filter" && <FilterInspector n={n} set={set} />}

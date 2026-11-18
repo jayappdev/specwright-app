@@ -40,7 +40,7 @@ import (
 )
 
 // schemaVersion: bump with a migration in migrate.
-const schemaVersion = 1
+const schemaVersion = 2
 
 func openDB(dir string) (*sql.DB, error) {
 	p := filepath.Join(dir, "history.db")
@@ -71,6 +71,24 @@ func migrate(db *sql.DB) error {
 		return err
 	}
 	defer tx.Rollback()
+	if v < 1 {
+		if err := migrate1(tx); err != nil {
+			return err
+		}
+	}
+	if v < 2 {
+		if err := migrate2(tx); err != nil { // learn.go
+			return fmt.Errorf("history database: %w", err)
+		}
+	}
+	if _, err := tx.Exec(`INSERT INTO meta(k, v) VALUES('schema', ?) ON CONFLICT(k) DO UPDATE SET v=excluded.v`, fmt.Sprint(schemaVersion)); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// migrate1: runs, usage, named state and the search index.
+func migrate1(tx *sql.Tx) error {
 	for _, q := range []string{
 		`CREATE TABLE IF NOT EXISTS runs(
 			id TEXT PRIMARY KEY,
@@ -92,13 +110,12 @@ func migrate(db *sql.DB) error {
 		`CREATE INDEX IF NOT EXISTS usage_by_at ON usage(at)`,
 		`CREATE TABLE IF NOT EXISTS state(ns TEXT NOT NULL, k TEXT NOT NULL, v TEXT NOT NULL, PRIMARY KEY(ns, k))`,
 		`CREATE VIRTUAL TABLE IF NOT EXISTS search USING fts5(run_id UNINDEXED, field UNINDEXED, text, tokenize='unicode61 remove_diacritics 2')`,
-		`INSERT INTO meta(k, v) VALUES('schema', '1') ON CONFLICT(k) DO UPDATE SET v=excluded.v`,
 	} {
 		if _, err := tx.Exec(q); err != nil {
 			return fmt.Errorf("history database: %w", err)
 		}
 	}
-	return tx.Commit()
+	return nil
 }
 
 // --- runs ---------------------------------------------------------------------------

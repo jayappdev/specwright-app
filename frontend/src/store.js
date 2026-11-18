@@ -79,6 +79,8 @@ export const S = {
   results: {}, // run id → its results folder (RunResults), loaded on demand
   threads: {}, // run id → the conversation it continues (RunThread)
   history: { runs: [], sel: "", pos: 0, playing: false },
+  // tool reliability: name → latest calls' numbers (toolStats.js)
+  toolStats: null,
   metrics: null,
   wizSection: "w-lang",
   toast: "",

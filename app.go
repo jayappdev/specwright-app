@@ -176,6 +176,22 @@ func (a *App) SearchHistory(q string, limit int) ([]store.Hit, error) {
 	return ok(a.hub.SearchHistory(q, limit))
 }
 
+// lessons from reviews, and tool reliability (core/lessons.go, core/toolstats.go)
+func (a *App) FlowLessons(flowID string) ([]store.Lesson, error) {
+	return ok(a.hub.FlowLessons(flowID))
+}
+func (a *App) AddFlowLesson(flowID, step, text string) (store.Lesson, error) {
+	return ok(a.hub.AddFlowLesson(flowID, step, text))
+}
+func (a *App) UpdateLesson(id int64, text string, off bool) error {
+	return a.hub.UpdateLesson(id, text, off)
+}
+func (a *App) DeleteLesson(id int64) error                   { return a.hub.DeleteLesson(id) }
+func (a *App) ToolStats() (map[string]store.ToolStat, error) { return ok(a.hub.ToolStats()) }
+func (a *App) ToolArgExamples(tool string) ([]map[string]any, error) {
+	return ok(a.hub.ToolArgExamples(tool))
+}
+
 // --- extensions ----------------------------------------------------------
 
 func (a *App) Extensions() ([]extension.Extension, error) { return ok(a.hub.Extensions()) }

@@ -144,3 +144,38 @@ func TestDatabaseFilePrivate(t *testing.T) {
 		t.Fatalf("journal mode %q", mode)
 	}
 }
+
+// a database from the first version (schema 1) gets the new tables
+func TestMigrateFromSchema1(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	_ = s.SaveRun(Run{ID: "r", Workspace: "/w", State: "done", Title: "Kept", Started: time.Now()})
+	for _, q := range []string{`DROP TABLE lessons`, `DROP TABLE tool_calls`, `DROP TABLE trigger_queue`, `UPDATE meta SET v='1' WHERE k='schema'`} {
+		if _, err := s.db.Exec(q); err != nil {
+			t.Fatal(err)
+		}
+	}
+	s.Close()
+	s2, err := Open(dir)
+	if err != nil || s2.DBError() != nil {
+		t.Fatal(err, s2.DBError())
+	}
+	defer s2.Close()
+	if rs, _ := s2.Runs("/w", 0); len(rs) != 1 {
+		t.Fatal("the history stays")
+	}
+	if _, err := s2.AddLesson(Lesson{Workspace: "/w", Flow: "f", Step: "s", Text: "x"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := s2.RecordToolCall(ToolCall{Workspace: "/w", Tool: "t", OK: true}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s2.Enqueue(QueuedRun{Workspace: "/w", Flow: "f", Trigger: "t"}); err != nil {
+		t.Fatal(err)
+	}
+	var v string
+	_ = s2.db.QueryRow(`SELECT v FROM meta WHERE k='schema'`).Scan(&v)
+	if v != "2" {
+		t.Fatal(v)
+	}
+}
