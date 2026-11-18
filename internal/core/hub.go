@@ -74,6 +74,8 @@ type Hub struct {
 	perms     permissionState // permission prompts (permissions.go)
 	runs      map[string]*workflow.Run
 	testCalls chan testCall
+	trig      *triggerStore // triggers.go: the open project's trigger state
+
 }
 
 // Options configure New.
@@ -353,6 +355,7 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	h.mu.Unlock()
 	w.Poll() // take the baseline snapshot now
 	go w.Run(wctx, h.onFiles)
+	go h.runScheduler(wctx, abs) // the project's triggers (schedules); triggers.go
 	h.Bus.Publish(bus.Event{Type: "workspace.opened", Summary: abs, Data: map[string]any{"root": abs}})
 	return h.Workspace()
 }

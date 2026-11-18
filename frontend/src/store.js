@@ -429,6 +429,28 @@ export function onHubEvent(e) {
           at: Date.now(),
         });
       break;
+    case "trigger.fired": // a schedule started a run: Run flows and History list it
+      if (S.frun)
+        backend
+          .FlowRuns(100)
+          .then((runs) => {
+            S.frun.runs = runs || [];
+            return backend.FlowTriggers("");
+          })
+          .then((t) => {
+            S.frun.triggers = t || [];
+            update();
+          })
+          .catch(() => {});
+      if (S.view === "history" && S.history)
+        backend
+          .Runs(500)
+          .then((r) => {
+            S.history.runs = r || [];
+            update();
+          })
+          .catch(() => {});
+      break;
     case "design.progress": // the flow wizard's AI calls: what it is doing now
       if (e.wizard) {
         S.wizProgress = { id: e.wizard, phase: e.phase || "", msg: e.summary || "", at: Date.now() };

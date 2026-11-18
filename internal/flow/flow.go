@@ -41,6 +41,8 @@ type Flow struct {
 	Skills      []Skill `json:"skills"`
 	Nodes       []Node  `json:"nodes"`
 	Edges       []Edge  `json:"edges"`
+	// Triggers start the flow by themselves (a schedule…); see trigger.go
+	Triggers []Trigger `json:"triggers,omitempty"`
 	// MinutesSaved is the manual work one successful run replaces (for
 	// Metrics); 0 means "estimate from the steps".
 	MinutesSaved int       `json:"minutesSaved,omitempty"`
@@ -447,6 +449,7 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 	add := func(node, level, format string, a ...any) {
 		is = append(is, Issue{Node: node, Level: level, Message: fmt.Sprintf(format, a...)})
 	}
+	f.checkTriggers(add)
 	if strings.TrimSpace(f.Name) == "" {
 		add("", "error", "Give the flow a name.")
 	}

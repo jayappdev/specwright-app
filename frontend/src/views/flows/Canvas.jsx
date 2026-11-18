@@ -1,5 +1,6 @@
 // The flow canvas: steps, connections, selection, drag, zoom and fit, and the
 // keyboard model (move, connect, undo). Part of the Flow designer.
+import { hasSchedule } from "./Triggers.jsx";
 import { loopInfo } from "../../flowNames.js";
 import { useEffect, useRef, useState } from "react";
 import { S, update } from "../../store.js";
@@ -563,6 +564,11 @@ export function Canvas() {
                   title={`Runs once per item of ${loopName}${inLoop.length > 1 ? ` (nested ${inLoop.length} deep)` : ""}`}
                 >
                   ↻ {inLoop.length > 1 ? "×" + inLoop.length + " " : ""}per item of {loopName}
+                </div>
+              )}
+              {n.type === "start" && hasSchedule(flow) && (
+                <div className="fl-node-sched" title="This flow has a schedule: it starts by itself">
+                  <Icon.history /> scheduled
                 </div>
               )}
               {n.type === "start" && flow.inputs.length > 0 && (

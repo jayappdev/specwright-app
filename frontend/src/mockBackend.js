@@ -4,6 +4,7 @@
 
 import { resolveDate, dateDefault } from "./dates.js";
 import { inferParams, checkArgs } from "./toolParams.js";
+import { checkSchedule, upcoming, describeSchedule } from "./schedule.js";
 import { stepNames, isStepField, isLoopField, applyStepIDs } from "./flowNames.js";
 import { shapes as flowShapes, parseSchema, checkPaths, sampleOf, toolOutput } from "./schema.js";
 import {
@@ -3799,6 +3800,12 @@ export function createMockBackend(methods) {
       usage: {},
       kind: o.trial ? "flow-trial" : "flow",
       title: f.name + (o.trial ? " (trial)" : ""),
+      ...(o.trigger
+        ? {
+            trigger: o.trigger.kind === "schedule" ? "scheduled" : o.trigger.kind,
+            triggerName: o.trigger.name,
+          }
+        : {}),
       ask: Object.entries(o.inputs || {})
         .filter(([, v]) => v)
         .map(([k, v]) => `${k}: ${String(v).slice(0, 300)}`)
@@ -6469,6 +6476,83 @@ export function createMockBackend(methods) {
         ...st,
         status: ["running", "review", "scheduled"].includes(st.status) ? "interrupted" : st.status,
       });
+    },
+    // triggers (browser preview: state kept in the mock; runs start when the user presses Run now)
+    async FlowTriggers(flowID) {
+      await wait(60);
+      const out = [];
+      for (const f of Object.values(db.flows)) {
+        if (flowID && f.id !== flowID) continue;
+        for (const t of f.triggers || []) {
+          const key = f.id + "/" + t.id,
+            st = ((db.trig ||= {})[key] ||= { runs: 0, missed: 0, since: now() });
+          const s = t.schedule || {};
+          const ok = !checkSchedule(s);
+          const up = ok ? upcoming(s, new Date(), new Date(st.since), 3, st.runs || 0) : [];
+          out.push({
+            flowId: f.id,
+            flowName: f.name,
+            trigger: clone(t),
+            state: {
+              ...st,
+              secrets: undefined,
+              nextRun: up[0] ? up[0].toISOString() : "",
+              done: ok && !up.length,
+            },
+            describe: ok ? describeSchedule(s) : "",
+            upcoming: up.map((d) => d.toISOString()),
+            secretsNeeded: (f.inputs || []).filter((i) => i.type === "secret").map((i) => i.name),
+            secretsSaved: Object.keys(st.secrets || {}),
+            keyIn: "keychain",
+          });
+        }
+      }
+      return out;
+    },
+    async PreviewSchedule(s) {
+      const p = checkSchedule(s);
+      if (p) throw new Error(p);
+      return upcoming(s, new Date(), new Date(), 5).map((d) => d.toISOString());
+    },
+    async SaveTriggerSecrets(flowID, triggerID, values) {
+      const st = ((db.trig ||= {})[flowID + "/" + triggerID] ||= { runs: 0, missed: 0, since: now() });
+      st.secrets ||= {};
+      for (const [k, v] of Object.entries(values || {})) {
+        if (v) st.secrets[k] = "(encrypted)";
+        else delete st.secrets[k];
+      }
+      persist();
+      return Object.keys(st.secrets).sort();
+    },
+    async RunTriggerNow(flowID, triggerID) {
+      const f = db.flows[flowID],
+        t = (f?.triggers || []).find((x) => x.id === triggerID);
+      if (!t) throw new Error(`the flow ${flowID} has no trigger ${triggerID}`);
+      const st = ((db.trig ||= {})[flowID + "/" + triggerID] ||= { runs: 0, missed: 0, since: now() });
+      const run = startFlowRun(f, {
+        inputs: { ...(t.inputs || {}) },
+        review: "none",
+        trigger: { kind: t.kind, id: t.id, name: t.name || t.id },
+      });
+      Object.assign(st, {
+        runs: (st.runs || 0) + 1,
+        lastRun: now(),
+        lastRunId: run.id,
+        lastStatus: "running",
+      });
+      persist();
+      setTimeout(
+        () =>
+          emit({
+            type: "trigger.fired",
+            summary: `${f.name}: ${t.name || t.id} (run now)`,
+            flow: f.id,
+            trigger: t.id,
+            run: run.id,
+          }),
+        50,
+      );
+      return run;
     },
     async FlowRuns(limit) {
       return clone(

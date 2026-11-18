@@ -38,6 +38,8 @@ import (
 // FlowRunOptions tune one run.
 type FlowRunOptions struct {
 	Inputs map[string]string `json:"inputs"`
+	// Trigger: what started the run when it was not a person (a schedule)
+	Trigger *RunTrigger `json:"trigger,omitempty"`
 	// Files are files attached to an input (workspace paths): uploads for
 	// file inputs, and pasted or dropped images, PDFs and documents for
 	// clipboard and long-text inputs.
@@ -347,11 +349,29 @@ func (h *Hub) startFlow(root string, f *flow.Flow, o FlowRunOptions, trial *Flow
 	if trial != nil {
 		kind, title = "flow-trial", f.Name+" (trial)"
 	}
-	_ = h.Store.SaveRun(store.Run{ID: runID, Workspace: root, Workflow: f.ID, Step: "flow", Agent: agentName, Model: model, State: "running", Started: fr.st.Started, Kind: kind, Title: title, Ask: flowAsk(o.Inputs)})
+	_ = h.Store.SaveRun(store.Run{ID: runID, Workspace: root, Workflow: f.ID, Step: "flow", Agent: agentName, Model: model, State: "running", Started: fr.st.Started, Kind: kind, Title: title, Ask: flowAsk(o.Inputs), Trigger: triggerTag(o.Trigger), TriggerName: triggerName(o.Trigger)})
 	h.flowPublish(fr, "run.start", "Started flow "+f.Name, map[string]any{"flow": f.ID})
 	h.flowState(fr)
 	go h.execFlow(ctx, root, fr)
 	return fr.snapshot(), nil
+}
+
+// triggerTag is how a triggered run is tagged in history ("scheduled").
+func triggerTag(t *RunTrigger) string {
+	if t == nil {
+		return ""
+	}
+	if t.Kind == "schedule" {
+		return "scheduled"
+	}
+	return t.Kind
+}
+
+func triggerName(t *RunTrigger) string {
+	if t == nil {
+		return ""
+	}
+	return t.Name
 }
 
 // FlowRun returns a run's current (or final) state.

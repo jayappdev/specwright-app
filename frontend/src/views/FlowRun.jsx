@@ -71,6 +71,7 @@ async function loadAll() {
   const r = frs();
   r.flows = await backend.Flows().catch(() => []);
   r.runs = await backend.FlowRuns(100).catch(() => []);
+  r.triggers = (await backend.FlowTriggers("").catch(() => [])) || [];
   r.keychain = await backend.KeychainAvailable().catch(() => false);
   if (!r.flowId && r.flows.length) await loadFlow(r.flows[0].id);
   update();
@@ -405,6 +406,18 @@ export function FlowRun() {
               <small>
                 {f.steps} steps · {f.outputs} outputs
               </small>
+              {(() => {
+                const next = (r.triggers || [])
+                  .filter((t) => t.flowId === f.id && t.trigger.enabled && t.upcoming?.length)
+                  .map((t) => new Date(t.upcoming[0]))
+                  .sort((a, b) => a - b)[0];
+                return next ? (
+                  <small className="fr-next">
+                    <span className="badge badge-sched">scheduled</span> next{" "}
+                    {next.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}
+                  </small>
+                ) : null;
+              })()}
             </button>
             {runsOf(f.id).map((x) => {
               const live = S.flowRuns[x.id]?.status || x.state;
@@ -420,6 +433,18 @@ export function FlowRun() {
                       {(x.kind === "flow-trial" || S.flowRuns[x.id]?.trial) && (
                         <span className="badge badge-info" style={{ marginLeft: 6 }}>
                           trial
+                        </span>
+                      )}
+                      {(x.trigger || S.flowRuns[x.id]?.options?.trigger) && (
+                        <span
+                          className="badge badge-sched"
+                          style={{ marginLeft: 6 }}
+                          title={
+                            "Started by the schedule " +
+                            (x.triggerName || S.flowRuns[x.id]?.options?.trigger?.name || "")
+                          }
+                        >
+                          scheduled
                         </span>
                       )}
                     </span>

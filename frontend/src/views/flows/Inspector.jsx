@@ -1,6 +1,7 @@
 // The Flow designer's inspector: flow settings, inputs (incl. secret sources),
 // each step type's settings, decisions, filters, aggregates, connections, the
 // data panel (what a step gets and gives) and variable chips.
+import { TriggersEditor } from "./Triggers.jsx";
 import { ModelPicker } from "../../ModelPicker.jsx";
 import { stepRef, toolRef, isBuiltin, loopInfo } from "../../flowNames.js";
 import { useEffect, useRef, useState } from "react";
@@ -789,7 +790,10 @@ function StepInspector({ n }) {
         </div>
       ))}
       {n.type === "start" ? (
-        <InputsEditor />
+        <>
+          <InputsEditor />
+          <TriggersEditor />
+        </>
       ) : (
         <>
           <div className="fl-row">

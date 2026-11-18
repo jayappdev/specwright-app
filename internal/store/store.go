@@ -44,9 +44,13 @@ type Run struct {
 	// Archived runs are hidden from the Playground and History lists until
 	// restored (by hand, or automatically after some days); Group is a
 	// label the user gives runs to keep them together.
-	Archived   bool      `json:"archived,omitempty"`
-	ArchivedAt time.Time `json:"archivedAt,omitzero"`
-	Group      string    `json:"group,omitempty"`
+	// Trigger: what started the run when no one pressed Run ("scheduled"),
+	// and the trigger's name
+	Trigger     string    `json:"trigger,omitempty"`
+	TriggerName string    `json:"triggerName,omitempty"`
+	Archived    bool      `json:"archived,omitempty"`
+	ArchivedAt  time.Time `json:"archivedAt,omitzero"`
+	Group       string    `json:"group,omitempty"`
 }
 
 // GetRun reads one run's summary row.

@@ -150,6 +150,10 @@ const METHODS = [
   "SaveToolMeta",
   "RunToolWith",
   "RunToolTests",
+  "FlowTriggers",
+  "PreviewSchedule",
+  "SaveTriggerSecrets",
+  "RunTriggerNow",
 ];
 
 function wailsBackend() {

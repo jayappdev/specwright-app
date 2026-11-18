@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
@@ -309,6 +310,28 @@ func (a *App) ParseSchema(text string) (*flow.Schema, error) { return ok(flow.Pa
 // DesignFlows asks the AI designer for flow options (new, or improvements of a flow).
 func (a *App) DesignFlows(r core.DesignRequest) (core.DesignResult, error) {
 	return ok(a.hub.DesignFlows(r))
+}
+
+// --- triggers (schedules) ---
+
+// FlowTriggers lists a flow's triggers with their state ("" = every flow's).
+func (a *App) FlowTriggers(flowID string) ([]core.TriggerView, error) {
+	return ok(a.hub.FlowTriggers(flowID))
+}
+
+// PreviewSchedule lists a schedule's next run times.
+func (a *App) PreviewSchedule(s flow.Schedule) ([]time.Time, error) {
+	return ok(a.hub.PreviewSchedule(s))
+}
+
+// SaveTriggerSecrets keeps a trigger's secret values, encrypted on this computer.
+func (a *App) SaveTriggerSecrets(flowID, triggerID string, values map[string]string) ([]string, error) {
+	return ok(a.hub.SaveTriggerSecrets(flowID, triggerID, values))
+}
+
+// RunTriggerNow starts a trigger's run now.
+func (a *App) RunTriggerNow(flowID, triggerID string) (core.FlowRunState, error) {
+	return ok(a.hub.RunTriggerNow(flowID, triggerID))
 }
 
 // --- tool metadata and direct tests ---

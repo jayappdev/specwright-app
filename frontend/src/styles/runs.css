@@ -2969,3 +2969,53 @@ select.fl-secret-pick {
   gap: 6px 12px;
   align-items: center;
 }
+
+/* Flow Designer › Inputs › Triggers */
+.fl-triggers {
+  display: grid;
+  gap: 8px;
+  margin-top: 14px;
+}
+.fl-triggers h4 {
+  margin: 0;
+}
+.fl-trigger {
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 10px;
+  display: grid;
+  gap: 8px;
+}
+.fl-trigger.off {
+  opacity: 0.7;
+}
+.fl-trigger-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+}
+.fl-trigger-name {
+  flex: 1;
+  min-width: 0;
+}
+.fl-trigger-every {
+  display: inline-flex;
+  gap: 6px;
+  align-items: center;
+}
+.fl-trigger-every input[type="number"] {
+  width: 6em;
+}
+.fl-node-sched {
+  font-size: 11px;
+  color: var(--ok);
+  display: flex;
+  gap: 4px;
+  align-items: center;
+  padding: 0 10px 4px;
+}
+.badge-sched {
+  background: color-mix(in srgb, var(--ok) 16%, transparent);
+  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
+  color: var(--ok);
+}

@@ -34,7 +34,7 @@ func (h *Hub) execFlow(ctx context.Context, root string, fr *flowRun) {
 		h.flowState(fr)
 		h.flowPublish(fr, "run.end", "Flow "+final, map[string]any{"state": final, "reason": reason})
 		_ = h.Store.SaveRun(store.Run{ID: st.ID, Workspace: root, Workflow: st.FlowID, Step: "flow", Agent: st.Agent, Model: st.Model, State: final, Reason: reason, Started: st.Started, Ended: st.Ended, Events: fr.seq, Usage: st.Usage,
-			Kind: "flow", Title: st.FlowName, Ask: flowAsk(st.Options.Inputs)})
+			Kind: "flow", Title: st.FlowName, Ask: flowAsk(st.Options.Inputs), Trigger: triggerTag(st.Options.Trigger), TriggerName: triggerName(st.Options.Trigger)})
 		minutes := 0
 		if final == "done" {
 			minutes = st.MinutesSaved * max(1, st.Passes*max(1, st.Items))

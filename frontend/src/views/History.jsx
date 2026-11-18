@@ -170,6 +170,15 @@ export function History() {
                   <span className="hist-title">
                     <span className={"pg-turn-kind k-" + runKind(r)}>{RUN_KIND[runKind(r)]}</span>{" "}
                     <b>{r.title || (runKind(r) === "flow" ? r.workflow : r.step)}</b>
+                    {r.trigger && (
+                      <span
+                        className="badge badge-sched"
+                        style={{ marginLeft: 6 }}
+                        title={"Started by " + (r.triggerName || "a schedule")}
+                      >
+                        {r.trigger}
+                      </span>
+                    )}
                   </span>
                   <Pill s={r.state} />
                 </span>
