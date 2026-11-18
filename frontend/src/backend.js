@@ -145,6 +145,11 @@ const METHODS = [
   "WizardSaveDraftTest",
   "WizardRunDraft",
   "WizardApply",
+  "InspectTool",
+  "RefineToolWithAI",
+  "SaveToolMeta",
+  "RunToolWith",
+  "RunToolTests",
 ];
 
 function wailsBackend() {

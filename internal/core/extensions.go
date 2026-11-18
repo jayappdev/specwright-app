@@ -534,22 +534,21 @@ func (h *Hub) TestExtension(d extension.Extension, question string) (extension.T
 	return h.TestExtensionWith(d, question, nil, "")
 }
 
-// TestExtensionWith is TestExtension with files attached to the question
-// (workspace paths returned by SaveAttachment).
-// model overrides the agent's model for this test ("" = the app's setting).
-func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []string, model string) (extension.TestResult, error) {
-	root, err := h.need()
-	if err != nil {
-		return extension.TestResult{}, err
-	}
-	if strings.TrimSpace(question) == "" {
-		return extension.TestResult{}, errors.New("write what you would ask the agent")
-	}
+// stageTool prepares a tool that may not be saved yet to run: a script is
+// written to a temporary file, a tool with packages to a temporary folder
+// with its packages installed (the install log goes into tr's steps). It
+// returns the tool to run, the temporary path and the path to show instead,
+// a cleanup, and a finished result when installing failed.
+func (h *Hub) stageTool(root string, d extension.Extension, tr *extension.TestResult) (td extension.Extension, sp, shown string, done func(), fail *extension.TestResult, err error) {
 	tmp := filepath.Join(h.Store.Dir(), "tmp", "test-"+d.Name)
-	td := d
-	var sp, shown string // temp path, and the path to show instead
+	td = d
 	var installLog []string
-	tr := extension.TestResult{At: time.Now()}
+	var cleanups []func()
+	done = func() {
+		for _, c := range cleanups {
+			c()
+		}
+	}
 	switch {
 	case d.Kind == extension.KindCopilot:
 		// runs from its extension folder; packages are installed there on first use
@@ -557,9 +556,9 @@ func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []
 		// folder layout: write the tool and its manifest, then install its
 		// packages through the workspace's proxy and registries
 		_ = os.RemoveAll(tmp)
-		defer os.RemoveAll(tmp)
+		cleanups = append(cleanups, func() { os.RemoveAll(tmp) })
 		if td, err = extension.WriteTool(tmp, tmp, d); err != nil {
-			return extension.TestResult{}, err
+			return td, sp, shown, done, nil, err
 		}
 		sp, shown = filepath.ToSlash(tmp), extension.ToolDir(d.Scope, d.Name)
 		h.Bus.Publish(bus.Event{Type: "ext.install", Summary: "Installing dependencies for " + d.Name})
@@ -576,20 +575,43 @@ func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []
 			tr.Output = ierr.Error()
 			tr.Checks = []extension.Check{{Label: "Dependencies installed", OK: false}}
 			tr.Summary = "Failed: installing " + strings.Join(d.Deps, ", ") + " did not work. Check the package names and versions, or the proxy and registry under Packages & proxy."
-			return tr, nil
+			return td, sp, shown, done, tr, nil
 		}
 	case d.Kind != "npm" && d.Script != "":
 		ext := extension.ScriptExt(d.Lang)
 		if err := os.MkdirAll(tmp, 0o700); err != nil {
-			return extension.TestResult{}, err
+			return td, sp, shown, done, nil, err
 		}
 		sp = filepath.Join(tmp, d.Name+ext)
 		shown = ".codegen/tools/" + d.Name + ext
 		if err := os.WriteFile(sp, []byte(d.Script), 0o700); err != nil {
-			return extension.TestResult{}, err
+			return td, sp, shown, done, nil, err
 		}
-		defer os.RemoveAll(tmp)
+		cleanups = append(cleanups, func() { os.RemoveAll(tmp) })
 		td.Command = extension.RepointScript(d.Command, d.Name, sp)
+	}
+	return td, sp, shown, done, nil, nil
+}
+
+// TestExtensionWith is TestExtension with files attached to the question
+// (workspace paths returned by SaveAttachment).
+// model overrides the agent's model for this test ("" = the app's setting).
+func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []string, model string) (extension.TestResult, error) {
+	root, err := h.need()
+	if err != nil {
+		return extension.TestResult{}, err
+	}
+	if strings.TrimSpace(question) == "" {
+		return extension.TestResult{}, errors.New("write what you would ask the agent")
+	}
+	tr := extension.TestResult{At: time.Now()}
+	td, sp, shown, cleanup, fail, err := h.stageTool(root, d, &tr)
+	if err != nil {
+		return extension.TestResult{}, err
+	}
+	defer cleanup()
+	if fail != nil {
+		return *fail, nil
 	}
 	release := h.Bridge.AllowTemporary(td)
 	defer release()

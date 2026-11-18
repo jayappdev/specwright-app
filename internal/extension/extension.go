@@ -39,6 +39,13 @@ type Param struct {
 	Schema *flow.Schema `json:"schema,omitempty"`
 	// Enum lists the values the parameter takes, when it has a fixed set.
 	Enum []string `json:"enum,omitempty"`
+	// Format refines a string parameter (ParamFormats): what kind of text
+	// it is, so a test form shows the right field and the value is checked.
+	Format string `json:"format,omitempty"`
+	// Default is used when the argument is left out; Example is a typical
+	// value (the test form's placeholder, and a sample for test cases).
+	Default string `json:"default,omitempty"`
+	Example string `json:"example,omitempty"`
 }
 
 // Secret names an environment variable injected at run time. Only the name
@@ -79,12 +86,18 @@ type Extension struct {
 	Output *flow.Schema `json:"output,omitempty"`
 	// OutputBy is the output's shape when an argument has a value
 	// (argument → value → shape), e.g. a built-in's format=json.
-	OutputBy   map[string]map[string]*flow.Schema `json:"outputBy,omitempty"`
-	Revision   int                                `json:"revision"`
-	Approved   bool                               `json:"approved"`
-	ApprovedAt time.Time                          `json:"approvedAt,omitzero"`
-	Hash       string                             `json:"hash,omitempty"`
-	LastTest   *TestResult                        `json:"lastTest,omitempty"`
+	OutputBy map[string]map[string]*flow.Schema `json:"outputBy,omitempty"`
+	// Tests are saved test cases (arguments and what to expect), run from
+	// the tool's Test page; MetaAt is when its parameters, output or tests
+	// were last refined by hand or with AI (kept when its source is read
+	// again, e.g. approving a Copilot extension).
+	Tests      []ToolTest  `json:"tests,omitempty"`
+	MetaAt     time.Time   `json:"metaAt,omitzero"`
+	Revision   int         `json:"revision"`
+	Approved   bool        `json:"approved"`
+	ApprovedAt time.Time   `json:"approvedAt,omitzero"`
+	Hash       string      `json:"hash,omitempty"`
+	LastTest   *TestResult `json:"lastTest,omitempty"`
 	// Deps are packages installed into the tool's own folder (Dir) from the
 	// configured registries: "pg@8.13.1", "requests==2.32.3",
 	// "github.com/jackc/pgx/v5@v5.7.1", "org.postgresql:postgresql:42.7.4".
@@ -484,6 +497,11 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 		sub := placeholderRE.ReplaceAllStringFunc(w, func(m string) string {
 			k := placeholderRE.FindStringSubmatch(m)[1]
 			if v, ok := args[k]; ok && v != nil {
+				switch v.(type) {
+				case map[string]any, []any: // a JSON argument: as JSON, not Go's map[…]
+					b, _ := json.Marshal(v)
+					return string(b)
+				}
 				return fmt.Sprint(v)
 			}
 			return ""

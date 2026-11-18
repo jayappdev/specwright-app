@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -246,7 +247,15 @@ func (b *Bridge) handleCall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, res)
 		return
 	}
-	res := Exec(r.Context(), b.p.Root(), e, req.Arguments, secrets, b.p.Env(), 30*time.Second)
+	// the arguments as the tool declares them: an agent gets told what is wrong, and tries again
+	args, probs := CheckArgs(e, req.Arguments)
+	if len(probs) > 0 {
+		res := RunResult{Error: "the arguments do not fit " + e.Name + ": " + strings.Join(probs, "; ") + ". Call it again with arguments that do."}
+		b.p.Observe(e.Name, req.Arguments, res)
+		writeJSON(w, res)
+		return
+	}
+	res := Exec(r.Context(), b.p.Root(), e, args, secrets, b.p.Env(), 30*time.Second)
 	res.Output = forAgent(b.p.Root(), e.Name, res.Output, res.Truncated)
 	b.p.Observe(e.Name, req.Arguments, res)
 	writeJSON(w, res)

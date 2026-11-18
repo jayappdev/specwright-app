@@ -57,6 +57,12 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 			if err := e.Runnable(); err != nil {
 				return extension.RunResult{}, err
 			}
+			// the arguments as the tool declares them: types, allowed values, defaults
+			checked, probs := extension.CheckArgs(*e, args)
+			if len(probs) > 0 {
+				return extension.RunResult{}, fmt.Errorf("the arguments do not fit %s: %s", name, strings.Join(probs, "; "))
+			}
+			args = checked
 			if extension.HasDeps(*e) {
 				if err := h.Prepare(ctx, *e); err != nil {
 					return extension.RunResult{}, fmt.Errorf("installing dependencies failed: %v", err)

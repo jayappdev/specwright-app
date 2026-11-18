@@ -44,6 +44,89 @@ if (nodeModule.registerHooks) {
   fail("Node.js 20.6 or newer is needed to run Copilot extensions");
 }
 
+// toJSONSchema turns a tool's parameters into JSON Schema: plain JSON
+// Schema stays as it is; a zod schema (v3 _def, or v4 _zod.def) is read.
+function toJSONSchema(p) {
+  if (!p || typeof p !== "object") return {};
+  if (typeof p.toJSONSchema === "function") {
+    try {
+      return p.toJSONSchema();
+    } catch {}
+  }
+  const def = p._zod?.def || p._def;
+  if (!def) return p; // plain JSON Schema
+  // zod 4: def.type is the kind ("object"); zod 3: def.typeName ("ZodObject"), and an
+  // array's def.type is its element
+  const kind = String(typeof def.type === "string" ? def.type : def.typeName || "").replace(/^Zod/, "").toLowerCase();
+  const desc = p.description || def.description;
+  const withDesc = (s) => (desc ? { ...s, description: desc } : s);
+  const inner = def.innerType || def.schema || def.in;
+  switch (kind) {
+    case "object": {
+      const shape = typeof def.shape === "function" ? def.shape() : def.shape || {};
+      const properties = {}, required = [];
+      for (const [k, v] of Object.entries(shape)) {
+        properties[k] = toJSONSchema(v);
+        const vd = v?._zod?.def || v?._def || {};
+        const vk = String(typeof vd.type === "string" ? vd.type : vd.typeName || "").replace(/^Zod/, "").toLowerCase();
+        if (!["optional", "default", "nullable"].includes(vk) && !properties[k].__optional) required.push(k);
+        delete properties[k].__optional;
+      }
+      return withDesc({ type: "object", properties, ...(required.length ? { required } : {}) });
+    }
+    case "string": {
+      const s = { type: "string" };
+      for (const c of def.checks || []) {
+        const f = c.kind || c._zod?.def?.format || c.format;
+        if (["email", "url", "uuid", "datetime", "date"].includes(f)) s.format = f === "datetime" ? "date-time" : f;
+      }
+      if (def.format) s.format = def.format === "datetime" ? "date-time" : def.format;
+      return withDesc(s);
+    }
+    case "number":
+      return withDesc({ type: (def.checks || []).some((c) => c.kind === "int" || c.isInt || c._zod?.def?.format === "safeint") ? "integer" : "number" });
+    case "int":
+    case "bigint":
+      return withDesc({ type: "integer" });
+    case "boolean":
+      return withDesc({ type: "boolean" });
+    case "date":
+      return withDesc({ type: "string", format: "date-time" });
+    case "enum":
+      return withDesc({ type: "string", enum: Array.isArray(def.values) ? def.values : Object.values(def.entries || def.values || {}) });
+    case "nativeenum":
+      return withDesc({ type: "string", enum: Object.values(def.values || {}).filter((v) => typeof v === "string") });
+    case "literal": {
+      const v = def.value ?? (def.values || [])[0];
+      return withDesc({ type: typeof v === "number" ? "number" : typeof v === "boolean" ? "boolean" : "string", enum: [v] });
+    }
+    case "array":
+      return withDesc({ type: "array", items: toJSONSchema(typeof def.type === "object" ? def.type : def.element || def.items) });
+    case "optional":
+    case "nullable":
+      return { ...toJSONSchema(inner), __optional: true, ...(desc ? { description: desc } : {}) };
+    case "default": {
+      const s = toJSONSchema(inner);
+      const dv = typeof def.defaultValue === "function" ? def.defaultValue() : def.defaultValue;
+      return { ...s, ...(dv !== undefined ? { default: dv } : {}), __optional: true, ...(desc ? { description: desc } : {}) };
+    }
+    case "effects":
+    case "pipe":
+    case "readonly":
+    case "branded":
+      return toJSONSchema(inner || def.out);
+    case "union": {
+      const opts = (def.options || []).map(toJSONSchema);
+      const lits = opts.filter((o) => o.enum?.length === 1);
+      if (lits.length === opts.length) return withDesc({ type: lits[0].type, enum: lits.map((o) => o.enum[0]) });
+      return withDesc({ anyOf: opts });
+    }
+    case "record":
+      return withDesc({ type: "object" });
+  }
+  return withDesc({});
+}
+
 const [mode, entry, toolName, argsJSON] = process.argv.slice(2);
 try {
   if (!entry) throw new Error("usage: copilot-shim.mjs list|call <extension.mjs> [tool] [arguments]");
@@ -54,7 +137,7 @@ try {
   const tools = (opts.tools || []).filter((t) => t && t.name);
   if (mode === "list") {
     const hooks = opts.hooks && typeof opts.hooks === "object" ? Object.keys(opts.hooks) : [];
-    finish(JSON.stringify({ tools: tools.map((t) => ({ name: t.name, description: t.description || "", parameters: t.parameters || {} })), hooks }), 0);
+    finish(JSON.stringify({ tools: tools.map((t) => ({ name: t.name, description: t.description || "", parameters: toJSONSchema(t.parameters) })), hooks }), 0);
   } else if (mode === "call") {
     const t = tools.find((x) => x.name === toolName);
     if (!t) throw new Error(`the extension has no tool named ${toolName}`);

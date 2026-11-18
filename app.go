@@ -311,6 +311,33 @@ func (a *App) DesignFlows(r core.DesignRequest) (core.DesignResult, error) {
 	return ok(a.hub.DesignFlows(r))
 }
 
+// --- tool metadata and direct tests ---
+
+// InspectTool works out a tool's parameters without AI.
+func (a *App) InspectTool(e extension.Extension) (core.ToolInspect, error) {
+	return ok(a.hub.InspectTool(e))
+}
+
+// RefineToolWithAI proposes a tool's parameters, output shape and test cases.
+func (a *App) RefineToolWithAI(e extension.Extension, model string) (core.ToolRefine, error) {
+	return ok(a.hub.RefineToolWithAI(e, model))
+}
+
+// SaveToolMeta saves a tool's parameters, output shape and test cases.
+func (a *App) SaveToolMeta(name string, m extension.ToolMeta) (extension.Extension, error) {
+	return ok(a.hub.SaveToolMeta(name, m))
+}
+
+// RunToolWith runs a tool with the test form's arguments.
+func (a *App) RunToolWith(e extension.Extension, args map[string]any, secrets map[string]string, expect *extension.ToolExpect) (core.ToolRun, error) {
+	return ok(a.hub.RunToolWith(e, args, secrets, expect))
+}
+
+// RunToolTests runs a tool's test cases.
+func (a *App) RunToolTests(e extension.Extension, tests []extension.ToolTest) ([]core.ToolTestResult, error) {
+	return ok(a.hub.RunToolTests(e, tests))
+}
+
 // --- flow wizard: requirements → clarify → plan → draft flows → apply ---
 
 // WizardList lists the project's flow wizard sessions.
