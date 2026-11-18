@@ -20,7 +20,7 @@ func TestScheduleNext(t *testing.T) {
 	}{
 		{Schedule{Mode: "once", At: "2026-11-18T12:00"}, "2026-11-18T12:00"},
 		{Schedule{Mode: "once", At: "2026-11-18T09:00"}, ""},
-		{Schedule{Mode: "every", Every: 15, Unit: "minutes"}, "2026-11-18T10:45"},     // from when it was set up
+		{Schedule{Mode: "every", Every: 15, Unit: "minutes"}, "2026-11-18T10:45"}, // from when it was set up
 		{Schedule{Mode: "every", Every: 2, Unit: "hours", At: "2026-11-18T07:00"}, "2026-11-18T11:00"},
 		{Schedule{Mode: "every", Every: 1, Unit: "days", At: "2026-11-20T08:00"}, "2026-11-20T08:00"}, // starts later
 		{Schedule{Mode: "daily", Time: "09:00"}, "2026-11-19T09:00"},

@@ -116,6 +116,13 @@ export const Icon = {
     </>,
     14,
   ),
+  refresh: mk(
+    <>
+      <path d="M13 8a5 5 0 11-1.5-3.6" />
+      <path d="M13 2.5v3h-3" />
+    </>,
+    14,
+  ),
   redo: mk(
     <>
       <path d="M10.5 4.5L13 7l-2.5 2.5" />
@@ -198,6 +205,30 @@ export function Chip({ on, onClick, children }) {
   return (
     <button type="button" className="chip" aria-pressed={!!on} onClick={onClick}>
       {children}
+    </button>
+  );
+}
+
+// RefreshButton reloads a list; it turns while the load runs.
+export function RefreshButton({ onRefresh, label = "Refresh" }) {
+  const [busy, setBusy] = useState(false);
+  return (
+    <button
+      type="button"
+      className={"icon-btn refresh-btn" + (busy ? " busy" : "")}
+      aria-label={label}
+      title={label}
+      disabled={busy}
+      onClick={async () => {
+        setBusy(true);
+        try {
+          await onRefresh();
+        } finally {
+          setBusy(false);
+        }
+      }}
+    >
+      <Icon.refresh />
     </button>
   );
 }

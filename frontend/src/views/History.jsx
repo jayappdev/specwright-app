@@ -3,7 +3,7 @@ import { RUN_KIND, runKind } from "../labels.js";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, fmtK } from "../store.js";
-import { Pill } from "../ui.jsx";
+import { Pill, RefreshButton } from "../ui.jsx";
 import { RunPanel } from "../components/RunPanel.jsx";
 import { Icon } from "../ui.jsx";
 import { continueInPlayground } from "./Playground.jsx";
@@ -101,18 +101,28 @@ function useReplayKeys(evCount) {
   );
 }
 
+// loadRuns reads the run list again (and the open run's events, which grow
+// while it runs); it is also the list's Refresh button.
+export async function loadRuns(again) {
+  const h = S.history;
+  try {
+    h.runs = (await backend.Runs(500)) || [];
+  } catch (e) {
+    return toast(errMsg(e), "error");
+  }
+  update();
+  const first = h.runs.find((x) => !x.archived);
+  if (!h.sel && first) return select(first.id);
+  if (again && h.sel && !h.playing) {
+    S.loaded[h.sel] = false;
+    await select(h.sel);
+  }
+}
+
 export function History() {
   const h = S.history;
   useEffect(() => {
-    backend.Runs(500).then(
-      (r) => {
-        h.runs = r || [];
-        update();
-        const first = h.runs.find((x) => !x.archived);
-        if (!h.sel && first) select(first.id);
-      },
-      (e) => toast(errMsg(e), "error"),
-    );
+    loadRuns();
     return stop;
   }, [S.ws?.root]);
   const run = h.runs.find((r) => r.id === h.sel),
@@ -123,7 +133,9 @@ export function History() {
     <div className="hist">
       <Pane k="history" v="--pane-l" pane=".ftree" min={220} max={560} label="Resize the run list" />
       <nav className="ftree" aria-label="Run history">
-        <h1 style={{ padding: "0 14px 8px" }}>History</h1>
+        <h1 className="list-head" style={{ padding: "0 14px 8px" }}>
+          History <RefreshButton label="Refresh the run history" onRefresh={() => loadRuns(true)} />
+        </h1>
         {!h.runs.length && (
           <div className="empty-mini">
             <p className="muted">

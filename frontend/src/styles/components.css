@@ -568,3 +568,26 @@ pre .file-link,
     animation: none;
   }
 }
+/* a list title with its Refresh button */
+.list-head {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+.list-head .refresh-btn {
+  margin-left: auto;
+  font-size: 1rem;
+}
+.refresh-btn.busy svg {
+  animation: refresh-spin 0.8s linear infinite;
+}
+@keyframes refresh-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .refresh-btn.busy svg {
+    animation: none;
+  }
+}

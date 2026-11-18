@@ -91,6 +91,9 @@ func (h *Hub) Builtins() []extension.BuiltinInfo {
 	if !h.disabledBuiltins()[SaveFlowTool] {
 		out = append(out, saveFlowInfo()) // how agents change flows (flowsave_agent.go)
 	}
+	if !h.disabledBuiltins()[ScheduleFlowTool] {
+		out = append(out, scheduleFlowInfo()) // how agents schedule flows (flowschedule_agent.go)
+	}
 	return out
 }
 
@@ -103,9 +106,12 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 	start := time.Now()
 	var out string
 	var err error
-	if name == SaveFlowTool {
+	switch name {
+	case SaveFlowTool:
 		out, err = h.agentSaveFlow(args)
-	} else {
+	case ScheduleFlowTool:
+		out, err = h.agentScheduleFlow(args)
+	default:
 		out, err = h.tools.Call(ctx, name, args)
 	}
 	out = h.Store.Redactor().String(out)

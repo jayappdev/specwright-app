@@ -307,3 +307,6 @@ func idOK(s string) bool {
 	}
 	return true
 }
+
+// TriggerIDOK says whether s can be a trigger's id.
+func TriggerIDOK(s string) bool { return idOK(s) }
