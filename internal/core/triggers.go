@@ -48,6 +48,7 @@ import (
 
 	"codegen/internal/bus"
 	"codegen/internal/flow"
+	"codegen/internal/store"
 	"codegen/internal/watch"
 )
 
@@ -100,6 +101,10 @@ type TriggerView struct {
 type triggerStore struct {
 	mu   sync.Mutex
 	path string
+	// the history database keeps the state (namespace ns); the file at
+	// path is written too, for now (and read when there is no database)
+	db   *store.Store
+	ns   string
 	data map[string]*TriggerState // "<flow>/<trigger>" → state
 	// pend: file changes a "files" trigger collected, waiting to be quiet
 	pend map[string]*filePend
@@ -135,8 +140,17 @@ func (h *Hub) triggers(root string) *triggerStore {
 	if h.trig != nil && h.trig.path != "" && strings.Contains(h.trig.path, workspaceKey(root)) {
 		return h.trig
 	}
-	ts := &triggerStore{path: filepath.Join(h.Store.Dir(), "triggers", workspaceKey(root)+".json"), data: map[string]*TriggerState{}, kick: make(chan struct{}, 1)}
-	if b, err := os.ReadFile(ts.path); err == nil {
+	ts := &triggerStore{path: filepath.Join(h.Store.Dir(), "triggers", workspaceKey(root)+".json"), data: map[string]*TriggerState{}, kick: make(chan struct{}, 1),
+		db: h.Store, ns: "triggers:" + workspaceKey(root)}
+	vals, ok, err := h.Store.LoadState(ts.ns)
+	if ok && err == nil && len(vals) > 0 {
+		for k, v := range vals {
+			var s TriggerState
+			if json.Unmarshal(v, &s) == nil {
+				ts.data[k] = &s
+			}
+		}
+	} else if b, err := os.ReadFile(ts.path); err == nil { // no database, or not moved in yet
 		_ = json.Unmarshal(b, &ts.data)
 	}
 	h.trig = ts
@@ -167,6 +181,17 @@ func (ts *triggerStore) current(key string, t flow.Trigger, now time.Time) *Trig
 }
 
 func (ts *triggerStore) save() error {
+	if ts.db != nil {
+		vals := map[string]json.RawMessage{}
+		for k, s := range ts.data {
+			if b, err := json.Marshal(s); err == nil {
+				vals[k] = b
+			}
+		}
+		if err := ts.db.SaveState(ts.ns, vals); err != nil {
+			return err
+		}
+	}
 	b, err := json.MarshalIndent(ts.data, "", "  ")
 	if err != nil {
 		return err

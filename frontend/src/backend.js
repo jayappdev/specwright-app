@@ -35,6 +35,7 @@ const METHODS = [
   "Live",
   "Runs",
   "RunEvents",
+  "SearchHistory",
   "Extensions",
   "SaveExtension",
   "ApproveExtension",

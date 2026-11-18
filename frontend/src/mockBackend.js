@@ -5535,6 +5535,51 @@ export function createMockBackend(methods) {
     async Runs(limit) {
       return clone(db.runs.filter((r) => r.workspace === db.root).slice(0, limit || 50));
     },
+    // search inside runs (core: the history database's full-text index): all
+    // words must appear, the last may be the start of one; snippets mark
+    // the matches between \x01 and \x02
+    async SearchHistory(q, limit) {
+      await wait(80);
+      const words = String(q || "")
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}_]+/u)
+        .filter(Boolean);
+      if (!words.length) return [];
+      const S1 = String.fromCharCode(1),
+        S2 = String.fromCharCode(2);
+      const has = (t) => words.every((w) => t.toLowerCase().includes(w));
+      const snip = (t) => {
+        const low = t.toLowerCase(),
+          at = Math.max(0, low.indexOf(words[0]) - 40);
+        let out = (at ? "…" : "") + t.slice(at, at + 160);
+        for (const w of words)
+          out = out.replace(
+            new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "i"),
+            S1 + "$1" + S2,
+          );
+        return out;
+      };
+      const hits = [];
+      for (const r of db.runs.filter((x) => x.workspace === db.root)) {
+        const texts = [
+          ["run", [r.title, r.ask, r.workflow, r.step, r.trigger].filter(Boolean).join("\n")],
+          ...(db.events[r.id] || []).map((e) => [
+            e.type,
+            [
+              e.summary,
+              ...["text", "output", "content", "prompt", "message", "error", "feedback"].map(
+                (k) => e[k] ?? e.data?.[k],
+              ),
+            ]
+              .filter((x) => typeof x === "string" && x)
+              .join("\n"),
+          ]),
+        ].filter(([, t]) => t && has(t));
+        if (texts.length)
+          hits.push({ run: clone(r), field: texts[0][0], snippet: snip(texts[0][1]), matches: texts.length });
+      }
+      return hits.slice(0, limit || 50);
+    },
     // (archived runs stay in Runs, with archived: true; the lists filter them)
     async RunEvents(id) {
       return clone(db.events[id] || []);

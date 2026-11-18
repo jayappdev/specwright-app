@@ -94,6 +94,9 @@ func (h *Hub) Builtins() []extension.BuiltinInfo {
 	if !h.disabledBuiltins()[ScheduleFlowTool] {
 		out = append(out, scheduleFlowInfo()) // how agents schedule flows (flowschedule_agent.go)
 	}
+	if !h.disabledBuiltins()[HistorySearchTool] && h.Store.HasDB() {
+		out = append(out, historySearchInfo()) // run history for agents (history_search.go)
+	}
 	return out
 }
 
@@ -111,6 +114,8 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 		out, err = h.agentSaveFlow(args)
 	case ScheduleFlowTool:
 		out, err = h.agentScheduleFlow(args)
+	case HistorySearchTool:
+		out, err = h.agentHistorySearch(args)
 	default:
 		out, err = h.tools.Call(ctx, name, args)
 	}

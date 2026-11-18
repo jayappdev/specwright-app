@@ -1,0 +1,146 @@
+package store
+
+import (
+	"database/sql"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+	"time"
+
+	"codegen/internal/bus"
+)
+
+// history written by an older build (files only) moves into the database
+// on the first open, once
+func TestImportFiles(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, "runs"), 0o700)
+	t0 := time.Date(2026, 11, 1, 9, 0, 0, 0, time.UTC)
+	for i, r := range []Run{
+		{ID: "old", Workspace: "/w", State: "done", Title: "Release notes", Started: t0},
+		{ID: "new", Workspace: "/w", State: "failed", Title: "TODO report", Started: t0.Add(time.Hour)},
+		{ID: "other", Workspace: "/x", State: "done", Title: "Elsewhere", Started: t0.Add(2 * time.Hour)},
+	} {
+		b, _ := json.Marshal(r)
+		_ = os.WriteFile(filepath.Join(dir, "runs", r.ID+".json"), b, 0o600)
+		ev, _ := json.Marshal(bus.Event{Seq: 1, RunID: r.ID, Type: "flow.step", Summary: []string{"wrote the changelog", "the kafka consumer kept failing", "x"}[i]})
+		_ = os.WriteFile(filepath.Join(dir, "runs", r.ID+".jsonl"), append(ev, '\n'), 0o600)
+	}
+	led, _ := json.Marshal(LedgerEntry{At: t0, RunID: "old", Workspace: "/w", Usage: Usage{InputTokens: 10}})
+	_ = os.WriteFile(filepath.Join(dir, "usage.jsonl"), append(led, '\n'), 0o600)
+
+	s, err := Open(dir)
+	if err != nil || !s.HasDB() || s.DBError() != nil {
+		t.Fatal(err, s.DBError())
+	}
+	rs, _ := s.Runs("/w", 0)
+	if len(rs) != 2 || rs[0].ID != "new" || rs[1].ID != "old" {
+		t.Fatalf("newest first, one workspace: %+v", rs)
+	}
+	if es, _ := s.LedgerEntries(); len(es) != 1 || es[0].InputTokens != 10 {
+		t.Fatalf("%+v", es)
+	}
+	hits, err := s.Search("/w", "kafka consum", 10)
+	if err != nil || len(hits) != 1 || hits[0].Run.ID != "new" || !strings.Contains(hits[0].Snippet, HitStart+"kafka"+HitEnd) {
+		t.Fatalf("%+v %v", hits, err)
+	}
+	s.Close()
+
+	// opened again: not imported twice
+	s2, _ := Open(dir)
+	defer s2.Close()
+	if es, _ := s2.LedgerEntries(); len(es) != 1 {
+		t.Fatalf("imported twice: %d", len(es))
+	}
+	if hits, _ := s2.Search("", "changelog", 10); len(hits) != 1 {
+		t.Fatalf("%+v", hits)
+	}
+}
+
+func TestSearchAndState(t *testing.T) {
+	s, err := Open(t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	s.Redactor().Add("hunter2-secret")
+	_ = s.SaveRun(Run{ID: "r1", Workspace: "/w", State: "done", Title: "Deploy notes", Ask: "version=1.2", Started: time.Now()})
+	_ = s.Append(bus.Event{RunID: "r1", Type: "tool.result", Summary: "deploy-tool ok", Data: map[string]any{"output": "password hunter2-secret accepted; rollout to eu-west done"}})
+	_ = s.Append(bus.Event{RunID: "r1", Type: "flow.review", Summary: "Waiting for your review", Data: map[string]any{"feedback": "use the canary first"}})
+
+	for q, want := range map[string]int{"rollout eu": 1, "canary": 1, "deploy": 1, "version 1.2": 1, "nothing-like-this": 0, `"; DROP TABLE runs; --`: 0, "": 0} {
+		hits, err := s.Search("/w", q, 10)
+		if err != nil || len(hits) != want {
+			t.Errorf("Search(%q): %d hits, %v (want %d)", q, len(hits), err, want)
+		}
+	}
+	if hits, _ := s.Search("/other", "canary", 10); len(hits) != 0 {
+		t.Fatal("another workspace's runs are not found")
+	}
+	if hits, _ := s.Search("/w", "hunter2", 10); len(hits) != 0 {
+		t.Fatal("a secret value is not in the index")
+	}
+	texts, _ := s.RunTexts("r1", 0)
+	if len(texts) != 3 || strings.Contains(strings.Join(texts, "\n"), "hunter2") {
+		t.Fatalf("%q", texts)
+	}
+	// archiving keeps the run findable and its flag
+	arch := true
+	_ = s.SetRunMeta("r1", &arch, nil)
+	if r, _ := s.GetRun("r1"); !r.Archived {
+		t.Fatal("archived")
+	}
+	if hits, _ := s.Search("/w", "canary", 10); len(hits) != 1 || !hits[0].Run.Archived {
+		t.Fatal("still found, as archived")
+	}
+
+	// named state, replaced as a whole
+	_ = s.SaveState("triggers:x", map[string]json.RawMessage{"a/b": json.RawMessage(`{"runs":2}`), "a/c": json.RawMessage(`{}`)})
+	_ = s.SaveState("triggers:x", map[string]json.RawMessage{"a/b": json.RawMessage(`{"runs":3}`)})
+	vals, ok, err := s.LoadState("triggers:x")
+	if !ok || err != nil || len(vals) != 1 || string(vals["a/b"]) != `{"runs":3}` {
+		t.Fatalf("%v %v %s", ok, err, vals)
+	}
+}
+
+// a database that cannot be opened: the files alone, as before
+func TestNoDatabase(t *testing.T) {
+	dir := t.TempDir()
+	_ = os.MkdirAll(filepath.Join(dir, "history.db"), 0o700) // a folder where the file should be
+	s, err := Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if s.HasDB() || s.DBError() == nil {
+		t.Fatal("expected no database")
+	}
+	_ = s.SaveRun(Run{ID: "a", Workspace: "/w", State: "done", Started: time.Now()})
+	if rs, _ := s.Runs("/w", 0); len(rs) != 1 {
+		t.Fatal("runs from the files")
+	}
+	if _, err := s.Search("/w", "x", 5); err != ErrNoSearch {
+		t.Fatal(err)
+	}
+	if _, ok, _ := s.LoadState("n"); ok {
+		t.Fatal("no state without a database")
+	}
+}
+
+func TestDatabaseFilePrivate(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	defer s.Close()
+	fi, err := os.Stat(filepath.Join(dir, "history.db"))
+	if err != nil || fi.Mode().Perm()&0o077 != 0 {
+		t.Fatalf("%v %v", err, fi.Mode())
+	}
+	var mode string
+	db, _ := sql.Open("sqlite", filepath.Join(dir, "history.db"))
+	defer db.Close()
+	_ = db.QueryRow("PRAGMA journal_mode").Scan(&mode)
+	if mode != "wal" {
+		t.Fatalf("journal mode %q", mode)
+	}
+}

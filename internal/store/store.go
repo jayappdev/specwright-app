@@ -1,13 +1,16 @@
-// Package store keeps run history (one JSONL file of events per run), the
-// usage ledger, and replays recorded runs. Everything written is redacted
+// Package store keeps run history (one JSONL file of events per run, and
+// the history database: db.go), the usage ledger, and replays recorded
+// runs. Everything written is redacted
 // first: token-shaped strings and known secret values never reach disk.
 package store
 
 import (
 	"bufio"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -55,6 +58,9 @@ type Run struct {
 
 // GetRun reads one run's summary row.
 func (s *Store) GetRun(id string) (Run, error) {
+	if r, ok := s.dbGetRun(id); ok {
+		return r, nil
+	}
 	b, err := os.ReadFile(s.metaPath(id))
 	if err != nil {
 		return Run{}, err
@@ -114,6 +120,10 @@ type Store struct {
 	dir string
 	mu  sync.Mutex
 	red *Redactor
+	// db: the history database (nil when it could not be opened: the
+	// files alone then, as before); dbErr why not
+	db    *sql.DB
+	dbErr error
 
 	errMu      sync.Mutex
 	onWriteErr func(op string, err error)
@@ -146,8 +156,20 @@ func Open(dir string) (*Store, error) {
 	if err := os.MkdirAll(filepath.Join(dir, "runs"), 0o700); err != nil {
 		return nil, err
 	}
-	return &Store{dir: dir, red: NewRedactor()}, nil
+	s := &Store{dir: dir, red: NewRedactor()}
+	if db, err := openDB(dir); err != nil {
+		s.dbErr = err
+	} else {
+		s.db = db
+		if err := s.importFiles(); err != nil {
+			s.dbErr = fmt.Errorf("importing the history into the database: %w", err)
+		}
+	}
+	return s, nil
 }
+
+// DBError says why the history database is not in use (nil when it is).
+func (s *Store) DBError() error { return s.dbErr }
 
 // DefaultDir is <user config dir>/codegen.
 func DefaultDir() string {
@@ -210,7 +232,10 @@ func (s *Store) saveRun(r Run) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(s.metaPath(r.ID), b)
+	if err := writeAtomic(s.metaPath(r.ID), b); err != nil {
+		return err
+	}
+	return s.dbPutRun(r)
 }
 
 // SetRunMeta archives or restores a run (archived != nil) and sets its
@@ -234,7 +259,10 @@ func (s *Store) SetRunMeta(id string, archived *bool, group *string) error {
 	if err != nil {
 		return err
 	}
-	return writeAtomic(s.metaPath(r.ID), b)
+	if err := writeAtomic(s.metaPath(r.ID), b); err != nil {
+		return err
+	}
+	return s.dbPutRun(r)
 }
 
 // Append records one event of a run.
@@ -258,8 +286,10 @@ func (s *Store) appendEvent(e bus.Event) error {
 		return err
 	}
 	defer f.Close()
-	_, err = f.Write(append(b, '\n'))
-	return err
+	if _, err = f.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	return s.dbIndexEvent(e)
 }
 
 // Events reads every event recorded for a run.
@@ -286,6 +316,9 @@ func (s *Store) Events(runID string) ([]bus.Event, error) {
 
 // Runs lists recorded runs, newest first, optionally for one workspace.
 func (s *Store) Runs(workspace string, limit int) ([]Run, error) {
+	if s.db != nil {
+		return s.dbRuns(workspace, limit)
+	}
 	ents, err := os.ReadDir(filepath.Join(s.dir, "runs"))
 	if err != nil {
 		return nil, err
@@ -347,12 +380,21 @@ func (s *Store) ledger(e LedgerEntry) error {
 		return err
 	}
 	defer f.Close()
-	_, err = f.Write(append(b, '\n'))
-	return err
+	if _, err = f.Write(append(b, '\n')); err != nil {
+		return err
+	}
+	return s.dbLedger(e)
 }
 
 // LedgerEntries reads the whole usage ledger.
 func (s *Store) LedgerEntries() ([]LedgerEntry, error) {
+	if s.db != nil {
+		return s.dbLedgerEntries()
+	}
+	return s.fileLedger()
+}
+
+func (s *Store) fileLedger() ([]LedgerEntry, error) {
 	f, err := os.Open(filepath.Join(s.dir, "usage.jsonl"))
 	if errors.Is(err, os.ErrNotExist) {
 		return nil, nil

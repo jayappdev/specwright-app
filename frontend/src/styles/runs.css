@@ -3032,3 +3032,28 @@ select.fl-secret-pick {
   border-color: color-mix(in srgb, var(--ok) 50%, transparent);
   color: var(--ok);
 }
+/* Run History: runs found by what they contain */
+.hist-hits {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+}
+.hist-hits-head,
+.hist-hits-none {
+  padding: 4px 14px;
+  font-size: 0.85em;
+}
+.hist-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.hist-snippet mark {
+  background: color-mix(in srgb, var(--info) 24%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}

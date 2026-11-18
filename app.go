@@ -172,6 +172,9 @@ func (a *App) CancelRun(runID string) error                { return a.hub.Cancel
 func (a *App) Live() *core.LiveRun                         { return val(a.hub.Live()) }
 func (a *App) Runs(limit int) ([]store.Run, error)         { return ok(a.hub.Runs(limit)) }
 func (a *App) RunEvents(runID string) ([]bus.Event, error) { return ok(a.hub.RunEvents(runID)) }
+func (a *App) SearchHistory(q string, limit int) ([]store.Hit, error) {
+	return ok(a.hub.SearchHistory(q, limit))
+}
 
 // --- extensions ----------------------------------------------------------
 
