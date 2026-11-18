@@ -55,11 +55,22 @@ func (h *Hub) SaveFlow(f flow.Flow) (FlowState, error) {
 	if f.ID == "" {
 		f.ID = flow.UniqueID(root, flow.Slug(f.Name))
 	}
+	// the file changed since this copy was loaded (an agent edited it,
+	// another window saved it): do not write stale data over it
+	if f.Rev != "" {
+		if cur := flow.DiskRev(root, f.ID); cur != "" && cur != f.Rev {
+			return FlowState{}, fmt.Errorf("%s: %s changed on disk since it was opened here; load the new version, or keep yours to overwrite it", ErrFlowChanged, f.Name)
+		}
+	}
 	if err := flow.Save(root, &f); err != nil {
 		return FlowState{}, err
 	}
 	return FlowState{Flow: &f, Issues: flow.Validate(&f, h.flowTools())}, nil
 }
+
+// ErrFlowChanged starts the error of a save refused because the flow's file
+// changed on disk (the UI offers to reload or overwrite).
+const ErrFlowChanged = "flow changed on disk"
 
 // FlowState is a flow plus its check results.
 type FlowState struct {

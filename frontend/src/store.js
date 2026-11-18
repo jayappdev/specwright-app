@@ -370,6 +370,13 @@ export function onHubEvent(e) {
       wfTimer = setTimeout(refreshWorkflow, 60);
       break;
     case "workspace.files":
+      // flows changed on disk (an agent in the Playground, another window, git):
+      // the Flow designer reloads them or asks (views/Flows.jsx listens)
+      if (
+        typeof window !== "undefined" &&
+        (e.changes || []).some((c) => c.path.startsWith(".codegen/flows/"))
+      )
+        window.dispatchEvent(new CustomEvent("specwright:flows-changed", { detail: e.changes }));
       if (S.view === "files" && S.ws)
         backend
           .ListFiles()
@@ -383,7 +390,10 @@ export function onHubEvent(e) {
           (c) =>
             c.path === "package.json" ||
             c.path.startsWith(".codegen/skills") ||
-            c.path.startsWith(".codegen/scripts"),
+            c.path.startsWith(".codegen/scripts") ||
+            c.path === ".codegen/extensions.json" || // tools changed by an agent or another window
+            c.path.startsWith(".codegen/tools/") ||
+            c.path.startsWith(".github/extensions/"),
         )
       )
         backend

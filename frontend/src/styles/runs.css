@@ -2960,3 +2960,12 @@ select.fl-secret-pick {
   border-bottom: 1px solid var(--border);
   vertical-align: top;
 }
+
+/* Flow designer: the flow changed on disk while edited here */
+.fl-conflict {
+  margin: 8px 12px 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  align-items: center;
+}

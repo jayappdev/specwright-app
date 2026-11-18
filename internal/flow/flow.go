@@ -16,7 +16,9 @@
 package flow
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -50,6 +52,11 @@ type Flow struct {
 	Revision int    `json:"revision,omitempty"`
 	// Designed says how the flow was made, e.g. "AI designer: <request>".
 	Designed string `json:"designed,omitempty"`
+	// Rev identifies the file's content when the flow was loaded or saved
+	// (not stored in the file): a save of an older Rev is refused, so an
+	// editor never writes stale data over a change made elsewhere (an
+	// agent, another window, a git checkout).
+	Rev string `json:"rev,omitempty"`
 }
 
 // EstimatedMinutes is MinutesSaved, or an estimate from the steps.
@@ -999,7 +1006,29 @@ func Load(root, id string) (*Flow, error) {
 		}
 		return nil, err
 	}
-	return Parse(b)
+	f, err := Parse(b)
+	if err == nil {
+		f.Rev = FileRev(b)
+	}
+	return f, err
+}
+
+// FileRev is the revision of a flow file's content.
+func FileRev(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:10])
+}
+
+// DiskRev is the revision of the flow id's file now ("" when there is none).
+func DiskRev(root, id string) string {
+	if !IDRE.MatchString(id) {
+		return ""
+	}
+	b, err := os.ReadFile(Path(root, id))
+	if err != nil {
+		return ""
+	}
+	return FileRev(b)
 }
 
 // Parse decodes and normalizes a flow.
@@ -1085,16 +1114,19 @@ func Save(root string, f *Flow) error {
 	}
 	f.normalize()
 	f.Updated = time.Now().UTC().Truncate(time.Second)
+	f.Rev = ""
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
 	}
+	b = append(b, '\n')
+	defer func() { f.Rev = FileRev(b) }()
 	p := Path(root, f.ID)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, p)

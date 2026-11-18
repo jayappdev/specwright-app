@@ -1559,6 +1559,32 @@ export function createMockBackend(methods) {
   }
 
   // --- flows (browser preview: a JS subset of the Go designer helpers) ---
+  // flowRev stands for the revision of a flow's file (Go: a hash of its bytes)
+  const flowRev = (f) => {
+    const { rev: _rev, ...rest } = f;
+    let h = 0;
+    for (const ch of JSON.stringify(rest)) h = (Math.imul(31, h) + ch.charCodeAt(0)) | 0;
+    return (h >>> 0).toString(16);
+  };
+  // the browser preview's stand-in for an agent editing a flow file
+  // (window.__mockEditFlow("todo-report", { name: "…" })), with the event
+  // the file watcher sends
+  if (typeof window !== "undefined")
+    window.__mockEditFlow = (id, patch) => {
+      if (!db.flows[id]) return false;
+      Object.assign(db.flows[id], patch, { updated: new Date().toISOString() });
+      persist();
+      setTimeout(
+        () =>
+          emit({
+            type: "workspace.files",
+            changes: [{ path: `.codegen/flows/${id}.json`, op: "modified" }],
+            unattributed: 1,
+          }),
+        50,
+      );
+      return true;
+    };
   // improvePartner: the tool step an Improve step runs with (flow/improve.go)
   const improvePartner = (f, n) => {
     const node = (id) => f.nodes.find((x) => x.id === id);
@@ -5878,7 +5904,7 @@ export function createMockBackend(methods) {
     },
     async LoadFlow(id) {
       if (!db.flows[id]) throw new Error(`no flow "${id}"`);
-      return applyStepIDs(clone(db.flows[id]));
+      return { ...applyStepIDs(clone(db.flows[id])), rev: flowRev(db.flows[id]) };
     },
     async NewFlow(name) {
       const id = uniqueFlowId(slug(name));
@@ -6165,10 +6191,16 @@ export function createMockBackend(methods) {
       await wait(60);
       f = clone(f);
       if (!f.id) f.id = uniqueFlowId(slug(f.name));
+      // the file changed since this copy was loaded: refused, as in Go
+      if (f.rev && db.flows[f.id] && flowRev(db.flows[f.id]) !== f.rev)
+        throw new Error(
+          `flow changed on disk: ${f.name} changed on disk since it was opened here; load the new version, or keep yours to overwrite it`,
+        );
+      delete f.rev;
       f.updated = new Date().toISOString();
       db.flows[f.id] = f;
       persist();
-      return { flow: clone(f), issues: validateFlow(f) };
+      return { flow: { ...clone(f), rev: flowRev(f) }, issues: validateFlow(f) };
     },
     async DeleteFlow(id) {
       delete db.flows[id];

@@ -298,10 +298,21 @@ export function openFlowInDesigner(id, sel) {
 
 export async function openFlow(id) {
   const f = fl();
+  if (f.conflict && f.flow && f.flow.id !== id)
+    return toast("Choose which version of this flow to keep first (the banner above the canvas).", "error");
   if (f.dirty) await save();
   try {
     const flow = await backend.LoadFlow(id);
-    Object.assign(f, { id, flow, sel: null, selEdge: null, dirty: false, preview: {}, kbLink: null });
+    Object.assign(f, {
+      id,
+      flow,
+      sel: null,
+      selEdge: null,
+      dirty: false,
+      preview: {},
+      kbLink: null,
+      conflict: null,
+    });
     resetHistory();
     f.issues = (await backend.ValidateFlow(flow).catch(() => [])) || [];
     await refreshShapes();
@@ -384,7 +395,7 @@ export function changed() {
 
 export async function save() {
   const f = fl();
-  if (!f.flow || f.saving) return;
+  if (!f.flow || f.saving || f.conflict) return; // a conflict waits for the user's choice
   clearTimeout(timer);
   f.saving = true;
   update();
@@ -394,16 +405,102 @@ export async function save() {
     f.dirty = false;
     await refreshShapes();
     f.flow.updated = st.flow.updated;
+    f.flow.rev = st.flow.rev; // the file as it is now: the next save is checked against it
     const s = (f.list || []).find((x) => x.id === f.flow.id);
     if (s) {
       s.name = f.flow.name;
       s.updated = st.flow.updated;
     }
   } catch (e) {
+    if (/flow changed on disk/.test(errMsg(e))) {
+      // the file changed since it was opened here: never write over it silently
+      f.saving = false;
+      await checkDisk("save");
+      return;
+    }
     toast(errMsg(e), "error");
   }
   f.saving = false;
   update();
+}
+
+// checkDisk keeps the designer and the flow's file the same. When the file
+// changed outside the designer (an agent in the Playground, another window,
+// git): with no unsaved edits the new version is loaded; with unsaved edits
+// the user chooses (f.conflict). Called when flow files change, when the
+// designer is shown, when the window gets the focus, and when a save is
+// refused.
+export async function checkDisk(why = "") {
+  const f = fl();
+  if (!f.flow?.id || f.saving) return;
+  const id = f.flow.id;
+  let disk;
+  try {
+    disk = await backend.LoadFlow(id);
+  } catch {
+    if (fl().flow?.id === id && !f.conflict) {
+      f.conflict = { gone: true };
+      update();
+    }
+    return;
+  }
+  if (fl().flow?.id !== id) return; // switched meanwhile
+  if (!disk.rev || disk.rev === f.flow.rev) return; // the same
+  if (!f.dirty && why !== "save") {
+    clearTimeout(timer);
+    Object.assign(f, { flow: disk, dirty: false, conflict: null });
+    resetHistory();
+    f.issues = (await backend.ValidateFlow(disk).catch(() => [])) || [];
+    await refreshShapes();
+    toast(`Reloaded ${disk.name}: it was changed outside the designer.`);
+    loadList();
+    update();
+    return;
+  }
+  clearTimeout(timer);
+  f.conflict = { disk };
+  update();
+}
+
+// resolveConflict: "theirs" loads the file's version, "mine" writes the
+// designer's version over it.
+export async function resolveConflict(choice) {
+  const f = fl(),
+    c = f.conflict;
+  if (!c) return;
+  if (choice === "theirs" && c.disk) {
+    Object.assign(f, { flow: c.disk, dirty: false, conflict: null });
+    resetHistory();
+    f.issues = (await backend.ValidateFlow(c.disk).catch(() => [])) || [];
+    await refreshShapes();
+    toast("Loaded the version from disk.");
+  } else if (choice === "mine") {
+    f.flow.rev = c.disk?.rev || ""; // overwrite what is on disk (or recreate a deleted file)
+    f.conflict = null;
+    f.dirty = true;
+    await save();
+  }
+  loadList();
+  update();
+}
+
+// keep the designer and the files in step: flow files changed on disk, the
+// window gets the focus again
+if (typeof window !== "undefined") {
+  let t = 0;
+  const later = (why) => {
+    clearTimeout(t);
+    t = setTimeout(() => {
+      if (S.view !== "flows" || !S.ws) return;
+      checkDisk(why);
+      loadList();
+    }, 250);
+  };
+  window.addEventListener("specwright:flows-changed", () => later("files"));
+  window.addEventListener("focus", () => later("focus"));
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "visible") later("focus");
+  });
 }
 
 async function newFlow() {
@@ -1011,6 +1108,10 @@ export function Flows() {
   useEffect(() => {
     if (S.ws && f.list?.length && !f.flow && !f.id) openFlow(f.list[0].id);
   }, [f.list]);
+  // shown again (switching from another view): the flow may have changed meanwhile
+  useEffect(() => {
+    if (S.ws && fl().flow) checkDisk("shown");
+  }, []);
   useEffect(
     () => () => {
       if (fl().dirty) save();
@@ -1208,6 +1309,33 @@ export function Flows() {
               ]}
             />
           </header>
+          {f.conflict && (
+            <div className="banner fl-conflict" role="alert">
+              {f.conflict.gone ? (
+                <>
+                  <b>This flow's file was deleted outside the designer.</b> Your version is still here.
+                  <span className="row-actions">
+                    <button className="btn primary" onClick={() => resolveConflict("mine")}>
+                      Save my version again
+                    </button>
+                  </span>
+                </>
+              ) : (
+                <>
+                  <b>This flow was changed outside the designer</b> (for example by the AI in the Playground)
+                  while you had unsaved edits here. Nothing has been overwritten.
+                  <span className="row-actions">
+                    <button className="btn primary" onClick={() => resolveConflict("theirs")}>
+                      Load the new version
+                    </button>
+                    <button className="btn secondary" onClick={() => resolveConflict("mine")}>
+                      Keep mine (overwrite it)
+                    </button>
+                  </span>
+                </>
+              )}
+            </div>
+          )}
           <div
             className={
               "fl-work" +

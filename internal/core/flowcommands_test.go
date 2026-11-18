@@ -51,7 +51,9 @@ func TestFlowCommandsNeedApproval(t *testing.T) {
 		t.Fatalf("run ended %s: %s", got.Status, got.Error)
 	}
 
-	// a changed command is a different command
+	// a changed command is a different command (on the flow as it is now:
+	// approving wrote to its file, so the copy from before is stale)
+	f, _ = h.LoadFlow(f.ID)
 	f.Nodes[1].Expr = "wc -c"
 	if _, err := h.SaveFlow(*f); err != nil {
 		t.Fatal(err)
