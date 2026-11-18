@@ -11,7 +11,7 @@ Ideas to come back to, collected while adding triggers and the SQLite history da
 | Triggers: after another flow, when files change | Done | `2153077` |
 | File triggers: absolute paths and folders outside the project | Done | `5c8e731` |
 | History database (SQLite, `modernc.org/sqlite` v1.62.0): runs, usage, trigger state, full-text search; History search inside runs; `history_search` agent tool | Done | `561b060` |
-| D1 lessons from reviews, D2 tool reliability, D3 trigger run queue and retries | Done (see their rows) | this commit |
+| D1 lessons from reviews, D2 tool reliability, D3 trigger run queue and retries | Done (see their rows) | `d82ff47` |
 
 Priorities, as in the code reviews:
 - **High:** fixes a gap people hit, or makes the AI and the designer better with every run.
