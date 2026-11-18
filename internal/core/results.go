@@ -283,7 +283,7 @@ func (h *Hub) continuationContext(parents []string) (string, error) {
 	}
 	if len(flows) > 0 {
 		b.WriteString("\n### Changing a flow\nThe flow(s) above:\n" + strings.Join(flows, "\n") +
-			"\nRead the flow's file to see it. To change it, call SpecWright's save_flow tool with the complete flow JSON and base_flow_id set to its id: it is checked against the Flow Designer format and saved as a new version (the original stays), and its answer lists any problems to fix (fix them and call save_flow again with update_version_id). Do NOT edit .codegen/flows/*.json directly: a file that does not fit the format breaks the flow.\n"+
+			"\nRead the flow's file to see it. To change it, call SpecWright's save_flow tool with the complete flow JSON and base_flow_id set to its id: it is checked against the Flow Designer format and saved as a new version (the original stays), and its answer lists any problems to fix (fix them and call save_flow again with update_version_id). Do NOT edit .codegen/flows/*.json directly: a file that does not fit the format breaks the flow.\n" +
 			"save_flow is on the agentbridge MCP server: in GitHub Copilot it is named agentbridge-save_flow, in Claude Code mcp__agentbridge__save_flow. If you see only its name, load it with your tool search (search for save_flow); do not look for it in files, and do not search outside this project (that is refused). It needs no approval.\n")
 	}
 	b.WriteString("\n---\n\nNow, continuing from the above:\n")
