@@ -181,3 +181,56 @@ func TestConvert(t *testing.T) {
 		t.Fatal("unsafe html:", x)
 	}
 }
+
+// The AI designer writes numbers and booleans where the format has text,
+// and text where it has numbers; a designed flow still reads.
+func TestParseDesignedAcceptsAIValues(t *testing.T) {
+	src := `{"name": "x", "inputs": [{"name": "max_items", "type": "number", "default": 10}, {"name": "c", "type": "choice", "options": [1, 2]}],
+	 "nodes": [{"id": "start", "type": "start"},
+	  {"id": "s", "type": "tool", "tool": "find", "args": {"path": ".", "max_results": 20, "regex": true, "opts": {"a": 1}}},
+	  {"id": "f", "type": "filter", "max": "5", "cond": {"rules": [{"field": "n", "op": "gt", "value": 3}]}},
+	  {"id": "a", "type": "ai", "prompt": "p", "outputSchema": {"type": "object", "properties": {"n": {"type": "number"}}}}],
+	 "edges": [{"from": "start", "to": "s"}]}`
+	if _, err := Parse([]byte(src)); err == nil {
+		t.Fatal("setup: the strict parser refuses it")
+	}
+	f, notes, err := ParseDesigned([]byte(src))
+	if err != nil || len(notes) != 0 {
+		t.Fatal(err, notes)
+	}
+	// a template in a number field: left out, and said
+	g, notes, err := ParseDesigned([]byte(`{"nodes": [{"id": "lim", "type": "filter", "max": "{{inputs.max_items}}"}]}`))
+	if err != nil || g.Node("lim").Max != 0 || len(notes) != 1 || !strings.Contains(notes[0], `"max" takes a fixed number`) {
+		t.Fatal(err, notes)
+	}
+	s, fl := f.Node("s"), f.Node("f")
+	if f.Inputs[0].Default != "10" || f.Inputs[1].Options[0] != "1" || s.Args["max_results"] != "20" || s.Args["regex"] != "true" || s.Args["opts"] != `{"a":1}` {
+		t.Fatalf("%+v %+v", f.Inputs, s.Args)
+	}
+	if fl.Max != 5 || fl.Cond.Rules[0].Value != "3" || f.Node("a").OutputSchema.Properties[0].Schema.Type != "number" {
+		t.Fatalf("%+v %+v", fl, f.Node("a").OutputSchema)
+	}
+}
+
+func TestWarnsOptionalInputWithoutDefault(t *testing.T) {
+	f := New("x", "x")
+	f.Inputs = []Input{{Name: "folder", Label: "Folder", Type: "text"}}
+	f.Nodes = append(f.Nodes, Node{ID: "s", Type: "tool", Tool: "find", Args: map[string]string{"path": "{{inputs.folder}}"}})
+	f.Edges = []Edge{{From: "start", To: "s"}}
+	tools := []ToolInfo{{Name: "find", Params: []ToolParam{{Name: "path", Required: true}}}}
+	has := func() bool {
+		for _, is := range Validate(f, tools) {
+			if strings.Contains(is.Message, "optional and has no default") {
+				return true
+			}
+		}
+		return false
+	}
+	if !has() {
+		t.Fatal("must warn")
+	}
+	f.Inputs[0].Default = "."
+	if has() {
+		t.Fatal("a default is enough")
+	}
+}

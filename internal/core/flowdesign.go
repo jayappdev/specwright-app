@@ -73,6 +73,8 @@ type DesignResult struct {
 	Usage    store.Usage  `json:"usage"`
 	Repaired bool         `json:"repaired,omitempty"`
 	Notes    []string     `json:"notes,omitempty"`
+	// Raw: the agent's answers as they came (the flow wizard logs them)
+	Raw []string `json:"-"`
 }
 
 // DesignFlows asks the agent for flow designs and checks them.
@@ -110,15 +112,25 @@ func (h *Hub) DesignFlows(r DesignRequest) (DesignResult, error) {
 	h.designProgress("Reading the tools and their contracts")
 	text, u, err := h.designAgent(root, prompt, r.Model)
 	res.Usage.Add(u)
+	res.Raw = append(res.Raw, text)
 	if err != nil {
 		return res, err
 	}
 	h.designProgress("Checking the designs")
 	opts, err := parseDesigns(text)
-	if err != nil {
-		return res, err
+	if err != nil { // one more try, pointing at the problem, rather than losing the work
+		h.designProgress("The answer could not be read; asking again")
+		text2, u2, err2 := h.designAgent(root, prompt+"\n\nYour previous reply could not be used ("+err.Error()+"). Reply again with ONLY the JSON object: input sample values as strings.", r.Model)
+		res.Usage.Add(u2)
+		res.Raw = append(res.Raw, text2)
+		if err2 != nil {
+			return res, err
+		}
+		if opts, err = parseDesigns(text2); err != nil {
+			return res, err
+		}
 	}
-	res.Options = h.checkDesigns(opts, base, tools)
+	res.Options = h.checkDesigns(opts, base, tools, &res.Notes)
 	// one repair round for the options that do not validate
 	var bad []int
 	for i, o := range res.Options {
@@ -130,9 +142,14 @@ func (h *Hub) DesignFlows(r DesignRequest) (DesignResult, error) {
 		h.designProgress("Fixing the designs that do not check out")
 		text, u, err := h.designAgent(root, repairPrompt(res.Options, bad), r.Model)
 		res.Usage.Add(u)
-		if err == nil {
-			if fixed, err := parseDesigns(text); err == nil {
-				fixedOpts := h.checkDesigns(fixed, base, tools)
+		res.Raw = append(res.Raw, text)
+		if err != nil {
+			res.Notes = append(res.Notes, "The repair round failed: "+err.Error())
+		} else if fixed, perr := parseDesigns(text); perr != nil {
+			res.Notes = append(res.Notes, "The repair round's answer could not be read: "+perr.Error())
+		} else {
+			{
+				fixedOpts := h.checkDesigns(fixed, base, tools, &res.Notes)
 				for k, i := range bad {
 					if k < len(fixedOpts) && fixedOpts[k].Errors <= res.Options[i].Errors {
 						res.Options[i] = fixedOpts[k]
@@ -213,7 +230,8 @@ Step types (node JSON; every node has "id" and "type" and may have "title"):
 Condition: {"match": "all|any|none", "rules": [{"field": "status", "op": "eq", "value": "open"}, {"group": <condition>}]}; ops: eq ne gt gte lt lte contains not_contains starts ends matches in not_in between empty not_empty exists not_exists true false len_eq len_gt len_lt. Fields are paths into the data (customer.tier, items[*].qty).
 Edge: {"from": "<id>", "to": "<id>", "branch": "<only out of a decision>"}.
 Inputs: [{"name": "ticket", "label": "Ticket", "type": "text|multiline|secret|number|boolean|date|datetime|choice|multichoice|file|files|clipboard", "required": true, "options": ["a","b"]}]. Passwords, API keys and tokens: type "secret" (no default), given to tools as {{inputs.<name>}} in their args, never to AI steps.
-Refer to steps by id: {{<step id>.buffer_output}}. Step ids: letters, digits, - or _, starting with a letter.`
+Refer to steps by id: {{<step id>.buffer_output}} (its text), {{<step id>.buffer_output.json.<path>}} (a field of its JSON output, e.g. an ai step's outputSchema field). There is no {{<step>.output}}.
+Give every optional input that a required tool argument uses a "default" (e.g. "." for a folder), so the flow runs when the input is left empty. Step ids: letters, digits, - or _, starting with a letter.`
 
 func designPrompt(r DesignRequest, base *flow.Flow, baseIssues []flow.Issue, tools []designTool) string {
 	var ops []string
@@ -334,7 +352,7 @@ func parseDesigns(text string) ([]rawDesign, error) {
 var nodeIDRE = regexp.MustCompile(`^[A-Za-z][A-Za-z0-9_-]*$`)
 
 // checkDesigns turns the agent's designs into flows and checks them.
-func (h *Hub) checkDesigns(raw []rawDesign, base *flow.Flow, tools []designTool) []FlowOption {
+func (h *Hub) checkDesigns(raw []rawDesign, base *flow.Flow, tools []designTool, notes *[]string) []FlowOption {
 	known := map[string]bool{}
 	dryTools := map[string]flow.DryTool{}
 	for _, t := range tools {
@@ -349,8 +367,9 @@ func (h *Hub) checkDesigns(raw []rawDesign, base *flow.Flow, tools []designTool)
 	}
 	var out []FlowOption
 	for _, r := range raw {
-		f, err := flow.Parse(r.Flow)
-		if err != nil {
+		f, fixes, err := flow.ParseDesigned(r.Flow)
+		if err != nil { // said, not silently dropped
+			*notes = append(*notes, fmt.Sprintf("The option %q could not be read as a flow and was left out: %v", firstNonEmpty(r.Title, "untitled"), err))
 			continue
 		}
 		fixDesign(f, known)
@@ -364,6 +383,9 @@ func (h *Hub) checkDesigns(raw []rawDesign, base *flow.Flow, tools []designTool)
 		o.Issues = h.ValidateFlow(*f)
 		if o.Issues == nil {
 			o.Issues = []flow.Issue{}
+		}
+		for _, n := range fixes {
+			o.Issues = append(o.Issues, flow.Issue{Level: "warning", Message: n})
 		}
 		for _, is := range o.Issues {
 			if is.Level == "error" {
@@ -576,8 +598,14 @@ func (h *Hub) designAgent(root, prompt, model string) (string, store.Usage, erro
 	ctx, cancel := context.WithTimeout(h.ctx, 6*time.Minute)
 	defer cancel()
 	var text strings.Builder
+	byEvents := store.Usage{} // tokens as the model calls report them (Claude)
 	res, err := drv.Run(ctx, agent.Request{Purpose: "design", Prompt: prompt, Dir: root, Model: model, Env: h.childEnv()}, func(ev agent.Event) {
 		switch ev.Type {
+		case "model.request":
+			byEvents.InputTokens += toInt(ev.Data["input_tokens"])
+			byEvents.CachedTokens += toInt(ev.Data["cached_tokens"])
+		case "model.response":
+			byEvents.OutputTokens += toInt(ev.Data["output_tokens"])
 		case "model.text":
 			if t, _ := ev.Data["text"].(string); t != "" {
 				text.WriteString(t + "\n")
@@ -590,6 +618,9 @@ func (h *Hub) designAgent(root, prompt, model string) (string, store.Usage, erro
 			u.InputTokens += toInt(ev.Data["input_tokens"])
 			u.OutputTokens += toInt(ev.Data["output_tokens"])
 			u.CachedTokens += toInt(ev.Data["cached_tokens"])
+			if t := toInt(ev.Data["total_output_tokens"]); t > 0 { // Claude: the run's real totals
+				byEvents.InputTokens, byEvents.OutputTokens, byEvents.CachedTokens = toInt(ev.Data["total_input_tokens"]), t, toInt(ev.Data["total_cached_tokens"])
+			}
 		}
 	})
 	if res.CostUSD > 0 && u.CostUSD == 0 {
@@ -597,6 +628,9 @@ func (h *Hub) designAgent(root, prompt, model string) (string, store.Usage, erro
 	}
 	if res.PremiumRequests > 0 && u.PremiumRequests == 0 {
 		u.PremiumRequests = res.PremiumRequests
+	}
+	if u.InputTokens == 0 && u.OutputTokens == 0 { // the run's total was not reported: the calls' sum
+		u.InputTokens, u.OutputTokens, u.CachedTokens = byEvents.InputTokens, byEvents.OutputTokens, byEvents.CachedTokens
 	}
 	u.ModelCalls++
 	out := strings.TrimSpace(res.Text)

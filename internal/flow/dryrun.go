@@ -25,6 +25,47 @@ type DryTest struct {
 	Expect []DryExpect       `json:"expect,omitempty"`
 }
 
+// UnmarshalJSON reads a test as an AI writes it: input values may be
+// numbers, booleans, lists or objects (a number input's sample is often 10,
+// not "10"); they become the text a flow input carries.
+func (t *DryTest) UnmarshalJSON(b []byte) error {
+	var raw struct {
+		Inputs map[string]any `json:"inputs"`
+		Mocks  map[string]any `json:"mocks"`
+		Expect []DryExpect    `json:"expect"`
+	}
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	t.Mocks, t.Expect, t.Inputs = raw.Mocks, raw.Expect, nil
+	for k, v := range raw.Inputs {
+		if t.Inputs == nil {
+			t.Inputs = map[string]string{}
+		}
+		switch x := v.(type) {
+		case string:
+			t.Inputs[k] = x
+		case nil:
+			t.Inputs[k] = ""
+		case []any: // a list: one value per line (files, multichoice)
+			var lines []string
+			for _, e := range x {
+				if s, ok := e.(string); ok {
+					lines = append(lines, s)
+				} else {
+					j, _ := json.Marshal(e)
+					lines = append(lines, string(j))
+				}
+			}
+			t.Inputs[k] = strings.Join(lines, "\n")
+		default:
+			j, _ := json.Marshal(x)
+			t.Inputs[k] = string(j)
+		}
+	}
+	return nil
+}
+
 // DryExpect is what one step's output should be.
 type DryExpect struct {
 	Step     string   `json:"step"`

@@ -226,3 +226,16 @@ func TestDesignTrialRuns(t *testing.T) {
 		t.Fatal(out)
 	}
 }
+
+// An answer that cannot be read is asked for again, not lost.
+func TestDesignAsksAgainWhenTheAnswerCannotBeRead(t *testing.T) {
+	h, s := designHub(t)
+	s.replies = []string{"Here are some ideas, no JSON.", designReply, repairReply}
+	res, err := h.DesignFlows(DesignRequest{Prompt: "blockers"})
+	if err != nil || len(res.Options) == 0 {
+		t.Fatal(err)
+	}
+	if !strings.Contains(s.prompts[1], "Your previous reply could not be used") {
+		t.Fatal("the second call says what went wrong")
+	}
+}

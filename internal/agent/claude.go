@@ -221,7 +221,11 @@ func (p *claudeParser) line(l string) {
 		p.res.CostUSD = m.TotalCostUSD
 		p.isError = m.IsError || (m.Subtype != "" && m.Subtype != "success")
 		p.emit(Event{Type: "run.usage", Summary: fmt.Sprintf("Claude: %d turns · $%.4f", m.NumTurns, m.TotalCostUSD),
-			Data: map[string]any{"cost_usd": m.TotalCostUSD, "turns": m.NumTurns, "duration_ms": m.DurationMS}})
+			Data: map[string]any{"cost_usd": m.TotalCostUSD, "turns": m.NumTurns, "duration_ms": m.DurationMS,
+				// the run's real totals (a message's own usage arrives when it starts, before its output);
+				// own keys, so code that adds up the messages' usage does not count them twice
+				"total_input_tokens": m.Usage.Input + m.Usage.CacheRead + m.Usage.CacheCreation, "total_cached_tokens": m.Usage.CacheRead,
+				"total_output_tokens": m.Usage.Output}})
 	}
 }
 

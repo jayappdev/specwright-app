@@ -418,6 +418,9 @@ type ToolParam struct {
 
 var varRE = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
 
+// onlyInputRE is a template that is exactly one input: {{inputs.name}}.
+var onlyInputRE = regexp.MustCompile(`^\s*\{\{\s*inputs\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\s*$`)
+
 // Vars lists the template variables in s.
 func Vars(s string) []string {
 	var out []string
@@ -619,6 +622,14 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				for _, p := range t.Params {
 					if p.Required && strings.TrimSpace(n.Args[p.Name]) == "" {
 						add(n.ID, "error", "%s: the required parameter %q is empty (fill it in, or describe the step and let AI build it).", label(n), p.Name)
+					}
+					// only an optional input with no default fills it: empty when the input is left empty
+					if m := onlyInputRE.FindStringSubmatch(n.Args[p.Name]); p.Required && m != nil {
+						for _, in := range f.Inputs {
+							if in.Name == m[1] && !in.Required && strings.TrimSpace(in.Default) == "" && len(in.Files) == 0 && in.Type != "secret" {
+								add(n.ID, "warning", "%s: the required parameter %q comes from the input %q, which is optional and has no default, so the step fails when it is left empty. Give the input a default or make it required.", label(n), p.Name, in.Name)
+							}
+						}
 					}
 				}
 			}
@@ -1284,4 +1295,100 @@ func (f *Flow) MaskSecrets(inputs map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// Designed flows: an AI writes JSON values where the flow format has text
+// (a tool argument 20, a condition value true, a default 10) or text where
+// it has a number ("max": "10"). ParseDesigned accepts those and returns the
+// flow as Parse would; anything else that does not fit is still an error.
+var (
+	textKeys = map[string]bool{"id": true, "title": true, "type": true, "tool": true, "prompt": true, "model": true, "mode": true,
+		"separator": true, "template": true, "op": true, "expr": true, "replace": true, "source": true, "split": true, "filter": true,
+		"field": true, "value": true, "label": true, "name": true, "description": true, "default": true, "format": true, "path": true,
+		"branch": true, "from": true, "to": true, "as": true, "fn": true, "pair": true, "goal": true, "approve": true,
+		"instruction": true, "accept": true, "env": true, "note": true, "match": true}
+	numberKeys = map[string]bool{"max": true, "rounds": true, "minutesSaved": true, "x": true, "y": true, "version": true, "revision": true}
+	textLists  = map[string]bool{"options": true, "orderBy": true, "groupBy": true, "files": true, "perms": true}
+)
+
+// ParseDesigned reads a flow written by the AI designer (see above). A
+// number field given a template ("max": "{{inputs.limit}}") cannot hold it:
+// the value is left out and said in the notes.
+func ParseDesigned(b []byte) (*Flow, []string, error) {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return nil, nil, fmt.Errorf("not a flow: %v", err)
+	}
+	var notes []string
+	fixed, err := json.Marshal(coerceDesign(v, "", &notes))
+	if err != nil {
+		return nil, nil, err
+	}
+	f, err := Parse(fixed)
+	return f, notes, err
+}
+
+func coerceDesign(v any, key string, notes *[]string) any {
+	text := func(x any) any {
+		switch y := x.(type) {
+		case string:
+			return y
+		case nil:
+			return ""
+		case float64, bool:
+			return fmt.Sprint(y)
+		}
+		j, _ := json.Marshal(x)
+		return string(j)
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			switch {
+			case k == "args" && key != "properties": // tool arguments: every value is a template (text)
+				if m, ok := val.(map[string]any); ok {
+					for ak, av := range m {
+						m[ak] = text(av)
+					}
+					continue
+				}
+			case textKeys[k]:
+				switch val.(type) {
+				case float64, bool:
+					x[k] = text(val)
+					continue
+				}
+			case numberKeys[k]:
+				if s, ok := val.(string); ok {
+					var n float64
+					if _, err := fmt.Sscan(strings.TrimSpace(s), &n); err == nil {
+						x[k] = n
+					} else {
+						delete(x, k)
+						id, _ := x["id"].(string)
+						*notes = append(*notes, fmt.Sprintf("%s: %q takes a fixed number, not %q; it was left out (the step's default applies). Set it in the step if you need a limit.", firstNonEmptyStr(id, "a step"), k, s))
+					}
+					continue
+				}
+			case textLists[k]:
+				if l, ok := val.([]any); ok {
+					for i := range l {
+						l[i] = text(l[i])
+					}
+					continue
+				}
+			}
+			if k == "outputSchema" || k == "schema" || k == "mocks" { // JSON shapes and samples stay as they are
+				continue
+			}
+			x[k] = coerceDesign(val, k, notes)
+		}
+		return x
+	case []any:
+		for i := range x {
+			x[i] = coerceDesign(x[i], key, notes)
+		}
+		return x
+	}
+	return v
 }

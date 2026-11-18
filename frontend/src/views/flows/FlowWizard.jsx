@@ -803,6 +803,7 @@ function Drafts({ s }) {
   const gone = s.drafts.length - live.length;
   return (
     <>
+      {s.notes?.length > 0 && <div className="banner">{s.notes.join(" ")}</div>}
       <p className="wf-desc">
         Temporary flows: not in your flows until you apply one. Each was checked and tried with sample data
         (tools and AI mocked, every other step run for real). Run one for real with your inputs, ask for a
@@ -999,6 +1000,12 @@ function DraftCard({ s, d }) {
             <span className="muted">Name of the flow</span>
             <input value={name} onChange={(e) => setName(e.target.value)} />
           </label>
+          {errs.length > 0 && (
+            <div className="banner">
+              This draft still has {errs.length} problem{errs.length === 1 ? "" : "s"}: it opens in the
+              designer, where you can fix {errs.length === 1 ? "it" : "them"} (or revise it here first).
+            </div>
+          )}
           <small className="muted">
             It is added to your flows and opens in the Flow designer; the clarified requirements become its
             custom context. The wizard session stays, so you can come back and apply another draft.

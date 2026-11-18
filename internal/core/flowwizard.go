@@ -983,8 +983,9 @@ func (h *Hub) wizDrafts(root string, s *WizardSession, n int, feedback string) e
 	start := time.Now()
 	res, err := h.DesignFlows(DesignRequest{Prompt: prompt, Options: n, Min: 1, Model: s.Model})
 	e := WizLogEntry{At: start, Phase: "drafts", Summary: summary, Prompt: clipText2(prompt, wizLogText), Duration: time.Since(start).Milliseconds(), Usage: res.Usage}
+	raw := clipText2(strings.Join(res.Raw, "\n\n---\n\n"), wizLogText)
 	if err != nil {
-		e.Error = err.Error()
+		e.Error, e.Answer = err.Error(), raw
 		s.Log = append(s.Log, e)
 		s.Usage.Add(res.Usage)
 		return err
@@ -997,6 +998,13 @@ func (h *Hub) wizDrafts(root string, s *WizardSession, n int, feedback string) e
 	e.Answer = "Drafts: " + strings.Join(names, "; ")
 	if res.Repaired {
 		e.Answer += "\nSome drafts did not check out at first and were fixed by the AI in a second round."
+	}
+	for _, n := range res.Notes {
+		e.Answer += "\n" + n
+	}
+	e.Answer += "\n\nThe AI's answer:\n" + raw
+	if len(res.Options) < n && len(res.Notes) > 0 {
+		s.Notes = appendOnce(s.Notes, fmt.Sprintf("%d of the %d drafts asked for came back: %s", len(res.Options), n, strings.Join(res.Notes, " ")))
 	}
 	s.Log = append(s.Log, e)
 	s.Usage.Add(res.Usage)
@@ -1078,16 +1086,20 @@ func (h *Hub) wizRevise(root string, s *WizardSession, draftID, feedback string)
 	res, err := h.DesignFlows(DesignRequest{Prompt: b.String(), Base: &base, Options: 1, Min: 1, Model: s.Model})
 	e := WizLogEntry{At: start, Phase: "drafts", Summary: summary, Prompt: clipText2(b.String(), wizLogText), Duration: time.Since(start).Milliseconds(), Usage: res.Usage}
 	s.Usage.Add(res.Usage)
-	if err != nil || len(res.Options) == 0 {
-		e.Error = firstNonEmpty(fmt.Sprint(err), "the AI returned no revision")
-		if err == nil {
-			err = errors.New(e.Error)
-		}
+	e.Answer = clipText2(strings.Join(res.Raw, "\n\n---\n\n"), wizLogText)
+	if err == nil && len(res.Options) == 0 {
+		err = errors.New("the AI returned no revision that could be read: " + firstNonEmpty(strings.Join(res.Notes, " "), "no options"))
+	}
+	if err != nil {
+		e.Error = err.Error()
 		s.Log = append(s.Log, e)
 		return err
 	}
 	nd := s.addDraft(res.Options[0], d.ID, feedback)
-	e.Answer = fmt.Sprintf("%s v%d: %s. Changes: %s", nd.Title, nd.Version, draftVerdict(nd), strings.Join(nd.Changes, "; "))
+	e.Answer = fmt.Sprintf("%s v%d: %s. Changes: %s\n\n%s", nd.Title, nd.Version, draftVerdict(nd), strings.Join(nd.Changes, "; "), e.Answer)
+	for _, n := range res.Notes {
+		s.Notes = appendOnce(s.Notes, n)
+	}
 	s.Log = append(s.Log, e)
 	return nil
 }
