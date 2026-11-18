@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"sync"
 	"time"
 
 	"codegen/internal/bus"
@@ -42,21 +43,32 @@ type permAnswer struct {
 
 // SetPermissionAsker replaces the UI prompt (the headless runner asks on
 // the terminal).
+
+// permissionState holds the permission prompts, apart from the hub's lock:
+// pending UI questions by id, "allow for this run" answers by agent process
+// and tool, and an optional non-UI asker (headless).
+type permissionState struct {
+	mu      sync.Mutex
+	pending map[string]chan permAnswer
+	allowed map[string]map[string]bool
+	ask     func(context.Context, extension.PermissionRequest) extension.PermissionAnswer
+}
+
 func (h *Hub) SetPermissionAsker(f func(context.Context, extension.PermissionRequest) extension.PermissionAnswer) {
-	h.mu.Lock()
-	h.askPerm = f
-	h.mu.Unlock()
+	h.perms.mu.Lock()
+	h.perms.ask = f
+	h.perms.mu.Unlock()
 }
 
 // AskPermission implements extension.Provider.
 func (h *Hub) AskPermission(ctx context.Context, req extension.PermissionRequest) extension.PermissionAnswer {
-	h.mu.Lock()
-	if h.permAllowed[req.Agent][req.Tool] {
-		h.mu.Unlock()
+	h.perms.mu.Lock()
+	if h.perms.allowed[req.Agent][req.Tool] {
+		h.perms.mu.Unlock()
 		return extension.PermissionAnswer{Allow: true}
 	}
-	asker := h.askPerm
-	h.mu.Unlock()
+	asker := h.perms.ask
+	h.perms.mu.Unlock()
 	if asker != nil {
 		return asker(ctx, req)
 	}
@@ -68,13 +80,13 @@ func (h *Hub) askPermissionUI(ctx context.Context, req extension.PermissionReque
 	_, _ = rand.Read(b)
 	id := hex.EncodeToString(b)
 	ch := make(chan permAnswer, 1)
-	h.mu.Lock()
-	if h.pendingPerms == nil {
-		h.pendingPerms = map[string]chan permAnswer{}
+	h.perms.mu.Lock()
+	if h.perms.pending == nil {
+		h.perms.pending = map[string]chan permAnswer{}
 	}
-	h.pendingPerms[id] = ch
-	h.mu.Unlock()
-	defer func() { h.mu.Lock(); delete(h.pendingPerms, id); h.mu.Unlock() }()
+	h.perms.pending[id] = ch
+	h.perms.mu.Unlock()
+	defer func() { h.perms.mu.Lock(); delete(h.perms.pending, id); h.perms.mu.Unlock() }()
 
 	// the input may carry a secret a tool printed earlier: redact before it
 	// reaches the UI, the bus or history
@@ -98,15 +110,15 @@ func (h *Hub) askPermissionUI(ctx context.Context, req extension.PermissionReque
 		resolved(a.decision)
 		switch a.decision {
 		case AllowForRun:
-			h.mu.Lock()
-			if h.permAllowed == nil {
-				h.permAllowed = map[string]map[string]bool{}
+			h.perms.mu.Lock()
+			if h.perms.allowed == nil {
+				h.perms.allowed = map[string]map[string]bool{}
 			}
-			if h.permAllowed[req.Agent] == nil {
-				h.permAllowed[req.Agent] = map[string]bool{}
+			if h.perms.allowed[req.Agent] == nil {
+				h.perms.allowed[req.Agent] = map[string]bool{}
 			}
-			h.permAllowed[req.Agent][req.Tool] = true
-			h.mu.Unlock()
+			h.perms.allowed[req.Agent][req.Tool] = true
+			h.perms.mu.Unlock()
 			return extension.PermissionAnswer{Allow: true}
 		case AllowOnce:
 			return extension.PermissionAnswer{Allow: true}
@@ -134,9 +146,9 @@ func (h *Hub) AnswerPermission(id, decision, note string) error {
 	if _, ok := permWords[d]; !ok {
 		return fmt.Errorf("unknown decision %q", decision)
 	}
-	h.mu.RLock()
-	ch := h.pendingPerms[id]
-	h.mu.RUnlock()
+	h.perms.mu.Lock()
+	ch := h.perms.pending[id]
+	h.perms.mu.Unlock()
 	if ch == nil {
 		return errors.New("that request is no longer waiting (it may have timed out or the run stopped)")
 	}
@@ -201,15 +213,15 @@ func TerminalPermissionAsker(h *Hub) func(context.Context, extension.PermissionR
 		case "y", "yes":
 			return extension.PermissionAnswer{Allow: true}
 		case "a", "all":
-			h.mu.Lock()
-			if h.permAllowed == nil {
-				h.permAllowed = map[string]map[string]bool{}
+			h.perms.mu.Lock()
+			if h.perms.allowed == nil {
+				h.perms.allowed = map[string]map[string]bool{}
 			}
-			if h.permAllowed[req.Agent] == nil {
-				h.permAllowed[req.Agent] = map[string]bool{}
+			if h.perms.allowed[req.Agent] == nil {
+				h.perms.allowed[req.Agent] = map[string]bool{}
 			}
-			h.permAllowed[req.Agent][req.Tool] = true
-			h.mu.Unlock()
+			h.perms.allowed[req.Agent][req.Tool] = true
+			h.perms.mu.Unlock()
 			return extension.PermissionAnswer{Allow: true}
 		}
 		return extension.PermissionAnswer{Message: "The user denied permission to use " + req.Tool + "."}

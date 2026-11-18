@@ -1,6 +1,7 @@
 package flow
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 )
@@ -58,4 +59,23 @@ func fmtChecks(r DryResult) string {
 		b.WriteString(c.Label + " " + map[bool]string{true: "ok", false: "FAIL"}[c.OK] + " " + c.Note + "\n")
 	}
 	return b.String()
+}
+
+// An AI writes sample inputs as JSON values: numbers, booleans, lists.
+func TestDryTestReadsAnyInputValue(t *testing.T) {
+	var d DryTest
+	err := json.Unmarshal([]byte(`{"inputs": {"max_items": 10, "strict": true, "folder": "src", "files": ["a.go", "b.go"], "none": null},
+	  "mocks": {"scan": {"x": 1}}, "expect": [{"step": "out", "notEmpty": true}]}`), &d)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]string{"max_items": "10", "strict": "true", "folder": "src", "files": "a.go\nb.go", "none": ""}
+	for k, v := range want {
+		if d.Inputs[k] != v {
+			t.Errorf("%s = %q, want %q", k, d.Inputs[k], v)
+		}
+	}
+	if d.Mocks["scan"] == nil || len(d.Expect) != 1 || !d.Expect[0].NotEmpty {
+		t.Fatalf("%+v", d)
+	}
 }

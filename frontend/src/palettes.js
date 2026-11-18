@@ -16,7 +16,10 @@
 // --- color math ------------------------------------------------------------
 
 const clamp = (x, lo = 0, hi = 1) => Math.min(hi, Math.max(lo, x));
-const hex2 = (x) => Math.round(clamp(x) * 255).toString(16).padStart(2, "0");
+const hex2 = (x) =>
+  Math.round(clamp(x) * 255)
+    .toString(16)
+    .padStart(2, "0");
 const toLin = (c) => (c <= 0.04045 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4);
 const toGamma = (c) => (c <= 0.0031308 ? 12.92 * c : 1.055 * c ** (1 / 2.4) - 0.055);
 
@@ -31,19 +34,27 @@ function oklabToRgb(L, a, b) {
   ];
 }
 
-function inGamut([r, g, b]) { const e = 1e-4; return r >= -e && r <= 1 + e && g >= -e && g <= 1 + e && b >= -e && b <= 1 + e; }
+function inGamut([r, g, b]) {
+  const e = 1e-4;
+  return r >= -e && r <= 1 + e && g >= -e && g <= 1 + e && b >= -e && b <= 1 + e;
+}
 
 // oklch → hex, lowering chroma until the color fits in sRGB.
 export function oklch(L, C, H, alpha) {
   const h = (H * Math.PI) / 180;
-  let c = C, rgb = oklabToRgb(L, c * Math.cos(h), c * Math.sin(h));
-  for (let i = 0; i < 24 && !inGamut(rgb); i++) { c *= 0.9; rgb = oklabToRgb(L, c * Math.cos(h), c * Math.sin(h)); }
+  let c = C,
+    rgb = oklabToRgb(L, c * Math.cos(h), c * Math.sin(h));
+  for (let i = 0; i < 24 && !inGamut(rgb); i++) {
+    c *= 0.9;
+    rgb = oklabToRgb(L, c * Math.cos(h), c * Math.sin(h));
+  }
   return "#" + rgb.map((x) => hex2(toGamma(clamp(x)))).join("") + (alpha != null ? hex2(alpha) : "");
 }
 
 // hex → { L, C, H } in OKLCH.
 export function toOklch(hex) {
-  const n = hex.replace("#", ""), v = (i) => toLin(parseInt(n.slice(i, i + 2), 16) / 255);
+  const n = hex.replace("#", ""),
+    v = (i) => toLin(parseInt(n.slice(i, i + 2), 16) / 255);
   const [r, g, b] = [v(0), v(2), v(4)];
   const l = Math.cbrt(0.4122214708 * r + 0.5363015719 * g + 0.0514459929 * b);
   const m = Math.cbrt(0.2119034982 * r + 0.6806995451 * g + 0.1073969566 * b);
@@ -58,7 +69,8 @@ export function toOklch(hex) {
 // Chroma tapers near black and white, as in Material's palettes.
 const palette = (H, C) => (tone, alpha) => {
   // Material tones are CIE L*; OKLab lightness is close to cbrt(Y) = (L* + 16) / 116.
-  const L = tone <= 0 ? 0 : (tone + 16) / 116, taper = Math.min(1, tone / 25, (100 - tone) / 12);
+  const L = tone <= 0 ? 0 : (tone + 16) / 116,
+    taper = Math.min(1, tone / 25, (100 - tone) / 12);
   return oklch(L, C * Math.max(0.15, taper), H, alpha);
 };
 
@@ -66,9 +78,28 @@ const palette = (H, C) => (tone, alpha) => {
 
 // Builds the app's --* variables from a seed: primary/secondary/tertiary/
 // neutral palettes in Material 3's tone layout for light or dark.
-function scheme({ H, C = 0.14, H2 = H, C2 = C / 3, H3 = H + 60, C3 = C * 0.8, NH = H, NC = 0.012, NVC = 0.03, dark, surfaceTone }) {
-  const p = palette(H, C), s = palette(H2, C2), t = palette(H3, C3), n = palette(NH, NC), nv = palette(NH, NVC);
-  const err = palette(27, 0.19), warn = palette(75, 0.15), ok = palette(150, 0.15), info = palette(250, 0.13);
+function scheme({
+  H,
+  C = 0.14,
+  H2 = H,
+  C2 = C / 3,
+  H3 = H + 60,
+  C3 = C * 0.8,
+  NH = H,
+  NC = 0.012,
+  NVC = 0.03,
+  dark,
+  surfaceTone,
+}) {
+  const p = palette(H, C),
+    s = palette(H2, C2),
+    t = palette(H3, C3),
+    n = palette(NH, NC),
+    nv = palette(NH, NVC);
+  const err = palette(27, 0.19),
+    warn = palette(75, 0.15),
+    ok = palette(150, 0.15),
+    info = palette(250, 0.13);
   const d = dark;
   const T = (light, darkTone) => (d ? darkTone : light);
   const surface = surfaceTone ?? T(98, 7);
@@ -133,12 +164,74 @@ function scheme({ H, C = 0.14, H2 = H, C2 = C / 3, H3 = H + 60, C3 = C * 0.8, NH
 // Copilot-style: cool violet-tinted neutrals, a violet primary, a pink or
 // teal second accent.
 const COPILOT = [
-  { id: "copilot-dark", name: "Copilot Dark", dark: true, H: 295, C: 0.17, H3: 345, NH: 285, NC: 0.03, surfaceTone: 5 },
-  { id: "copilot-midnight", name: "Copilot Midnight", dark: true, H: 275, C: 0.16, H3: 200, NH: 270, NC: 0.035, surfaceTone: 9 },
-  { id: "copilot-aurora", name: "Copilot Aurora", dark: true, H: 185, C: 0.12, H2: 295, C2: 0.06, H3: 300, NH: 230, NC: 0.02, surfaceTone: 8 },
-  { id: "copilot-ember", name: "Copilot Ember", dark: true, H: 40, C: 0.15, H3: 330, NH: 300, NC: 0.02, surfaceTone: 6 },
-  { id: "copilot-light", name: "Copilot Light", dark: false, H: 295, C: 0.19, H3: 345, NH: 280, NC: 0.01, surfaceTone: 99 },
-  { id: "copilot-lavender", name: "Copilot Lavender", dark: false, H: 285, C: 0.16, H3: 200, NH: 285, NC: 0.03, surfaceTone: 97 },
+  {
+    id: "copilot-dark",
+    name: "Copilot Dark",
+    dark: true,
+    H: 295,
+    C: 0.17,
+    H3: 345,
+    NH: 285,
+    NC: 0.03,
+    surfaceTone: 5,
+  },
+  {
+    id: "copilot-midnight",
+    name: "Copilot Midnight",
+    dark: true,
+    H: 275,
+    C: 0.16,
+    H3: 200,
+    NH: 270,
+    NC: 0.035,
+    surfaceTone: 9,
+  },
+  {
+    id: "copilot-aurora",
+    name: "Copilot Aurora",
+    dark: true,
+    H: 185,
+    C: 0.12,
+    H2: 295,
+    C2: 0.06,
+    H3: 300,
+    NH: 230,
+    NC: 0.02,
+    surfaceTone: 8,
+  },
+  {
+    id: "copilot-ember",
+    name: "Copilot Ember",
+    dark: true,
+    H: 40,
+    C: 0.15,
+    H3: 330,
+    NH: 300,
+    NC: 0.02,
+    surfaceTone: 6,
+  },
+  {
+    id: "copilot-light",
+    name: "Copilot Light",
+    dark: false,
+    H: 295,
+    C: 0.19,
+    H3: 345,
+    NH: 280,
+    NC: 0.01,
+    surfaceTone: 99,
+  },
+  {
+    id: "copilot-lavender",
+    name: "Copilot Lavender",
+    dark: false,
+    H: 285,
+    C: 0.16,
+    H3: 200,
+    NH: 285,
+    NC: 0.03,
+    surfaceTone: 97,
+  },
 ];
 
 // Material 3 seeds: the baseline purple and a few classic Android colors.
@@ -159,20 +252,47 @@ export function materialTheme(seed, dark, name, id) {
   return {
     id: id || `m3:${seed.toLowerCase()}:${dark ? "dark" : "light"}`,
     name: (name || "Android " + seed.toLowerCase()) + (dark ? " Dark" : " Light"),
-    family: "android", seed, type: dark ? "dark" : "light", contrast: false, colorblind: false,
+    family: "android",
+    seed,
+    type: dark ? "dark" : "light",
+    contrast: false,
+    colorblind: false,
     ui: scheme({ H, C: c, C2: c / 3.2, H3: H + 60, C3: c * 0.75, NH: H, NC: 0.01, NVC: 0.025, dark }),
   };
 }
 
 export const PALETTE_THEMES = [
-  ...COPILOT.map(({ id, name, dark, ...o }) => ({ id, name, family: "copilot", type: dark ? "dark" : "light", contrast: false, colorblind: false, ui: scheme({ dark, ...o }) })),
-  ...ANDROID_SEEDS.flatMap((s) => [materialTheme(s.seed, true, s.name, `android-${s.key}-dark`), materialTheme(s.seed, false, s.name, `android-${s.key}-light`)]),
+  ...COPILOT.map(({ id, name, dark, ...o }) => ({
+    id,
+    name,
+    family: "copilot",
+    type: dark ? "dark" : "light",
+    contrast: false,
+    colorblind: false,
+    ui: scheme({ dark, ...o }),
+  })),
+  ...ANDROID_SEEDS.flatMap((s) => [
+    materialTheme(s.seed, true, s.name, `android-${s.key}-dark`),
+    materialTheme(s.seed, false, s.name, `android-${s.key}-light`),
+  ]),
 ];
 
 export const FAMILIES = [
-  { id: "github", name: "GitHub", note: "Primer's GitHub VS Code themes, including colorblind and high-contrast variants." },
-  { id: "copilot", name: "Copilot", note: "Dark and light themes in the style of GitHub Copilot's app: cool near-black or paper-white surfaces with violet, pink and teal accents." },
-  { id: "android", name: "Android", note: "Material 3 (Material You) color schemes: tonal palettes from one seed color. Pick a preset or any color you like." },
+  {
+    id: "github",
+    name: "GitHub",
+    note: "Primer's GitHub VS Code themes, including colorblind and high-contrast variants.",
+  },
+  {
+    id: "copilot",
+    name: "Copilot",
+    note: "Dark and light themes in the style of GitHub Copilot's app: cool near-black or paper-white surfaces with violet, pink and teal accents.",
+  },
+  {
+    id: "android",
+    name: "Android",
+    note: "Material 3 (Material You) color schemes: tonal palettes from one seed color. Pick a preset or any color you like.",
+  },
 ];
 
 // --- styles (skins) and fonts that go with the families ---------------------
@@ -180,8 +300,18 @@ export const FAMILIES = [
 // Extra skins next to the generated Workbench / Console / Paper. A skin
 // changes type and shape only; colors still come from the theme.
 export const EXTRA_SKINS = [
-  { id: "material", name: "Material", family: "android", note: "Android's Material 3: Roboto, pill buttons, rounded cards, a navigation rail with a pill indicator." },
-  { id: "copilot", name: "Copilot", family: "copilot", note: "Copilot's look: Mona Sans, soft rounded panels, gradient primary buttons, a glowing focus ring." },
+  {
+    id: "material",
+    name: "Material",
+    family: "android",
+    note: "Android's Material 3: Roboto, pill buttons, rounded cards, a navigation rail with a pill indicator.",
+  },
+  {
+    id: "copilot",
+    name: "Copilot",
+    family: "copilot",
+    note: "Copilot's look: Mona Sans, soft rounded panels, gradient primary buttons, a glowing focus ring.",
+  },
 ];
 
 const SYSTEM_UI = `-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif`;

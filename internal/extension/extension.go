@@ -39,6 +39,13 @@ type Param struct {
 	Schema *flow.Schema `json:"schema,omitempty"`
 	// Enum lists the values the parameter takes, when it has a fixed set.
 	Enum []string `json:"enum,omitempty"`
+	// Format refines a string parameter (ParamFormats): what kind of text
+	// it is, so a test form shows the right field and the value is checked.
+	Format string `json:"format,omitempty"`
+	// Default is used when the argument is left out; Example is a typical
+	// value (the test form's placeholder, and a sample for test cases).
+	Default string `json:"default,omitempty"`
+	Example string `json:"example,omitempty"`
 }
 
 // Secret names an environment variable injected at run time. Only the name
@@ -79,12 +86,18 @@ type Extension struct {
 	Output *flow.Schema `json:"output,omitempty"`
 	// OutputBy is the output's shape when an argument has a value
 	// (argument → value → shape), e.g. a built-in's format=json.
-	OutputBy   map[string]map[string]*flow.Schema `json:"outputBy,omitempty"`
-	Revision   int                                `json:"revision"`
-	Approved   bool                               `json:"approved"`
-	ApprovedAt time.Time                          `json:"approvedAt,omitzero"`
-	Hash       string                             `json:"hash,omitempty"`
-	LastTest   *TestResult                        `json:"lastTest,omitempty"`
+	OutputBy map[string]map[string]*flow.Schema `json:"outputBy,omitempty"`
+	// Tests are saved test cases (arguments and what to expect), run from
+	// the tool's Test page; MetaAt is when its parameters, output or tests
+	// were last refined by hand or with AI (kept when its source is read
+	// again, e.g. approving a Copilot extension).
+	Tests      []ToolTest  `json:"tests,omitempty"`
+	MetaAt     time.Time   `json:"metaAt,omitzero"`
+	Revision   int         `json:"revision"`
+	Approved   bool        `json:"approved"`
+	ApprovedAt time.Time   `json:"approvedAt,omitzero"`
+	Hash       string      `json:"hash,omitempty"`
+	LastTest   *TestResult `json:"lastTest,omitempty"`
 	// Deps are packages installed into the tool's own folder (Dir) from the
 	// configured registries: "pg@8.13.1", "requests==2.32.3",
 	// "github.com/jackc/pgx/v5@v5.7.1", "org.postgresql:postgresql:42.7.4".
@@ -433,11 +446,20 @@ type RunResult struct {
 	Command    string   `json:"command"` // argv, quoted as a command template
 	Argv       []string `json:"argv,omitempty"`
 	Error      string   `json:"error,omitempty"`
+	// Truncated: the tool printed more than MaxToolOutput; Output is cut
+	Truncated bool `json:"truncated,omitempty"`
 	// AI is what the tool spent on AI itself (claude / copilot calls it
 	// made), when SpecWright's AI launchers were on its PATH.
 	AI []aishim.Record `json:"ai,omitempty"`
 }
 
+// MaxToolOutput is the most a tool's output keeps (stdout and stderr
+// together). It is passed on whole to flows; an agent gets results over
+// bigout.AgentLimit as a saved file and a summary (see the bridge).
+const MaxToolOutput = 32 << 20
+
+// maxOutput caps output that is only shown when a call fails (stderr of
+// Copilot extension tools).
 const maxOutput = 64 * 1024
 
 // Exec runs e in root with args and secret env values. No shell is
@@ -475,6 +497,11 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 		sub := placeholderRE.ReplaceAllStringFunc(w, func(m string) string {
 			k := placeholderRE.FindStringSubmatch(m)[1]
 			if v, ok := args[k]; ok && v != nil {
+				switch v.(type) {
+				case map[string]any, []any: // a JSON argument: as JSON, not Go's map[…]
+					b, _ := json.Marshal(v)
+					return string(b)
+				}
 				return fmt.Sprint(v)
 			}
 			return ""
@@ -528,7 +555,8 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 		cmd.Stdin = strings.NewReader(*stdin)
 	}
 	var buf, errBuf bytes.Buffer
-	cmd.Stdout, cmd.Stderr = &limited{w: &buf, n: maxOutput}, &limited{w: &buf, n: maxOutput}
+	lim := &limited{w: &buf, n: MaxToolOutput}
+	cmd.Stdout, cmd.Stderr = lim, lim
 	if e.Kind == KindCopilot {
 		// the result is what the tool returned; the extension's own logging
 		// (stderr) is shown only when the call fails
@@ -540,7 +568,7 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 	if err != nil && errBuf.Len() > 0 {
 		out = strings.TrimSpace(strings.Join([]string{out, strings.TrimSpace(errBuf.String())}, "\n"))
 	}
-	res := RunResult{Output: out, DurationMS: time.Since(start).Milliseconds(), Command: JoinWords(argv), Argv: argv}
+	res := RunResult{Output: out, DurationMS: time.Since(start).Milliseconds(), Command: JoinWords(argv), Argv: argv, Truncated: lim.over}
 	if usageFile != "" {
 		res.AI = aishim.ReadUsage(usageFile)
 	}
@@ -560,17 +588,21 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 var placeholderRE = regexp.MustCompile(`\{\{(\w+)\}\}`)
 
 type limited struct {
-	w *bytes.Buffer
-	n int
+	w    *bytes.Buffer
+	n    int
+	over bool // more was written than kept
 }
 
 func (l *limited) Write(p []byte) (int, error) {
 	if room := l.n - l.w.Len(); room > 0 {
 		if len(p) > room {
 			l.w.Write(p[:room])
+			l.over = true
 		} else {
 			l.w.Write(p)
 		}
+	} else if len(p) > 0 {
+		l.over = true
 	}
 	return len(p), nil
 }

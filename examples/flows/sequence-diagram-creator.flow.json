@@ -1,0 +1,110 @@
+{
+  "format": "specwright-flow",
+  "version": 1,
+  "exported": "2026-11-16T01:13:42Z",
+  "flow": {
+    "version": 1,
+    "id": "sequence-diagram-creator-copy",
+    "name": "MultipleItems",
+    "inputs": [
+      {
+        "name": "ImageFromClipboard",
+        "label": "Input 1",
+        "type": "clipboard",
+        "required": true
+      },
+      {
+        "name": "Output_location",
+        "label": "Input 2",
+        "type": "text",
+        "required": true
+      },
+      {
+        "name": "Diagramtype",
+        "label": "Input 3",
+        "type": "multichoice",
+        "required": true,
+        "default": "sequence\nactivity",
+        "options": [
+          "sequence",
+          "activity"
+        ]
+      }
+    ],
+    "context": {},
+    "skills": [],
+    "nodes": [
+      {
+        "id": "start",
+        "type": "start",
+        "title": "Inputs",
+        "x": 0,
+        "y": 140
+      },
+      {
+        "id": "beautify-uml-diagram",
+        "type": "tool",
+        "title": "beautify-uml-diagram",
+        "x": 290,
+        "y": 360,
+        "tool": "beautify-uml-diagram",
+        "args": {
+          "ai": "",
+          "diagram_type": "{{loop.buffer_output}}",
+          "draft": "",
+          "source": "{{inputs.ImageFromClipboard}}"
+        }
+      },
+      {
+        "id": "create_file",
+        "type": "tool",
+        "title": "create_file",
+        "x": 300,
+        "y": 530,
+        "tool": "builtin:create_file",
+        "args": {
+          "content": "{{beautify-uml-diagram.buffer_output}}",
+          "overwrite": "",
+          "path": "{{inputs.Output_location}}/{{loop.buffer_output}}.svg"
+        }
+      },
+      {
+        "id": "loop",
+        "type": "loop",
+        "title": "ForEachDiagram",
+        "x": 280,
+        "y": 190,
+        "source": "{{inputs.Diagramtype}}",
+        "split": "auto",
+        "max": 100
+      },
+      {
+        "id": "gather",
+        "type": "gather",
+        "title": "Gather",
+        "x": 330,
+        "y": 690,
+        "mode": "json-array"
+      }
+    ],
+    "edges": [
+      {
+        "from": "beautify-uml-diagram",
+        "to": "create_file"
+      },
+      {
+        "from": "loop",
+        "to": "beautify-uml-diagram"
+      },
+      {
+        "from": "create_file",
+        "to": "gather"
+      },
+      {
+        "from": "start",
+        "to": "loop"
+      }
+    ],
+    "updated": "2026-11-12T17:35:40Z"
+  }
+}

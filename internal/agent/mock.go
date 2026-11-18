@@ -419,6 +419,9 @@ func slugify(s string) string {
 // echoes the feedback, a transform upper-cases its data, anything else
 // summarizes the first line of the prompt.
 func mockFlowAnswer(prompt string) string {
+	if strings.HasPrefix(prompt, "You are improving") {
+		return mockImprove(prompt)
+	}
 	if strings.Contains(prompt, `{"arguments":`) && strings.Contains(prompt, "Its parameters:") {
 		// building a tool's arguments: fill every parameter from the request
 		req := ""
@@ -456,6 +459,50 @@ func mockFlowAnswer(prompt string) string {
 	}
 	first := strings.TrimSpace(strings.SplitN(prompt, "\n", 2)[0])
 	return "Summary: " + short(first, 160)
+}
+
+// mockImprove judges an Improve step's round predictably: done when the
+// result (pair before) or the check (pair after) says "good" / "PASS";
+// otherwise every tool parameter becomes "good", or the result is revised.
+func mockImprove(prompt string) string {
+	section := func(h string) string {
+		i := strings.Index(prompt, h)
+		if i < 0 {
+			return ""
+		}
+		rest := prompt[i+len(h):]
+		if j := strings.Index(rest, "```\n"); j >= 0 {
+			rest = rest[j+4:]
+		}
+		if j := strings.Index(rest, "\n```"); j >= 0 {
+			rest = rest[:j]
+		}
+		return rest
+	}
+	person := strings.Contains(prompt, "asked for changes\n")
+	if strings.Contains(prompt, "## What the check found") {
+		check, cur := section("## What the check found"), section("## Your current result")
+		if strings.Contains(check, "PASS") && !person {
+			return `{"done": true, "reason": "The check passes."}`
+		}
+		b, _ := json.Marshal(map[string]any{"done": false, "reason": "The check does not pass yet.", "output": "fixed " + strings.TrimSpace(cur)})
+		return string(b)
+	}
+	res := section("## The tool's result")
+	if strings.Contains(res, "good") && !person {
+		return `{"done": true, "reason": "The result is good."}`
+	}
+	args := map[string]any{}
+	if i := strings.Index(prompt, "## The tool "); i >= 0 {
+		for _, l := range strings.Split(prompt[i:], "\n")[2:] {
+			if !strings.HasPrefix(l, "- ") {
+				break
+			}
+			args[strings.TrimPrefix(strings.SplitN(l, " (", 2)[0], "- ")] = "good"
+		}
+	}
+	b, _ := json.Marshal(map[string]any{"done": false, "reason": "The result is not good yet.", "args": args})
+	return string(b)
 }
 
 // MockScript is the mock agent's answer to a "write a script" request.

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"codegen/internal/bigout"
 	"context"
 	"encoding/json"
 	"errors"
@@ -113,7 +114,7 @@ func aiArgsPrompt(e *extension.Extension, request string, fixed map[string]any, 
 	}
 	if in := strings.TrimSpace(d.Input); in != "" {
 		if len(in) > 4000 {
-			in = in[:4000] + "\n…"
+			in = bigout.SafeCut(in, 4000) + "\n…"
 		}
 		fmt.Fprintf(&b, "\nOutput of the previous step (you may use it):\n```\n%s\n```\nIt is also saved in a file: for a parameter that expects a file path to this data, use the exact value {{input_file}}.\n", in)
 	}
@@ -142,7 +143,7 @@ func aiArgsPrompt(e *extension.Extension, request string, fixed map[string]any, 
 		for _, k := range keys {
 			v := d.Inputs[k]
 			if len(v) > 500 {
-				v = v[:500] + "…"
+				v = bigout.SafeCut(v, 500) + "…"
 			}
 			fmt.Fprintf(&b, "- %s: %s\n", k, v)
 		}

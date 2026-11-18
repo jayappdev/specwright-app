@@ -439,3 +439,102 @@ func (s *Schema) Compact() string {
 	w(s, 0)
 	return b.String()
 }
+
+// UnmarshalJSON reads a schema as people and AIs write JSON Schema, not
+// only as the designer writes it: a type list ("type": ["string", "null"]),
+// anyOf / oneOf with one real type, const (a one-value enum), a boolean
+// schema (true: anything), items as a list (its first), required as a
+// boolean (left out). Without this, one such schema made the whole flow
+// unreadable. Properties keep their order (they are read as they are).
+func (s *Schema) UnmarshalJSON(b []byte) error {
+	t := strings.TrimSpace(string(b))
+	if t == "true" || t == "false" || t == "null" || t == "{}" {
+		*s = Schema{}
+		return nil
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal(b, &raw); err != nil {
+		return err
+	}
+	normalizeSchemaRaw(raw)
+	*s = Schema{}
+	str := func(k string) string {
+		var v string
+		if json.Unmarshal(raw[k], &v) != nil {
+			return ""
+		}
+		return v
+	}
+	s.Type, s.Description, s.Format = str("type"), str("description"), str("format")
+	if p, ok := raw["properties"]; ok {
+		if err := json.Unmarshal(p, &s.Properties); err != nil {
+			return err
+		}
+	}
+	if r, ok := raw["required"]; ok {
+		_ = json.Unmarshal(r, &s.Required) // a boolean required (old drafts) is left out
+	}
+	if it, ok := raw["items"]; ok {
+		var one Schema
+		if err := json.Unmarshal(it, &one); err == nil && (one.Known() || len(one.Properties) > 0 || one.Items != nil) {
+			s.Items = &one
+		}
+	}
+	if e, ok := raw["enum"]; ok {
+		_ = json.Unmarshal(e, &s.Enum)
+	}
+	return nil
+}
+
+// normalizeSchemaRaw rewrites the variants (type lists, anyOf, const, item
+// lists) into the fields Schema has.
+func normalizeSchemaRaw(m map[string]json.RawMessage) {
+	if t, ok := m["type"]; ok {
+		var list []any
+		if json.Unmarshal(t, &list) == nil { // ["string", "null"]: the real one
+			delete(m, "type")
+			for _, x := range list {
+				if s, _ := x.(string); s != "" && s != "null" {
+					m["type"], _ = json.Marshal(s)
+					break
+				}
+			}
+		}
+	}
+	if _, has := m["type"]; !has {
+		for _, k := range []string{"anyOf", "oneOf", "allOf"} {
+			var alts []map[string]json.RawMessage
+			if json.Unmarshal(m[k], &alts) != nil {
+				continue
+			}
+			for _, am := range alts {
+				normalizeSchemaRaw(am)
+				var ty string
+				if json.Unmarshal(am["type"], &ty) == nil && ty != "" && ty != "null" {
+					for ak, av := range am {
+						if _, set := m[ak]; !set {
+							m[ak] = av
+						}
+					}
+					break
+				}
+			}
+			if _, has := m["type"]; has {
+				break
+			}
+		}
+	}
+	if c, ok := m["const"]; ok {
+		m["enum"] = json.RawMessage("[" + string(c) + "]")
+	}
+	if it, ok := m["items"]; ok { // tuple form: its first item
+		var list []json.RawMessage
+		if json.Unmarshal(it, &list) == nil {
+			if len(list) > 0 {
+				m["items"] = list[0]
+			} else {
+				delete(m, "items")
+			}
+		}
+	}
+}

@@ -18,6 +18,12 @@ import (
 	"time"
 )
 
+// patterns compiled once (not on every call)
+var (
+	mavenMirrorOf  = regexp.MustCompile(`(?s)<mirror>.*?<mirrorOf>([^<]*)</mirrorOf>.*?<url>([^<]+)</url>`) // a Maven mirror with mirrorOf
+	mavenMirrorURL = regexp.MustCompile(`(?s)<mirror>.*?<url>([^<]+)</url>`)                                // a Maven mirror's url
+)
+
 // PackageSettings say where tools download their dependencies from. Every
 // field is optional: empty means "inherit what this machine already uses"
 // (environment variables, npm/pip/go/maven config). A value overrides it.
@@ -320,9 +326,9 @@ func DetectPackageSettings(ctx context.Context) PackageSettings {
 	s.Maven.MirrorURL, s.Maven.MirrorOf = "https://repo.maven.apache.org/maven2", "central"
 	if home, err := os.UserHomeDir(); err == nil {
 		if b, err := os.ReadFile(filepath.Join(home, ".m2", "settings.xml")); err == nil {
-			if m := regexp.MustCompile(`(?s)<mirror>.*?<mirrorOf>([^<]*)</mirrorOf>.*?<url>([^<]+)</url>`).FindSubmatch(b); m != nil {
+			if m := mavenMirrorOf.FindSubmatch(b); m != nil {
 				s.Maven.MirrorOf, s.Maven.MirrorURL = string(m[1]), string(m[2])
-			} else if m := regexp.MustCompile(`(?s)<mirror>.*?<url>([^<]+)</url>`).FindSubmatch(b); m != nil {
+			} else if m := mavenMirrorURL.FindSubmatch(b); m != nil {
 				s.Maven.MirrorURL, s.Maven.MirrorOf = string(m[1]), "*"
 			}
 		}

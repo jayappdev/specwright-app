@@ -1,6 +1,7 @@
 package core
 
 import (
+	"codegen/internal/bigout"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -15,6 +16,11 @@ import (
 
 	"codegen/internal/bus"
 	"codegen/internal/store"
+)
+
+// patterns compiled once (not on every call)
+var (
+	runIDDate = regexp.MustCompile(`^(\d{4})(\d{2})(\d{2})-`) // the date at the start of a run id
 )
 
 // Run results: every run (workflow steps, playground prompts, Files › Ask
@@ -40,7 +46,7 @@ const ResultsDir = ".codegen/runs"
 // runResultsDir is the workspace-relative folder of a run.
 func runResultsDir(id string, started time.Time) string {
 	day := started.Format("2006-01-02")
-	if m := regexp.MustCompile(`^(\d{4})(\d{2})(\d{2})-`).FindStringSubmatch(id); m != nil {
+	if m := runIDDate.FindStringSubmatch(id); m != nil {
 		day = m[1] + "-" + m[2] + "-" + m[3]
 	}
 	return ResultsDir + "/" + day + "/" + id
@@ -262,6 +268,25 @@ func (h *Hub) continuationContext(parents []string) (string, error) {
 			fmt.Fprintf(&b, "Files it changed: %s\n", strings.Join(files, ", "))
 		}
 	}
+	// flows: where they are, and how to change them so they keep fitting the
+	// Flow Designer's format (an agent editing the JSON by hand broke them)
+	var flows []string
+	seenFlow := map[string]bool{}
+	for _, d := range all {
+		if d.Kind != "flow" {
+			continue
+		}
+		if r, err := h.Store.GetRun(d.ID); err == nil && r.Workflow != "" && !seenFlow[r.Workflow] && !strings.HasPrefix(r.Workflow, "draft-") {
+			seenFlow[r.Workflow] = true
+			flows = append(flows, fmt.Sprintf("- %s: .codegen/flows/%s.json (id %s)", firstNonEmpty(d.Title, r.Workflow), r.Workflow, r.Workflow))
+		}
+	}
+	if len(flows) > 0 {
+		b.WriteString("\n### Changing a flow\nThe flow(s) above:\n" + strings.Join(flows, "\n") +
+			"\nRead the flow's file to see it. To change it, call SpecWright's save_flow tool with the complete flow JSON and base_flow_id set to its id: it is checked against the Flow Designer format and saved as a new version (the original stays), and its answer lists any problems to fix (fix them and call save_flow again with update_version_id). Do NOT edit .codegen/flows/*.json directly: a file that does not fit the format breaks the flow.\n" +
+			"save_flow is on the agentbridge MCP server: in GitHub Copilot it is named agentbridge-save_flow, in Claude Code mcp__agentbridge__save_flow. If you see only its name, load it with your tool search (search for save_flow); do not look for it in files, and do not search outside this project (that is refused). It needs no approval.\n" +
+			"To run a flow by itself (at a time or every so often, after another flow, or when files change), use SpecWright's schedule_flow tool (agentbridge-schedule_flow in Copilot, mcp__agentbridge__schedule_flow in Claude Code): action list shows its triggers, set adds or changes one, remove deletes one. It saves the trigger into the flow in place (no new version).\n")
+	}
 	b.WriteString("\n---\n\nNow, continuing from the above:\n")
 	return b.String(), nil
 }
@@ -330,9 +355,16 @@ func (h *Hub) WriteRunResults(id string) error {
 	d, _ := h.Digest(id)
 	evs, _ := h.Store.Events(id)
 	red := h.Store.Redactor()
+	var werr error // the first file that could not be written; the others are still tried
 	write := func(name, content string) {
-		_ = os.MkdirAll(filepath.Dir(filepath.Join(abs, name)), 0o755)
-		_ = os.WriteFile(filepath.Join(abs, name), []byte(red.String(content)), 0o644)
+		p := filepath.Join(abs, name)
+		err := os.MkdirAll(filepath.Dir(p), 0o755)
+		if err == nil {
+			err = os.WriteFile(p, []byte(red.String(content)), 0o644)
+		}
+		if err != nil && werr == nil {
+			werr = fmt.Errorf("write %s: %w", name, err)
+		}
 	}
 	// events and the composed prompt
 	var ev strings.Builder
@@ -405,7 +437,7 @@ func (h *Hub) WriteRunResults(id string) error {
 			}
 			if out := strings.TrimSpace(c.out); out != "" {
 				if len(out) > 4000 {
-					out = out[:4000] + "\n…"
+					out = bigout.SafeCut(out, 4000) + fmt.Sprintf("\n…(%s in all; the whole output is in this call's output file)", bigout.Human(len(out)))
 				}
 				fmt.Fprintf(&t, "Result:\n\n```\n%s\n```\n\n", out)
 			}
@@ -454,10 +486,12 @@ func (h *Hub) WriteRunResults(id string) error {
 	r.Results = dir
 	b, _ := json.MarshalIndent(r, "", "  ")
 	write("run.json", string(b))
-	_ = h.Store.SaveRun(r)
 	write("summary.md", h.summaryMD(r, d, len(calls)))
+	// the run record says where its results are: save it last, so a reader
+	// that sees Results set finds every file written
+	_ = h.Store.SaveRun(r)
 	h.Bus.Publish(bus.Event{Type: "results.saved", RunID: id, Summary: dir, Data: map[string]any{"dir": dir}})
-	return nil
+	return werr
 }
 
 func str(v any) string {
@@ -507,7 +541,7 @@ func (h *Hub) summaryMD(r store.Run, d RunDigest, calls int) string {
 	b.WriteString("- `events.jsonl`: the full event log · `run.json`: the run's record\n")
 	if a := strings.TrimSpace(d.Answer); a != "" {
 		if len(a) > 1500 {
-			a = a[:1500] + "\n\n…(see answer.md)"
+			a = bigout.SafeCut(a, 1500) + "\n\n…(see answer.md)"
 		}
 		b.WriteString("\n## Answer\n\n" + a + "\n")
 	}

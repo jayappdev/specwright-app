@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"codegen/internal/extension"
 	"codegen/internal/flow"
@@ -25,12 +28,33 @@ func (h *Hub) Flows() ([]flow.Summary, error) {
 }
 
 // LoadFlow reads one flow.
+// A flow whose file did not fit the format (an agent edited it) is
+// repaired: the file as it was is kept in .codegen/flows/.backup/, the
+// repaired flow is saved in its place (same id: runs and links keep
+// working), and Repairs says what changed.
 func (h *Hub) LoadFlow(id string) (*flow.Flow, error) {
 	root, err := h.need()
 	if err != nil {
 		return nil, err
 	}
-	return flow.Load(root, id)
+	f, err := flow.Load(root, id)
+	if err != nil || len(f.Repairs) == 0 {
+		return f, err
+	}
+	src := flow.Path(root, id)
+	if b, rerr := os.ReadFile(src); rerr == nil {
+		bak := filepath.Join(filepath.Dir(src), ".backup", id+"-"+time.Now().Format("20060102-150405")+".json")
+		if os.MkdirAll(filepath.Dir(bak), 0o755) == nil && os.WriteFile(bak, b, 0o644) == nil {
+			rel, _ := filepath.Rel(root, bak)
+			f.Repairs = append(f.Repairs, "The file as it was is kept in "+filepath.ToSlash(rel)+".")
+		}
+	}
+	repairs := f.Repairs
+	if err := flow.Save(root, f); err != nil {
+		return nil, err
+	}
+	f.Repairs = repairs
+	return f, nil
 }
 
 // NewFlow creates and saves an empty flow with a free id.
@@ -55,11 +79,25 @@ func (h *Hub) SaveFlow(f flow.Flow) (FlowState, error) {
 	if f.ID == "" {
 		f.ID = flow.UniqueID(root, flow.Slug(f.Name))
 	}
+	// the file changed since this copy was loaded (an agent edited it,
+	// another window saved it): do not write stale data over it
+	if f.Rev != "" {
+		if cur := flow.DiskRev(root, f.ID); cur != "" && cur != f.Rev {
+			return FlowState{}, fmt.Errorf("%s: %s changed on disk since it was opened here; load the new version, or keep yours to overwrite it", ErrFlowChanged, f.Name)
+		}
+	}
 	if err := flow.Save(root, &f); err != nil {
 		return FlowState{}, err
 	}
+	if len(f.Triggers) > 0 {
+		h.kickTriggers(root) // a files trigger may name a folder outside the project
+	}
 	return FlowState{Flow: &f, Issues: flow.Validate(&f, h.flowTools())}, nil
 }
+
+// ErrFlowChanged starts the error of a save refused because the flow's file
+// changed on disk (the UI offers to reload or overwrite).
+const ErrFlowChanged = "flow changed on disk"
 
 // FlowState is a flow plus its check results.
 type FlowState struct {
@@ -136,6 +174,11 @@ func (h *Hub) ExportFlow(id string) (string, error) {
 		return "", err
 	}
 	b, err := flow.Export(root, f)
+	if err != nil {
+		return "", err
+	}
+	// the project tools it uses travel with it (imported as needing approval)
+	b, err = h.withFlowTools(f, b)
 	return string(b), err
 }
 
@@ -152,6 +195,7 @@ func (h *Hub) ImportFlow(data string) (FlowState, error) {
 	if err != nil {
 		return FlowState{}, err
 	}
+	notes = append(notes, h.importFlowTools(data)...)
 	issues := h.ValidateFlow(*f)
 	for _, is := range issues {
 		if strings.Contains(is.Message, "is not available") {
@@ -275,7 +319,7 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 			content = flow.Render(n.Template, sample)
 		}
 		out, err = flow.Convert(content, n.Format)
-	case "tool", "ai":
+	case "tool", "ai", "improve":
 		err = errors.New("tools and AI steps run when the flow runs; enter sample output for this step instead")
 	default:
 		err = errors.New("nothing to preview for this step")

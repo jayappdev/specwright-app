@@ -9,6 +9,7 @@ import (
 
 	"codegen/internal/extension"
 	"codegen/internal/flow"
+	"codegen/internal/store"
 )
 
 // waitFlow polls a run until pred holds (or fails the test).
@@ -81,8 +82,13 @@ func TestFlowRunEndToEnd(t *testing.T) {
 	if st.Usage.ToolCalls < 1 || st.Usage.ModelCalls < 1 {
 		t.Fatalf("usage %+v", st.Usage)
 	}
-	// recorded: history and metrics
-	runs, _ := h.FlowRuns(10)
+	// recorded: history and metrics (written just after the state turns done)
+	var runs []store.Run
+	for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl); time.Sleep(20 * time.Millisecond) {
+		if runs, _ = h.FlowRuns(10); len(runs) == 1 && runs[0].State == "done" {
+			break
+		}
+	}
 	if len(runs) != 1 || runs[0].State != "done" {
 		t.Fatalf("%+v", runs)
 	}
@@ -224,9 +230,9 @@ func TestFlowRunCredentials(t *testing.T) {
 	// no keychain entry: the run stops and asks, tagged with the run id
 	delete(store, "SpecWright/FLOW_TEST_TOKEN")
 	kcForget("FLOW_TEST_TOKEN")
-	h.mu.Lock()
-	delete(h.secrets, "FLOW_TEST_TOKEN")
-	h.mu.Unlock()
+	h.sec.mu.Lock()
+	delete(h.sec.values, "FLOW_TEST_TOKEN")
+	h.sec.mu.Unlock()
 	ch, unsub := h.Bus.Subscribe(256, nil)
 	defer unsub()
 	st, _ = h.RunFlow("tok", FlowRunOptions{Review: "none"})

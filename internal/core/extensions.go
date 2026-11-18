@@ -28,6 +28,31 @@ func (h *Hub) Callable() []extension.Extension {
 	return h.callableLocked()
 }
 
+// ChangedTools implements extension.ChangedTools: tools of the project's
+// Copilot extensions approved before whose files changed since.
+func (h *Hub) ChangedTools() []extension.Extension {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	if h.exts == nil {
+		return nil
+	}
+	all, err := h.exts.List()
+	if err != nil {
+		return nil
+	}
+	managed := map[string]bool{}
+	for _, e := range h.managedTools() {
+		managed[e.Name] = true
+	}
+	var out []extension.Extension
+	for _, e := range all {
+		if e.Kind == extension.KindCopilot && e.Scope == "project" && e.Approved && e.Hash != e.Fingerprint() && !managed[e.Name] {
+			out = append(out, e)
+		}
+	}
+	return out
+}
+
 func (h *Hub) callableLocked() []extension.Extension {
 	// verified managed tools (global, admin-signed) come first and cannot be
 	// shadowed by a workspace tool of the same name
@@ -257,13 +282,13 @@ func (h *Hub) DeleteExtension(name string) error {
 
 // SetSecret keeps a secret value in memory for this session.
 func (h *Hub) SetSecret(name, value string) {
-	h.mu.Lock()
+	h.sec.mu.Lock()
 	if value == "" {
-		delete(h.secrets, name)
+		delete(h.sec.values, name)
 	} else {
-		h.secrets[name] = value
+		h.sec.values[name] = value
 	}
-	h.mu.Unlock()
+	h.sec.mu.Unlock()
 	h.Store.Redactor().Add(value)
 }
 
@@ -282,12 +307,26 @@ type GenerateRequest struct {
 }
 
 const genInstructions = `You write small, safe developer tools that an AI coding agent can call.
+MAKE THE TOOL REUSABLE: write it for the general job, driven by its parameters,
+not for the one case in the request. Every specific value the request names
+(a project key, a status, a component, a label, an assignee, a date range, a
+folder, a URL, a limit, an output format) is a PARAMETER with that value as its
+default, never a constant in the script. Name and describe the tool for the
+general job ("pull-jira-issues": "Lists Jira issues of a project, filtered by
+status and component", not "pull-done-abc-issues"). Prefer one general tool
+with optional filters over several narrow ones; a filter left empty means "no
+filter". Put the request's specific values in "call" (the example arguments)
+and in "sampleTest", where they show how it is used.
 Write the tool in the language given under "Runs in". The language priority is
 Node.js, then Go, then Java, then Bash: only move down the list when the one
 above cannot do the job.
 Reply with ONE JSON object and nothing else, with these fields:
 {"name": kebab-case (max 40 chars), "desc": one sentence the agent sees,
- "lang": "Node.js"|"Go"|"Java"|"Bash"|"Python", "params": [{"name","type","required","desc"}],
+ "lang": "Node.js"|"Go"|"Java"|"Bash"|"Python",
+ "params": [{"name", "type": "string|integer|number|boolean|json", "required", "desc",
+             "default": the value used when it is left out (e.g. the request's value),
+             "enum": [allowed values, when it is a fixed set], "format": "path|directory|url|date|date-time|multiline|email|" ,
+             "example": a typical value}],
  "secrets": [{"name": ENV_VAR, "desc"}], "perms": ["read files", ...], "deps": [...],
  "command": how to run it, with {{param}} placeholders:
    Node.js "node .codegen/tools/<name>.js {{param}}" (standard library only, Node 18+),
@@ -509,22 +548,21 @@ func (h *Hub) TestExtension(d extension.Extension, question string) (extension.T
 	return h.TestExtensionWith(d, question, nil, "")
 }
 
-// TestExtensionWith is TestExtension with files attached to the question
-// (workspace paths returned by SaveAttachment).
-// model overrides the agent's model for this test ("" = the app's setting).
-func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []string, model string) (extension.TestResult, error) {
-	root, err := h.need()
-	if err != nil {
-		return extension.TestResult{}, err
-	}
-	if strings.TrimSpace(question) == "" {
-		return extension.TestResult{}, errors.New("write what you would ask the agent")
-	}
+// stageTool prepares a tool that may not be saved yet to run: a script is
+// written to a temporary file, a tool with packages to a temporary folder
+// with its packages installed (the install log goes into tr's steps). It
+// returns the tool to run, the temporary path and the path to show instead,
+// a cleanup, and a finished result when installing failed.
+func (h *Hub) stageTool(root string, d extension.Extension, tr *extension.TestResult) (td extension.Extension, sp, shown string, done func(), fail *extension.TestResult, err error) {
 	tmp := filepath.Join(h.Store.Dir(), "tmp", "test-"+d.Name)
-	td := d
-	var sp, shown string // temp path, and the path to show instead
+	td = d
 	var installLog []string
-	tr := extension.TestResult{At: time.Now()}
+	var cleanups []func()
+	done = func() {
+		for _, c := range cleanups {
+			c()
+		}
+	}
 	switch {
 	case d.Kind == extension.KindCopilot:
 		// runs from its extension folder; packages are installed there on first use
@@ -532,9 +570,9 @@ func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []
 		// folder layout: write the tool and its manifest, then install its
 		// packages through the workspace's proxy and registries
 		_ = os.RemoveAll(tmp)
-		defer os.RemoveAll(tmp)
+		cleanups = append(cleanups, func() { os.RemoveAll(tmp) })
 		if td, err = extension.WriteTool(tmp, tmp, d); err != nil {
-			return extension.TestResult{}, err
+			return td, sp, shown, done, nil, err
 		}
 		sp, shown = filepath.ToSlash(tmp), extension.ToolDir(d.Scope, d.Name)
 		h.Bus.Publish(bus.Event{Type: "ext.install", Summary: "Installing dependencies for " + d.Name})
@@ -551,20 +589,43 @@ func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []
 			tr.Output = ierr.Error()
 			tr.Checks = []extension.Check{{Label: "Dependencies installed", OK: false}}
 			tr.Summary = "Failed: installing " + strings.Join(d.Deps, ", ") + " did not work. Check the package names and versions, or the proxy and registry under Packages & proxy."
-			return tr, nil
+			return td, sp, shown, done, tr, nil
 		}
 	case d.Kind != "npm" && d.Script != "":
 		ext := extension.ScriptExt(d.Lang)
 		if err := os.MkdirAll(tmp, 0o700); err != nil {
-			return extension.TestResult{}, err
+			return td, sp, shown, done, nil, err
 		}
 		sp = filepath.Join(tmp, d.Name+ext)
 		shown = ".codegen/tools/" + d.Name + ext
 		if err := os.WriteFile(sp, []byte(d.Script), 0o700); err != nil {
-			return extension.TestResult{}, err
+			return td, sp, shown, done, nil, err
 		}
-		defer os.RemoveAll(tmp)
+		cleanups = append(cleanups, func() { os.RemoveAll(tmp) })
 		td.Command = extension.RepointScript(d.Command, d.Name, sp)
+	}
+	return td, sp, shown, done, nil, nil
+}
+
+// TestExtensionWith is TestExtension with files attached to the question
+// (workspace paths returned by SaveAttachment).
+// model overrides the agent's model for this test ("" = the app's setting).
+func (h *Hub) TestExtensionWith(d extension.Extension, question string, files []string, model string) (extension.TestResult, error) {
+	root, err := h.need()
+	if err != nil {
+		return extension.TestResult{}, err
+	}
+	if strings.TrimSpace(question) == "" {
+		return extension.TestResult{}, errors.New("write what you would ask the agent")
+	}
+	tr := extension.TestResult{At: time.Now()}
+	td, sp, shown, cleanup, fail, err := h.stageTool(root, d, &tr)
+	if err != nil {
+		return extension.TestResult{}, err
+	}
+	defer cleanup()
+	if fail != nil {
+		return *fail, nil
 	}
 	release := h.Bridge.AllowTemporary(td)
 	defer release()
@@ -681,9 +742,9 @@ drain:
 	leak := false
 	all := agentText.String() + res.Text + tr.Output
 	for _, s := range d.Secrets {
-		h.mu.RLock()
-		v := h.resolved[s.Name]
-		h.mu.RUnlock()
+		h.sec.mu.RLock()
+		v := h.sec.resolved[s.Name]
+		h.sec.mu.RUnlock()
 		if v != "" && strings.Contains(all, v) {
 			leak = true
 		}
@@ -695,9 +756,9 @@ drain:
 			ans = strings.TrimSpace(agentText.String())
 		}
 		for _, s := range d.Secrets {
-			h.mu.RLock()
-			v := h.resolved[s.Name]
-			h.mu.RUnlock()
+			h.sec.mu.RLock()
+			v := h.sec.resolved[s.Name]
+			h.sec.mu.RUnlock()
 			if v != "" {
 				ans = strings.ReplaceAll(ans, v, "[REDACTED]")
 			}

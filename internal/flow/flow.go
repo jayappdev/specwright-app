@@ -16,7 +16,9 @@
 package flow
 
 import (
+	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -39,6 +41,8 @@ type Flow struct {
 	Skills      []Skill `json:"skills"`
 	Nodes       []Node  `json:"nodes"`
 	Edges       []Edge  `json:"edges"`
+	// Triggers start the flow by themselves (a schedule…); see trigger.go
+	Triggers []Trigger `json:"triggers,omitempty"`
 	// MinutesSaved is the manual work one successful run replaces (for
 	// Metrics); 0 means "estimate from the steps".
 	MinutesSaved int       `json:"minutesSaved,omitempty"`
@@ -50,6 +54,14 @@ type Flow struct {
 	Revision int    `json:"revision,omitempty"`
 	// Designed says how the flow was made, e.g. "AI designer: <request>".
 	Designed string `json:"designed,omitempty"`
+	// Rev identifies the file's content when the flow was loaded or saved
+	// (not stored in the file): a save of an older Rev is refused, so an
+	// editor never writes stale data over a change made elsewhere (an
+	// agent, another window, a git checkout).
+	Rev string `json:"rev,omitempty"`
+	// Repairs: the file did not fit the flow format (an outside edit) and
+	// was read leniently; what was changed to read it (not stored).
+	Repairs []string `json:"repairs,omitempty"`
 }
 
 // EstimatedMinutes is MinutesSaved, or an estimate from the steps.
@@ -62,7 +74,7 @@ func (f *Flow) EstimatedMinutes() int {
 		switch n.Type {
 		case "tool":
 			m += 10
-		case "ai":
+		case "ai", "improve":
 			m += 20
 		case "merge", "transform", "loop", "gather":
 			m += 5
@@ -77,7 +89,7 @@ func (f *Flow) EstimatedMinutes() int {
 type Input struct {
 	Name        string   `json:"name"`  // used as {{inputs.name}}
 	Label       string   `json:"label"` // shown to the user
-	Type        string   `json:"type"`  // text | multiline | secret | number | boolean | choice | multichoice | file | files | clipboard
+	Type        string   `json:"type"`  // text | multiline | secret | number | boolean | date | datetime | choice | multichoice | file | files | clipboard
 	Required    bool     `json:"required,omitempty"`
 	Default     string   `json:"default,omitempty"`
 	Files       []string `json:"files,omitempty"`   // default files (workspace paths)
@@ -177,7 +189,7 @@ type Skill struct {
 // Node is one step on the canvas.
 type Node struct {
 	ID    string  `json:"id"`
-	Type  string  `json:"type"` // start | tool | ai | merge | transform | loop | gather | decision | filter | aggregate | output
+	Type  string  `json:"type"` // start | tool | ai | improve | merge | transform | loop | gather | decision | filter | aggregate | output
 	Title string  `json:"title,omitempty"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
@@ -201,6 +213,13 @@ type Node struct {
 	// designer shows it to the steps after it, and the agent is asked to
 	// reply in that shape (the only shape metadata the AI is sent).
 	OutputSchema *Schema `json:"outputSchema,omitempty"`
+
+	// improve (see improve.go; Prompt, Model and OutputSchema as for ai,
+	// ContinueOnError: keep the last result when it never gets there)
+	Pair    string `json:"pair,omitempty"`    // before | after: the tool step it runs with
+	Goal    string `json:"goal,omitempty"`    // when the result is good enough
+	Rounds  int    `json:"rounds,omitempty"`  // at most this many rounds (0: DefaultImproveRounds)
+	Approve string `json:"approve,omitempty"` // none | done | each: when a person confirms
 
 	// merge
 	Mode      string `json:"mode,omitempty"`      // concat | json-object | json-array | template
@@ -259,10 +278,10 @@ type Edge struct {
 
 // NodeTypes, transform operations, merge modes and output formats.
 var (
-	NodeTypes   = []string{"start", "tool", "ai", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
+	NodeTypes   = []string{"start", "tool", "ai", "improve", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
 	MergeModes  = []string{"concat", "json-object", "json-array", "template"}
 	Formats     = []string{"md", "txt", "html", "csv", "json"}
-	InputTypes  = []string{"text", "multiline", "secret", "number", "boolean", "choice", "multichoice", "file", "files", "clipboard"}
+	InputTypes  = []string{"text", "multiline", "secret", "number", "boolean", "date", "datetime", "choice", "multichoice", "file", "files", "clipboard"}
 	ActionTypes = []string{"save", "tool", "clipboard", "show"}
 )
 
@@ -411,6 +430,9 @@ type ToolParam struct {
 
 var varRE = regexp.MustCompile(`\{\{\s*([^{}]+?)\s*\}\}`)
 
+// onlyInputRE is a template that is exactly one input: {{inputs.name}}.
+var onlyInputRE = regexp.MustCompile(`^\s*\{\{\s*inputs\.([A-Za-z_][A-Za-z0-9_]*)\s*\}\}\s*$`)
+
 // Vars lists the template variables in s.
 func Vars(s string) []string {
 	var out []string
@@ -427,6 +449,7 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 	add := func(node, level, format string, a ...any) {
 		is = append(is, Issue{Node: node, Level: level, Message: fmt.Sprintf(format, a...)})
 	}
+	f.checkTriggers(add)
 	if strings.TrimSpace(f.Name) == "" {
 		add("", "error", "Give the flow a name.")
 	}
@@ -444,6 +467,11 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 		}
 		if (in.Type == "choice" || in.Type == "multichoice") && len(in.Options) == 0 {
 			add("start", "error", "Input %q is a choice but has no options.", in.Name)
+		}
+		if in.Type == "date" || in.Type == "datetime" {
+			if _, err := DateInput(in.Type, in.Default, time.Now()); err != nil {
+				add("start", "error", "Input %q: the default value %v.", in.Name, err)
+			}
 		}
 		if in.Type == "secret" {
 			if in.Default != "" {
@@ -608,6 +636,14 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 					if p.Required && strings.TrimSpace(n.Args[p.Name]) == "" {
 						add(n.ID, "error", "%s: the required parameter %q is empty (fill it in, or describe the step and let AI build it).", label(n), p.Name)
 					}
+					// only an optional input with no default fills it: empty when the input is left empty
+					if m := onlyInputRE.FindStringSubmatch(n.Args[p.Name]); p.Required && m != nil {
+						for _, in := range f.Inputs {
+							if in.Name == m[1] && !in.Required && strings.TrimSpace(in.Default) == "" && len(in.Files) == 0 && in.Type != "secret" {
+								add(n.ID, "warning", "%s: the required parameter %q comes from the input %q, which is optional and has no default, so the step fails when it is left empty. Give the input a default or make it required.", label(n), p.Name, in.Name)
+							}
+						}
+					}
 				}
 			}
 			checkVars(n, label(n)+" › request", n.Instruction)
@@ -624,6 +660,10 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				add(n.ID, "error", "%s needs a prompt.", label(n))
 			}
 			checkVars(n, label(n), n.Prompt)
+		case "improve":
+			f.checkImprove(n, add)
+			checkVars(n, label(n), n.Prompt)
+			checkVars(n, label(n)+" › done when", n.Goal)
 		case "merge":
 			if !contains(MergeModes, n.Mode) {
 				add(n.ID, "error", "%s: choose how to merge.", label(n))
@@ -791,8 +831,8 @@ func secretIssues(f *Flow) []Issue {
 	}
 	for _, n := range f.Nodes {
 		switch n.Type {
-		case "ai":
-			if s := uses(n.Prompt); s != "" {
+		case "ai", "improve":
+			if s := uses(n.Prompt + " " + n.Goal); s != "" {
 				is = append(is, Issue{Node: n.ID, Level: "warning", Message: fmt.Sprintf("%s sends the secret %q to the AI model. Give secrets to tools instead.", label(n), s)})
 			}
 		case "tool":
@@ -972,7 +1012,40 @@ func Load(root, id string) (*Flow, error) {
 		}
 		return nil, err
 	}
-	return Parse(b)
+	f, err := Parse(b)
+	if err != nil {
+		// an outside edit (an agent, by hand) that does not fit the format:
+		// read it leniently rather than losing the flow, and say what changed
+		g, notes, lerr := ParseDesigned(b)
+		if lerr != nil {
+			return nil, fmt.Errorf("flow %s does not fit the flow format: %v", id, err)
+		}
+		f = g
+		f.Repairs = append([]string{"The file did not fit the flow format (" + err.Error() + "); it was read leniently."}, notes...)
+	}
+	f.Rev = FileRev(b)
+	if f.ID == "" {
+		f.ID = id
+	}
+	return f, nil
+}
+
+// FileRev is the revision of a flow file's content.
+func FileRev(b []byte) string {
+	h := sha256.Sum256(b)
+	return hex.EncodeToString(h[:10])
+}
+
+// DiskRev is the revision of the flow id's file now ("" when there is none).
+func DiskRev(root, id string) string {
+	if !IDRE.MatchString(id) {
+		return ""
+	}
+	b, err := os.ReadFile(Path(root, id))
+	if err != nil {
+		return ""
+	}
+	return FileRev(b)
 }
 
 // Parse decodes and normalizes a flow.
@@ -1058,16 +1131,22 @@ func Save(root string, f *Flow) error {
 	}
 	f.normalize()
 	f.Updated = time.Now().UTC().Truncate(time.Second)
+	f.Rev = ""
+	repairs := f.Repairs
+	f.Repairs = nil
+	defer func() { f.Repairs = repairs }()
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err
 	}
+	b = append(b, '\n')
+	defer func() { f.Rev = FileRev(b) }()
 	p := Path(root, f.ID)
 	if err := os.MkdirAll(filepath.Dir(p), 0o755); err != nil {
 		return err
 	}
 	tmp := p + ".tmp"
-	if err := os.WriteFile(tmp, append(b, '\n'), 0o644); err != nil {
+	if err := os.WriteFile(tmp, b, 0o644); err != nil {
 		return err
 	}
 	return os.Rename(tmp, p)
@@ -1268,4 +1347,100 @@ func (f *Flow) MaskSecrets(inputs map[string]string) map[string]string {
 		out[k] = v
 	}
 	return out
+}
+
+// Designed flows: an AI writes JSON values where the flow format has text
+// (a tool argument 20, a condition value true, a default 10) or text where
+// it has a number ("max": "10"). ParseDesigned accepts those and returns the
+// flow as Parse would; anything else that does not fit is still an error.
+var (
+	textKeys = map[string]bool{"id": true, "title": true, "type": true, "tool": true, "prompt": true, "model": true, "mode": true,
+		"separator": true, "template": true, "op": true, "expr": true, "replace": true, "source": true, "split": true, "filter": true,
+		"field": true, "value": true, "label": true, "name": true, "description": true, "default": true, "format": true, "path": true,
+		"branch": true, "from": true, "to": true, "as": true, "fn": true, "pair": true, "goal": true, "approve": true,
+		"instruction": true, "accept": true, "env": true, "note": true, "match": true}
+	numberKeys = map[string]bool{"max": true, "rounds": true, "minutesSaved": true, "x": true, "y": true, "version": true, "revision": true}
+	textLists  = map[string]bool{"options": true, "orderBy": true, "groupBy": true, "files": true, "perms": true}
+)
+
+// ParseDesigned reads a flow written by the AI designer (see above). A
+// number field given a template ("max": "{{inputs.limit}}") cannot hold it:
+// the value is left out and said in the notes.
+func ParseDesigned(b []byte) (*Flow, []string, error) {
+	var v any
+	if err := json.Unmarshal(b, &v); err != nil {
+		return nil, nil, fmt.Errorf("not a flow: %v", err)
+	}
+	var notes []string
+	fixed, err := json.Marshal(coerceDesign(v, "", &notes))
+	if err != nil {
+		return nil, nil, err
+	}
+	f, err := Parse(fixed)
+	return f, notes, err
+}
+
+func coerceDesign(v any, key string, notes *[]string) any {
+	text := func(x any) any {
+		switch y := x.(type) {
+		case string:
+			return y
+		case nil:
+			return ""
+		case float64, bool:
+			return fmt.Sprint(y)
+		}
+		j, _ := json.Marshal(x)
+		return string(j)
+	}
+	switch x := v.(type) {
+	case map[string]any:
+		for k, val := range x {
+			switch {
+			case k == "args" && key != "properties": // tool arguments: every value is a template (text)
+				if m, ok := val.(map[string]any); ok {
+					for ak, av := range m {
+						m[ak] = text(av)
+					}
+					continue
+				}
+			case textKeys[k]:
+				switch val.(type) {
+				case float64, bool:
+					x[k] = text(val)
+					continue
+				}
+			case numberKeys[k]:
+				if s, ok := val.(string); ok {
+					var n float64
+					if _, err := fmt.Sscan(strings.TrimSpace(s), &n); err == nil {
+						x[k] = n
+					} else {
+						delete(x, k)
+						id, _ := x["id"].(string)
+						*notes = append(*notes, fmt.Sprintf("%s: %q takes a fixed number, not %q; it was left out (the step's default applies). Set it in the step if you need a limit.", firstNonEmptyStr(id, "a step"), k, s))
+					}
+					continue
+				}
+			case textLists[k]:
+				if l, ok := val.([]any); ok {
+					for i := range l {
+						l[i] = text(l[i])
+					}
+					continue
+				}
+			}
+			if k == "outputSchema" || k == "schema" || k == "mocks" { // JSON shapes and samples stay as they are
+				continue
+			}
+			x[k] = coerceDesign(val, k, notes)
+		}
+		return x
+	case []any:
+		for i := range x {
+			x[i] = coerceDesign(x[i], key, notes)
+		}
+		return x
+	}
+	return v
 }

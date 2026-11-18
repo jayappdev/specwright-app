@@ -53,15 +53,11 @@ type Hub struct {
 	stopWatch context.CancelFunc
 	agentName string
 	model     string
-	token     string // session-only credential, never persisted
-	secrets   map[string]string
-	// secrets resolved for tool runs (for leak checks), pending UI prompts,
-	// and an optional non-UI asker (headless)
-	resolved       map[string]string
-	pendingSecrets map[string]chan secretAnswer
-	flowRuns       map[string]*flowRun // live flow runs
-	resultsWG      sync.WaitGroup      // results folders being written
-	closing        bool                // Close has started: no new results writes
+	token     string              // session-only credential, never persisted
+	sec       secretsState        // session secrets, pending prompts, resolved values (secrets.go)
+	flowRuns  map[string]*flowRun // live flow runs
+	resultsWG sync.WaitGroup      // results folders being written
+	closing   bool                // Close has started: no new results writes
 	// Clipboard copies text for a flow output's "copy" action (set by the
 	// desktop app; nil in headless runs).
 	Clipboard func(string) error
@@ -74,19 +70,13 @@ type Hub struct {
 	tools     *builtin.Box            // built-in agent tools (read_file, edit_file, …)
 	aiShimDir string                  // claude/copilot launchers put first on tools' PATH ("" = off)
 	// Spec Kit download (see speckit.go)
-	skMu       sync.Mutex
-	skRunning  bool
-	skProgress string
-	skErr      string
-	skDone     chan struct{}
-	askSecrets func(context.Context, SecretRequest) (map[string]string, error)
-	// permission prompts: pending UI questions, "allow for this run"
-	// answers by agent process, and an optional non-UI asker (headless)
-	pendingPerms map[string]chan permAnswer
-	permAllowed  map[string]map[string]bool
-	askPerm      func(context.Context, extension.PermissionRequest) extension.PermissionAnswer
-	runs         map[string]*workflow.Run
-	testCalls    chan testCall
+	sk        skDownload      // the Spec Kit download in progress (speckit.go)
+	perms     permissionState // permission prompts (permissions.go)
+	runs      map[string]*workflow.Run
+	testCalls chan testCall
+	trig      *triggerStore  // triggers.go: the open project's trigger state
+	sched     sync.WaitGroup // the triggers' scheduler goroutines (Close waits for them)
+
 }
 
 // Options configure New.
@@ -111,7 +101,8 @@ func New(o Options) (*Hub, error) {
 	st.MarkInterrupted()
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{Bus: bus.New(), Store: st, Agents: agent.NewRegistry(), ctx: ctx, cancel: cancel,
-		agentName: o.Agent, secrets: map[string]string{}, runs: map[string]*workflow.Run{}}
+		agentName: o.Agent, runs: map[string]*workflow.Run{}}
+	h.sec.values = map[string]string{}
 	if h.agentName == "" {
 		h.agentName = "claude"
 	}
@@ -125,6 +116,7 @@ func New(o Options) (*Hub, error) {
 		}
 	}
 	h.watchRunEnds()
+	h.reportStoreErrors()
 	go h.autoArchiveLoop()
 	h.Bus.SetFilter(func(e *bus.Event) { st.Redactor().Event(e) })
 	br, err := extension.StartBridge(h)
@@ -151,7 +143,8 @@ func (h *Hub) Close() {
 	}
 	h.mu.Unlock()
 	h.cancel()
-	for _, r := range live { // let runs record their end before we return
+	waitTimeout(&h.sched, 3*time.Second) // the scheduler and its folder watchers stop
+	for _, r := range live {             // let runs record their end before we return
 		select {
 		case <-r.Done():
 		case <-time.After(3 * time.Second):
@@ -219,6 +212,49 @@ func (h *Hub) SetAgent(name, token, model string) error {
 		h.Store.Redactor().Add(token)
 	}
 	h.mu.Unlock()
+	return nil
+}
+
+// SetCopilotWeb sets which web pages Copilot may open in runs ("none",
+// "sites" with a list of domains or https URLs, or "all"). Copilot runs
+// without a person at the keyboard, so a page it may not open is denied.
+func (h *Hub) SetCopilotWeb(w agent.WebAccess) error {
+	switch w.Mode {
+	case "", "none":
+		w = agent.WebAccess{Mode: "none"}
+	case "all":
+		w.Sites = nil
+	case "sites":
+		var sites []string
+		for _, s := range w.Sites {
+			s = strings.TrimSpace(s)
+			if s == "" {
+				continue
+			}
+			if strings.ContainsAny(s, " \t\n,;") {
+				return fmt.Errorf("%q: give one domain or URL per line", s)
+			}
+			if strings.Contains(s, "://") && !strings.HasPrefix(s, "https://") && !strings.HasPrefix(s, "http://") {
+				return fmt.Errorf("%q: only http and https addresses", s)
+			}
+			sites = append(sites, s)
+		}
+		if len(sites) == 0 {
+			return errors.New("name at least one site, or choose no web access")
+		}
+		w.Sites = sites
+	default:
+		return fmt.Errorf("unknown web access %q", w.Mode)
+	}
+	d, err := h.Agents.Get("copilot")
+	if err != nil {
+		return err
+	}
+	cp, ok := d.(*agent.Copilot)
+	if !ok {
+		return errors.New("the Copilot driver cannot take web settings")
+	}
+	cp.SetWeb(w)
 	return nil
 }
 
@@ -321,6 +357,11 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	h.mu.Unlock()
 	w.Poll() // take the baseline snapshot now
 	go w.Run(wctx, h.onFiles)
+	h.sched.Add(1)
+	go func() { // the project's triggers (schedules, files, after flows); triggers.go
+		defer h.sched.Done()
+		h.runScheduler(wctx, abs)
+	}()
 	h.Bus.Publish(bus.Event{Type: "workspace.opened", Summary: abs, Data: map[string]any{"root": abs}})
 	return h.Workspace()
 }
@@ -354,14 +395,18 @@ func (h *Hub) onFiles(chs []watch.Change) {
 	h.mu.RLock()
 	r := h.runner
 	h.mu.RUnlock()
-	n := 0
+	var free []watch.Change // changes no step run made
 	for _, c := range chs {
 		if r != nil && r.FileChanged(c) {
 			continue
 		}
-		n++
+		free = append(free, c)
 	}
-	h.Bus.Publish(bus.Event{Type: "workspace.files", Summary: fmt.Sprintf("%d file(s) changed", len(chs)), Data: map[string]any{"changes": chs, "unattributed": n}})
+	h.Bus.Publish(bus.Event{Type: "workspace.files", Summary: fmt.Sprintf("%d file(s) changed", len(chs)), Data: map[string]any{"changes": chs, "unattributed": len(free)}})
+	h.mu.RLock()
+	root := h.root
+	h.mu.RUnlock()
+	h.noteFileChanges(root, free) // "files" triggers (triggers.go)
 }
 
 // SaveProfile stores the wizard profile.
@@ -888,4 +933,14 @@ func (h *Hub) UseWorkflow(w *workflow.Workflow) error {
 	h.wf = w
 	h.mu.Unlock()
 	return workflow.Save(root, w)
+}
+
+// waitTimeout waits for wg, at most d.
+func waitTimeout(wg *sync.WaitGroup, d time.Duration) {
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(d):
+	}
 }

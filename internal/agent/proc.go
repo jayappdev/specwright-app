@@ -19,6 +19,7 @@ type proc struct {
 	args   []string
 	dir    string
 	env    []string
+	base   []string // environment to start from; nil = this process's (os.Environ)
 	stdin  string
 	onLine func(string)
 	onErr  func(string)
@@ -27,7 +28,11 @@ type proc struct {
 func (p proc) run(ctx context.Context) (int, string, error) {
 	cmd := exec.CommandContext(ctx, p.bin, p.args...)
 	cmd.Dir = p.dir
-	cmd.Env = append(os.Environ(), p.env...)
+	base := p.base
+	if base == nil {
+		base = os.Environ()
+	}
+	cmd.Env = append(append([]string{}, base...), p.env...)
 	setProcGroup(cmd)
 	cmd.Cancel = func() error { return killGroup(cmd) }
 	cmd.WaitDelay = 3 * time.Second

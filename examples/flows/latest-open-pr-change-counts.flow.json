@@ -1,0 +1,125 @@
+{
+  "format": "specwright-flow",
+  "version": 1,
+  "exported": "2026-11-16T01:11:19Z",
+  "flow": {
+    "version": 1,
+    "id": "latest-open-pr-change-counts",
+    "name": "Latest Open PR Change Counts",
+    "description": "Finds the most recently created open PR and prints its changed-file, addition, and deletion counts.",
+    "inputs": [
+      {
+        "name": "repository",
+        "label": "GitHub repository (owner/repo)",
+        "type": "text",
+        "required": true
+      }
+    ],
+    "context": {},
+    "skills": [],
+    "nodes": [
+      {
+        "id": "start",
+        "type": "start",
+        "title": "Inputs",
+        "x": 40,
+        "y": 80
+      },
+      {
+        "id": "latest-open-pr",
+        "type": "tool",
+        "x": 300,
+        "y": 80,
+        "tool": "builtin:fetch_webpage",
+        "args": {
+          "format": "json",
+          "max_chars": "20000",
+          "url": "https://api.github.com/repos/{{inputs.repository}}/pulls?state=open\u0026sort=created\u0026direction=desc\u0026per_page=1"
+        }
+      },
+      {
+        "id": "latest-open-pr-url",
+        "type": "transform",
+        "x": 550,
+        "y": 210,
+        "op": "json-path",
+        "expr": "json[0].url"
+      },
+      {
+        "id": "latest-open-pr-summary",
+        "type": "transform",
+        "title": "Extract PR summary",
+        "x": 410,
+        "y": 340,
+        "op": "json-path",
+        "expr": "json[0]"
+      },
+      {
+        "id": "open-pr-details",
+        "type": "tool",
+        "x": 690,
+        "y": 70,
+        "tool": "builtin:fetch_webpage",
+        "args": {
+          "format": "json",
+          "max_chars": "20000",
+          "url": "{{latest-open-pr-url.buffer_output}}/files"
+        }
+      },
+      {
+        "id": "pr-details-transform",
+        "type": "transform",
+        "title": "Extract file changes",
+        "x": 1020,
+        "y": 90,
+        "op": "json-path",
+        "expr": "json[0]"
+      },
+      {
+        "id": "print-open-counts",
+        "type": "output",
+        "x": 880,
+        "y": 340,
+        "template": "Latest open PR #{{latest-open-pr-summary.buffer_output.json.number}}: {{latest-open-pr-summary.buffer_output.json.title}}\nFile changed: {{pr-details-transform.buffer_output.json.filename}}\nChanges: {{pr-details-transform.buffer_output.json.changes}} ({{pr-details-transform.buffer_output.json.additions}} added, {{pr-details-transform.buffer_output.json.deletions}} deleted)",
+        "format": "csv",
+        "actions": [
+          {
+            "type": "show"
+          }
+        ]
+      }
+    ],
+    "edges": [
+      {
+        "from": "start",
+        "to": "latest-open-pr"
+      },
+      {
+        "from": "latest-open-pr",
+        "to": "latest-open-pr-url"
+      },
+      {
+        "from": "latest-open-pr",
+        "to": "latest-open-pr-summary"
+      },
+      {
+        "from": "latest-open-pr-url",
+        "to": "open-pr-details"
+      },
+      {
+        "from": "open-pr-details",
+        "to": "pr-details-transform"
+      },
+      {
+        "from": "pr-details-transform",
+        "to": "print-open-counts"
+      },
+      {
+        "from": "latest-open-pr-summary",
+        "to": "print-open-counts"
+      }
+    ],
+    "updated": "2026-11-15T20:24:45Z",
+    "designed": "Made by the AI designer: “Go get the latest pull request from a repostory, get the number of files changed, bring the number of lines changed and files changed for printing”."
+  }
+}

@@ -1,6 +1,7 @@
 package extension
 
 import (
+	"codegen/internal/bigout"
 	"context"
 	"crypto/rand"
 	"crypto/subtle"
@@ -11,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync"
 	"time"
 )
@@ -129,6 +131,32 @@ type ToolFilter interface {
 	AllowedNow(name string) bool
 }
 
+// ChangedTools is an optional Provider method: tools of the project's
+// Copilot extensions that were approved, but whose files changed since (an
+// agent fixing one). Agents may still call them: each call of a changed
+// version asks the user first ("Allow for this run" covers the run's later
+// calls), so an agent can fix an extension and run it again in the same
+// session. Approving it on the Tools screen keeps the change.
+type ChangedTools interface {
+	ChangedTools() []Extension
+}
+
+// changed lists the changed tools agents may call (see ChangedTools).
+func (b *Bridge) changed() map[string]Extension {
+	out := map[string]Extension{}
+	c, ok := b.p.(ChangedTools)
+	if !ok {
+		return out
+	}
+	f, _ := b.p.(ToolFilter)
+	for _, e := range c.ChangedTools() {
+		if f == nil || f.AllowedNow(e.Name) {
+			out[e.Name] = e
+		}
+	}
+	return out
+}
+
 func (b *Bridge) callable() map[string]Extension {
 	out := map[string]Extension{}
 	f, _ := b.p.(ToolFilter)
@@ -154,8 +182,14 @@ type ToolInfo struct {
 
 func (b *Bridge) handleList(w http.ResponseWriter, _ *http.Request) {
 	var out []ToolInfo
-	for _, e := range b.callable() {
+	all := b.callable()
+	for _, e := range all {
 		out = append(out, ToolInfo{Name: e.Name, Desc: e.Desc, Params: e.Params})
+	}
+	for name, e := range b.changed() {
+		if _, ok := all[name]; !ok {
+			out = append(out, ToolInfo{Name: e.Name, Desc: e.Desc + " (Its extension changed: the user is asked before the new version runs.)", Params: e.Params})
+		}
 	}
 	writeJSON(w, out)
 }
@@ -164,20 +198,35 @@ func (b *Bridge) handleCall(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		Name      string         `json:"name"`
 		Arguments map[string]any `json:"arguments"`
+		Agent     string         `json:"agent"` // the agent process (one run), for "allow for this run"
 	}
 	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
 		writeJSON(w, RunResult{Error: "bad request: " + err.Error()})
 		return
 	}
 	e, ok := b.callable()[req.Name]
+	changed := false
+	if !ok {
+		e, changed = b.changed()[req.Name]
+		ok = changed
+	}
 	if !ok {
 		writeJSON(w, RunResult{Error: fmt.Sprintf("no callable extension named %q", req.Name)})
 		return
 	}
+	if changed { // a fixed extension: run the new version only if the user says so
+		ans := b.p.AskPermission(r.Context(), PermissionRequest{Agent: firstNonBlank(req.Agent, "agent"), Tool: e.Name, Input: map[string]any{
+			"description": fmt.Sprintf("Run the changed version of %s: the files of its Copilot extension (%s) changed and are not approved yet. Approve it on the Tools screen to keep the change.", e.Name, e.Dir),
+			"arguments":   req.Arguments}})
+		if !ans.Allow {
+			writeJSON(w, RunResult{Error: firstNonBlank(ans.Message, "The user did not allow running the changed version of "+e.Name+".")})
+			return
+		}
+	}
 	b.mu.Lock()
 	_, temp := b.extra[req.Name]
 	b.mu.Unlock()
-	if !temp {
+	if !temp && !changed {
 		if err := e.Runnable(); err != nil {
 			writeJSON(w, RunResult{Error: err.Error()})
 			return
@@ -198,7 +247,16 @@ func (b *Bridge) handleCall(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, res)
 		return
 	}
-	res := Exec(r.Context(), b.p.Root(), e, req.Arguments, secrets, b.p.Env(), 30*time.Second)
+	// the arguments as the tool declares them: an agent gets told what is wrong, and tries again
+	args, probs := CheckArgs(e, req.Arguments)
+	if len(probs) > 0 {
+		res := RunResult{Error: "the arguments do not fit " + e.Name + ": " + strings.Join(probs, "; ") + ". Call it again with arguments that do."}
+		b.p.Observe(e.Name, req.Arguments, res)
+		writeJSON(w, res)
+		return
+	}
+	res := Exec(r.Context(), b.p.Root(), e, args, secrets, b.p.Env(), 30*time.Second)
+	res.Output = forAgent(b.p.Root(), e.Name, res.Output, res.Truncated)
 	b.p.Observe(e.Name, req.Arguments, res)
 	writeJSON(w, res)
 }
@@ -216,6 +274,11 @@ func (b *Bridge) handleBuiltin(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeJSON(w, BuiltinResult{Output: err.Error(), Error: err.Error()})
 		return
+	}
+	// read_file already pages (start_line/end_line) and would only read its
+	// own saved file back; every other built-in hands large results over saved
+	if req.Name != "read_file" {
+		out = forAgent(b.p.Root(), req.Name, out, false)
 	}
 	writeJSON(w, BuiltinResult{Output: out})
 }
@@ -274,4 +337,15 @@ func (b *Bridge) WriteMCPConfig(dir string, extensions bool) (string, error) {
 		return "", err
 	}
 	return filepath.Clean(f.Name()), nil
+}
+
+// forAgent is what an agent gets for a tool result: the result itself, or,
+// when it is too large to pass whole, a saved file and a valid summary
+// (bigout). cut says the tool printed more than MaxToolOutput.
+func forAgent(root, tool, out string, cut bool) string {
+	msg, _ := bigout.ForAgent(root, tool, out)
+	if cut {
+		msg += fmt.Sprintf("\n\n(The tool printed more than %s; only the first %s were kept.)", bigout.Human(MaxToolOutput), bigout.Human(MaxToolOutput))
+	}
+	return msg
 }

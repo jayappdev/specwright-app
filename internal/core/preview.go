@@ -27,10 +27,10 @@ type FilePreview struct {
 	Mod       time.Time `json:"mod"`            // last modified
 	Kind      string    `json:"kind"`           // text | image | pdf | binary | dir
 	Mime      string    `json:"mime,omitempty"` //
-	Text      string    `json:"text,omitempty"` // text files (maybe truncated)
+	Text      string    `json:"text"`           // text files (maybe truncated); "" for an empty file
 	Data      string    `json:"data,omitempty"` // images and PDFs, base64
 	Truncated bool      `json:"truncated,omitempty"`
-	Entries   []string  `json:"entries,omitempty"` // a directory's first entries
+	Entries   []string  `json:"entries"`           // a directory's first entries
 	Matches   []string  `json:"matches,omitempty"` // other files the name could mean
 }
 
@@ -61,6 +61,7 @@ func (h *Hub) PreviewFile(p string) (FilePreview, error) {
 	}
 	if fi.IsDir() {
 		pv.Kind = "dir"
+		pv.Entries = []string{} // an empty folder: a list, not null
 		ents, _ := os.ReadDir(abs)
 		for i, e := range ents {
 			if i == 200 {

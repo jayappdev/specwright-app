@@ -8,6 +8,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	"codegen/internal/flow"
 )
@@ -53,6 +54,12 @@ func flowInputValue(root string, in flow.Input, text string, files []string) (st
 			return "", fmt.Errorf("%s must be a number, not %q", label, clipLine(t, 40))
 		}
 		return t, nil
+	case "date", "datetime":
+		v, err := flow.DateInput(in.Type, t, time.Now())
+		if err != nil {
+			return "", fmt.Errorf("%s: %v", label, err)
+		}
+		return v, nil
 	case "boolean":
 		switch strings.ToLower(t) {
 		case "true", "yes", "y", "1", "on":

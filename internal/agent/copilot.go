@@ -2,11 +2,15 @@ package agent
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -21,17 +25,86 @@ type Copilot struct {
 	Bin       string
 	DenyTools []string
 
-	jsonOnce sync.Once
-	jsonOK   bool
+	helpOnce sync.Once
+	help     string // `copilot --help`, to know which flags this CLI has
+
+	mu  sync.Mutex
+	web WebAccess
+}
+
+// WebAccess says which web pages Copilot may open in a run. In -p mode the
+// CLI cannot ask, so a URL that is not allowed is denied.
+type WebAccess struct {
+	Mode  string   `json:"mode"`  // "none" (default), "sites", "all"
+	Sites []string `json:"sites"` // with "sites": domains or https URLs (--allow-url)
+}
+
+// SetWeb sets the web access for later runs.
+func (c *Copilot) SetWeb(w WebAccess) {
+	c.mu.Lock()
+	c.web = w
+	c.mu.Unlock()
+}
+
+// Web returns the web access setting.
+func (c *Copilot) Web() WebAccess {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.web
+}
+
+func (c *Copilot) hasFlag(ctx context.Context, bin, flag string) bool {
+	c.helpOnce.Do(func() {
+		out, _ := exec.CommandContext(ctx, bin, "--help").CombinedOutput()
+		c.help = string(out)
+	})
+	return strings.Contains(c.help, flag)
 }
 
 // structured reports whether this CLI supports --output-format json.
 func (c *Copilot) structured(ctx context.Context, bin string) bool {
-	c.jsonOnce.Do(func() {
-		out, _ := exec.CommandContext(ctx, bin, "--help").CombinedOutput()
-		c.jsonOK = strings.Contains(string(out), "--output-format") && strings.Contains(string(out), "--usage-output-file")
-	})
-	return c.jsonOK
+	return c.hasFlag(ctx, bin, "--output-format") && c.hasFlag(ctx, bin, "--usage-output-file")
+}
+
+// tokenVars are the variables the Copilot CLI reads a GitHub token from, in
+// its order of precedence.
+var tokenVars = []string{"COPILOT_GITHUB_TOKEN", "GH_TOKEN", "GITHUB_TOKEN"}
+
+// baseEnv is this process's environment without classic GitHub tokens
+// (ghp_…) in the token variables: the Copilot CLI rejects them, and one
+// inherited from the shell would take precedence over the `copilot` login.
+// It also reports which variables were dropped.
+func baseEnv() (env, dropped []string) {
+	for _, kv := range os.Environ() {
+		k, v, _ := strings.Cut(kv, "=")
+		if slices.Contains(tokenVars, k) && strings.HasPrefix(strings.TrimSpace(v), "ghp_") {
+			dropped = append(dropped, k)
+			continue
+		}
+		env = append(env, kv)
+	}
+	return env, dropped
+}
+
+// extraArgs are the flags that depend on what this CLI supports and on the
+// web setting: GitHub tokens hidden from shell commands and MCP servers the
+// agent starts, and the URLs it may open.
+func (c *Copilot) extraArgs(ctx context.Context, bin string) []string {
+	var args []string
+	if c.hasFlag(ctx, bin, "--secret-env-vars") {
+		args = append(args, "--secret-env-vars="+strings.Join(tokenVars, ","))
+	}
+	switch w := c.Web(); w.Mode {
+	case "all":
+		args = append(args, "--allow-all-urls")
+	case "sites":
+		for _, s := range w.Sites {
+			if s = strings.TrimSpace(s); s != "" {
+				args = append(args, "--allow-url", s)
+			}
+		}
+	}
+	return args
 }
 
 // NewCopilot returns the Copilot CLI driver.
@@ -63,8 +136,20 @@ func (c *Copilot) Status(ctx context.Context) Status {
 }
 
 // Args builds the CLI arguments for req.
-func (c *Copilot) Args(req Request) []string {
-	args := []string{"-p", req.Prompt, "--allow-all-tools", "--no-color"}
+func (c *Copilot) Args(req Request) []string { return c.argsWith(req, "") }
+
+// argsWith builds the arguments; with a permission plugin (pluginDir) the
+// run asks the user for tool calls instead of allowing every tool: file
+// edits and SpecWright's own tools are allowed, read-only commands need no
+// approval, and anything else goes to the plugin's permissionRequest hook,
+// which asks in the app.
+func (c *Copilot) argsWith(req Request, pluginDir string) []string {
+	args := []string{"-p", req.Prompt, "--no-color"}
+	if pluginDir != "" {
+		args = append(args, "--plugin-dir", pluginDir, "--allow-tool", "write", "--allow-tool", "agentbridge")
+	} else {
+		args = append(args, "--allow-all-tools")
+	}
 	for _, d := range c.DenyTools {
 		args = append(args, "--deny-tool", d)
 	}
@@ -79,9 +164,23 @@ func (c *Copilot) Args(req Request) []string {
 	}
 	if hasProjectExtensions(req.Dir) {
 		args = append(args, "--experimental") // Copilot extensions are experimental
+		if pluginDir != "" {
+			// Copilot cannot reload extensions in a -p run (it denies the
+			// reload without asking anyone), so it is hidden; the agent runs
+			// a changed extension through SpecWright instead, which asks the
+			// user. Last: the flag takes a list.
+			args[1] += reloadNote
+			args = append(args, "--excluded-tools", "extensions_reload")
+		}
 	}
 	return args
 }
+
+// reloadNote tells the agent how to run an extension it changed.
+const reloadNote = "\n\n(Note from SpecWright: Copilot extensions cannot be reloaded in this run. " +
+	"The tools of this project's extensions are also offered by the agentbridge MCP server (extension_managed), " +
+	"which runs each extension's current files: after you change an extension, call its tool through extension_managed " +
+	"to run the new version in this session. The user is asked before a changed version runs.)"
 
 // hasProjectExtensions reports whether dir has Copilot extensions in
 // .github/extensions (each a folder with extension.mjs/.cjs/.js).
@@ -126,7 +225,11 @@ func (c *Copilot) Run(ctx context.Context, req Request, emit func(Event)) (Resul
 	}
 	p := &copilotParser{emit: emit}
 	emit(Event{Type: "model.request", Summary: "Request → Copilot", Data: map[string]any{"input_tokens": 0, "model": modelOr(req.Model, "copilot/default")}})
-	_, _, err = proc{bin: bin, args: c.Args(req), dir: req.Dir, env: c.env(req), onLine: p.line,
+	base, dropped := baseEnv()
+	noteDropped(emit, dropped)
+	plugin, cleanup := permissionPlugin(req.MCPConfig, req.AddDirs...)
+	defer cleanup()
+	_, _, err = proc{bin: bin, args: append(c.argsWith(req, plugin), c.extraArgs(ctx, bin)...), dir: req.Dir, env: c.env(req), base: base, onLine: p.line,
 		onErr: func(l string) {
 			emit(Event{Type: "agent.log", Summary: short(l, 200), Data: map[string]any{"line": l, "stream": "stderr"}})
 		},
@@ -230,4 +333,70 @@ func num(s, unit string) int {
 		f *= 1e6
 	}
 	return int(f + 0.5)
+}
+
+// noteDropped records in the run's activity that classic tokens were left out.
+func noteDropped(emit func(Event), dropped []string) {
+	if len(dropped) == 0 {
+		return
+	}
+	emit(Event{Type: "agent.log", Summary: "Left out " + strings.Join(dropped, ", ") + ": a classic GitHub token (ghp_…), which the Copilot CLI rejects. Copilot uses your `copilot` login or the token pasted in SpecWright instead.",
+		Data: map[string]any{"stream": "app"}})
+}
+
+// permissionPlugin writes a Copilot CLI plugin for one run whose
+// permissionRequest hook is this executable's "copilot-hook permission",
+// with the bridge address and token from the run's MCP config (a private
+// file the app wrote for this run) and an id for "allow for this run". It
+// returns the plugin directory and a cleanup func, or "" when the run has
+// no MCP config (then the run keeps --allow-all-tools, as before).
+func permissionPlugin(mcpConfig string, addDirs ...string) (string, func()) {
+	if mcpConfig == "" {
+		return "", func() {}
+	}
+	b, err := os.ReadFile(mcpConfig)
+	if err != nil {
+		return "", func() {}
+	}
+	var cfg struct {
+		MCPServers map[string]struct {
+			Command string            `json:"command"`
+			Env     map[string]string `json:"env"`
+		} `json:"mcpServers"`
+	}
+	if json.Unmarshal(b, &cfg) != nil {
+		return "", func() {}
+	}
+	srv, ok := cfg.MCPServers["agentbridge"]
+	if !ok || srv.Command == "" {
+		return "", func() {}
+	}
+	dir, err := os.MkdirTemp(filepath.Dir(mcpConfig), "copilot-plugin-")
+	if err != nil {
+		return "", func() {}
+	}
+	done := func() { os.RemoveAll(dir) }
+	id := make([]byte, 8)
+	_, _ = rand.Read(id)
+	env := map[string]string{"CODEGEN_AGENT_ID": "copilot-" + hex.EncodeToString(id),
+		"CODEGEN_EDIT_DIRS": strings.Join(addDirs, string(os.PathListSeparator))}
+	for _, k := range []string{"CODEGEN_BRIDGE_URL", "CODEGEN_BRIDGE_TOKEN"} {
+		env[k] = srv.Env[k]
+	}
+	manifest := map[string]any{"name": "specwright-permissions", "version": "1.0.0",
+		"description": "Asks the SpecWright user before Copilot uses a tool it has no permission for."}
+	hooks := map[string]any{"version": 1, "hooks": map[string]any{
+		"permissionRequest": []map[string]any{{
+			"type": "command", "exec": srv.Command, "args": []string{"copilot-hook", "permission"},
+			"env": env, "timeoutSec": 900, // the user may take a while to answer
+		}},
+	}}
+	for name, v := range map[string]any{"plugin.json": manifest, "hooks.json": hooks} {
+		bs, _ := json.MarshalIndent(v, "", "  ")
+		if err := os.WriteFile(filepath.Join(dir, name), bs, 0o600); err != nil {
+			done()
+			return "", func() {}
+		}
+	}
+	return dir, done
 }

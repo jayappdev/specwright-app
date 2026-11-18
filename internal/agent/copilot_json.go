@@ -25,9 +25,13 @@ func (c *Copilot) runJSON(ctx context.Context, bin string, req Request, emit fun
 	}
 	uf.Close()
 	defer os.Remove(uf.Name())
-	args := append(c.Args(req), "--output-format", "json", "--usage-output-file", uf.Name())
+	plugin, cleanup := permissionPlugin(req.MCPConfig, req.AddDirs...)
+	defer cleanup()
+	args := append(append(c.argsWith(req, plugin), c.extraArgs(ctx, bin)...), "--output-format", "json", "--usage-output-file", uf.Name())
+	base, dropped := baseEnv()
+	noteDropped(emit, dropped)
 	p := &copilotJSON{emit: emit, names: map[string]string{}, started: map[string]time.Time{}, model: modelOr(req.Model, "copilot/default")}
-	_, _, err = proc{bin: bin, args: args, dir: req.Dir, env: c.env(req), onLine: p.line,
+	_, _, err = proc{bin: bin, args: args, dir: req.Dir, env: c.env(req), base: base, onLine: p.line,
 		onErr: func(l string) {
 			emit(Event{Type: "agent.log", Summary: short(l, 200), Data: map[string]any{"line": l, "stream": "stderr"}})
 		},

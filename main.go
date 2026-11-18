@@ -3,6 +3,8 @@
 //	SpecWright             start the desktop app
 //	SpecWright agentbridge run the agentbridge MCP server on stdio (started by the agent CLIs)
 //	SpecWright aishim <cli> run claude/copilot for a tool and record the AI it uses
+//	SpecWright devserver   serve the real backend to the browser preview (development)
+//	SpecWright copilot-hook permission   Copilot CLI permission hook (asks in the app)
 package main
 
 import (
@@ -25,6 +27,19 @@ var assets embed.FS
 func main() {
 	if len(os.Args) > 1 && os.Args[1] == "aishim" {
 		os.Exit(aishim.Main(os.Args[2:]))
+	}
+	if len(os.Args) > 2 && os.Args[1] == "copilot-hook" && os.Args[2] == "permission" {
+		if err := extension.PermissionHook(os.Stdin, os.Stdout); err != nil {
+			fmt.Fprintln(os.Stderr, "copilot-hook:", err)
+		}
+		return // always exit 0: no output means Copilot's own default
+	}
+	if len(os.Args) > 1 && os.Args[1] == "devserver" {
+		if err := devServer(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "devserver:", err)
+			os.Exit(1)
+		}
+		return
 	}
 	if len(os.Args) > 1 && os.Args[1] == "agentbridge" {
 		if err := extension.ServeMCP(os.Stdin, os.Stdout); err != nil {

@@ -88,6 +88,12 @@ func (h *Hub) Builtins() []extension.BuiltinInfo {
 			out = append(out, t.BuiltinInfo)
 		}
 	}
+	if !h.disabledBuiltins()[SaveFlowTool] {
+		out = append(out, saveFlowInfo()) // how agents change flows (flowsave_agent.go)
+	}
+	if !h.disabledBuiltins()[ScheduleFlowTool] {
+		out = append(out, scheduleFlowInfo()) // how agents schedule flows (flowschedule_agent.go)
+	}
 	return out
 }
 
@@ -98,7 +104,16 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 		return "", fmt.Errorf("%s is turned off on this computer by policy", name)
 	}
 	start := time.Now()
-	out, err := h.tools.Call(ctx, name, args)
+	var out string
+	var err error
+	switch name {
+	case SaveFlowTool:
+		out, err = h.agentSaveFlow(args)
+	case ScheduleFlowTool:
+		out, err = h.agentScheduleFlow(args)
+	default:
+		out, err = h.tools.Call(ctx, name, args)
+	}
 	out = h.Store.Redactor().String(out)
 	ev := bus.Event{Type: "builtin.result", Summary: name + map[bool]string{true: " ok", false: " failed"}[err == nil],
 		Data: map[string]any{"name": name, "args": args, "ok": err == nil, "duration_ms": time.Since(start).Milliseconds(), "output": trunc(firstNonEmpty(out, errText(err)), 2000)}}

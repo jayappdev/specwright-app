@@ -44,9 +44,13 @@ type Run struct {
 	// Archived runs are hidden from the Playground and History lists until
 	// restored (by hand, or automatically after some days); Group is a
 	// label the user gives runs to keep them together.
-	Archived   bool      `json:"archived,omitempty"`
-	ArchivedAt time.Time `json:"archivedAt,omitzero"`
-	Group      string    `json:"group,omitempty"`
+	// Trigger: what started the run when no one pressed Run ("scheduled"),
+	// and the trigger's name
+	Trigger     string    `json:"trigger,omitempty"`
+	TriggerName string    `json:"triggerName,omitempty"`
+	Archived    bool      `json:"archived,omitempty"`
+	ArchivedAt  time.Time `json:"archivedAt,omitzero"`
+	Group       string    `json:"group,omitempty"`
 }
 
 // GetRun reads one run's summary row.
@@ -110,6 +114,31 @@ type Store struct {
 	dir string
 	mu  sync.Mutex
 	red *Redactor
+
+	errMu      sync.Mutex
+	onWriteErr func(op string, err error)
+}
+
+// SetOnWriteError registers f to be told about every failed write of run
+// history (SaveRun, Append, Ledger). Callers treat history as best effort and
+// carry on after a failure; this hook makes sure the failure is not silent.
+func (s *Store) SetOnWriteError(f func(op string, err error)) {
+	s.errMu.Lock()
+	s.onWriteErr = f
+	s.errMu.Unlock()
+}
+
+func (s *Store) reportWrite(op string, err error) error {
+	if err == nil {
+		return nil
+	}
+	s.errMu.Lock()
+	f := s.onWriteErr
+	s.errMu.Unlock()
+	if f != nil {
+		f(op, err)
+	}
+	return err
 }
 
 // Open creates (if needed) and opens a store at dir.
@@ -148,7 +177,9 @@ func safe(id string) string {
 }
 
 // SaveRun writes the run summary.
-func (s *Store) SaveRun(r Run) error {
+func (s *Store) SaveRun(r Run) error { return s.reportWrite("save run "+r.ID, s.saveRun(r)) }
+
+func (s *Store) saveRun(r Run) error {
 	// fields written by others (the results writer) survive a later save
 	// that does not know them
 	if old, err := s.GetRun(r.ID); err == nil {
@@ -208,6 +239,10 @@ func (s *Store) SetRunMeta(id string, archived *bool, group *string) error {
 
 // Append records one event of a run.
 func (s *Store) Append(e bus.Event) error {
+	return s.reportWrite("record an event of run "+e.RunID, s.appendEvent(e))
+}
+
+func (s *Store) appendEvent(e bus.Event) error {
 	if e.RunID == "" {
 		return nil
 	}
@@ -297,6 +332,10 @@ func (s *Store) MarkInterrupted() int {
 
 // Ledger appends a usage entry.
 func (s *Store) Ledger(e LedgerEntry) error {
+	return s.reportWrite("record usage of run "+e.RunID, s.ledger(e))
+}
+
+func (s *Store) ledger(e LedgerEntry) error {
 	b, err := json.Marshal(e)
 	if err != nil {
 		return err

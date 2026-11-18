@@ -3,9 +3,11 @@ package main
 import (
 	"context"
 	"os"
+	"time"
 
 	"github.com/wailsapp/wails/v2/pkg/runtime"
 
+	"codegen/internal/agent"
 	"codegen/internal/bus"
 	"codegen/internal/core"
 	"codegen/internal/extension"
@@ -25,12 +27,15 @@ type App struct {
 }
 
 // NewApp creates the hub.
-func NewApp() (*App, error) {
+func NewApp() (*App, error) { return newApp("") }
+
+// newApp creates the hub with its data in storeDir ("" = the app's usual folder).
+func newApp(storeDir string) (*App, error) {
 	// a Finder-launched app gets a minimal PATH: borrow the login shell's so
 	// claude, copilot, node, go and mvn are found
 	core.UseLoginShellPath()
 	exe, _ := os.Executable()
-	h, err := core.New(core.Options{AIShimExe: exe})
+	h, err := core.New(core.Options{AIShimExe: exe, StoreDir: storeDir})
 	if err != nil {
 		return nil, err
 	}
@@ -62,6 +67,24 @@ func (a *App) Info() core.Info                            { return val(a.hub.Inf
 func (a *App) DetectCredentials() []core.CredentialSource { return val(a.hub.DetectCredentials()) }
 func (a *App) SetAgent(name, token, model string) error   { return a.hub.SetAgent(name, token, model) }
 func (a *App) ClearToken()                                { a.hub.ClearToken() }
+
+// ExportTools returns a tool file (*.tools.json) with the named tools.
+func (a *App) ExportTools(names, exts []string) (core.ToolExport, error) {
+	return ok(a.hub.ExportTools(names, exts))
+}
+
+// PreviewToolImport lists the tools in a tool file for review before importing.
+func (a *App) PreviewToolImport(data string) (core.ToolImportPreview, error) {
+	return ok(a.hub.PreviewToolImport(data))
+}
+
+// ImportTools imports a tool file's tools (needing approval), by action per name.
+func (a *App) ImportTools(data string, actions map[string]string) (core.ToolImportResult, error) {
+	return ok(a.hub.ImportTools(data, actions))
+}
+
+// SetCopilotWeb sets which web pages Copilot may open in runs.
+func (a *App) SetCopilotWeb(w agent.WebAccess) error { return a.hub.SetCopilotWeb(w) }
 
 // --- workspace -----------------------------------------------------------
 
@@ -289,6 +312,116 @@ func (a *App) DesignFlows(r core.DesignRequest) (core.DesignResult, error) {
 	return ok(a.hub.DesignFlows(r))
 }
 
+// --- triggers (schedules) ---
+
+// FlowTriggers lists a flow's triggers with their state ("" = every flow's).
+func (a *App) FlowTriggers(flowID string) ([]core.TriggerView, error) {
+	return ok(a.hub.FlowTriggers(flowID))
+}
+
+// PreviewSchedule lists a schedule's next run times.
+func (a *App) PreviewSchedule(s flow.Schedule) ([]time.Time, error) {
+	return ok(a.hub.PreviewSchedule(s))
+}
+
+// SaveTriggerSecrets keeps a trigger's secret values, encrypted on this computer.
+func (a *App) SaveTriggerSecrets(flowID, triggerID string, values map[string]string) ([]string, error) {
+	return ok(a.hub.SaveTriggerSecrets(flowID, triggerID, values))
+}
+
+// RunTriggerNow starts a trigger's run now.
+func (a *App) RunTriggerNow(flowID, triggerID string) (core.FlowRunState, error) {
+	return ok(a.hub.RunTriggerNow(flowID, triggerID))
+}
+
+// --- tool metadata and direct tests ---
+
+// InspectTool works out a tool's parameters without AI.
+func (a *App) InspectTool(e extension.Extension) (core.ToolInspect, error) {
+	return ok(a.hub.InspectTool(e))
+}
+
+// RefineToolWithAI proposes a tool's parameters, output shape and test cases.
+func (a *App) RefineToolWithAI(e extension.Extension, model string) (core.ToolRefine, error) {
+	return ok(a.hub.RefineToolWithAI(e, model))
+}
+
+// SaveToolMeta saves a tool's parameters, output shape and test cases.
+func (a *App) SaveToolMeta(name string, m extension.ToolMeta) (extension.Extension, error) {
+	return ok(a.hub.SaveToolMeta(name, m))
+}
+
+// RunToolWith runs a tool with the test form's arguments.
+func (a *App) RunToolWith(e extension.Extension, args map[string]any, secrets map[string]string, expect *extension.ToolExpect) (core.ToolRun, error) {
+	return ok(a.hub.RunToolWith(e, args, secrets, expect))
+}
+
+// RunToolTests runs a tool's test cases.
+func (a *App) RunToolTests(e extension.Extension, tests []extension.ToolTest, secrets map[string]string) ([]core.ToolTestResult, error) {
+	return ok(a.hub.RunToolTests(e, tests, secrets))
+}
+
+// --- flow wizard: requirements → clarify → plan → draft flows → apply ---
+
+// WizardList lists the project's flow wizard sessions.
+func (a *App) WizardList() ([]core.WizardSummary, error) { return ok(a.hub.WizardList()) }
+
+// WizardLoad returns one flow wizard session.
+func (a *App) WizardLoad(id string) (core.WizardSession, error) { return ok(a.hub.WizardLoad(id)) }
+
+// WizardDelete removes a flow wizard session (to the trash).
+func (a *App) WizardDelete(id string) error { return a.hub.WizardDelete(id) }
+
+// WizardStart starts a session: the AI derives the requirements and asks.
+func (a *App) WizardStart(request, model string) (core.WizardSession, error) {
+	return ok(a.hub.WizardStart(request, model))
+}
+
+// WizardUpdate saves edits (answers, requirements, plan…) without the AI.
+func (a *App) WizardUpdate(id string, e core.WizardEdit) (core.WizardSession, error) {
+	return ok(a.hub.WizardUpdate(id, e))
+}
+
+// WizardClarify sends the answers to the AI, which updates the requirements.
+func (a *App) WizardClarify(id string, e core.WizardEdit) (core.WizardSession, error) {
+	return ok(a.hub.WizardClarify(id, e))
+}
+
+// WizardPlan has the AI write or revise the plan.
+func (a *App) WizardPlan(id, feedback string) (core.WizardSession, error) {
+	return ok(a.hub.WizardPlan(id, feedback))
+}
+
+// WizardDraft makes draft flows from the plan.
+func (a *App) WizardDraft(id string, n int, feedback string) (core.WizardSession, error) {
+	return ok(a.hub.WizardDraft(id, n, feedback))
+}
+
+// WizardRevise has the AI revise one draft.
+func (a *App) WizardRevise(id, draftID, feedback string) (core.WizardSession, error) {
+	return ok(a.hub.WizardRevise(id, draftID, feedback))
+}
+
+// WizardDiscard hides (or restores) a draft.
+func (a *App) WizardDiscard(id, draftID string, discard bool) (core.WizardSession, error) {
+	return ok(a.hub.WizardDiscard(id, draftID, discard))
+}
+
+// WizardSaveDraftTest changes a draft's sample data and tries it again.
+func (a *App) WizardSaveDraftTest(id, draftID string, test flow.DryTest) (core.WizardSession, error) {
+	return ok(a.hub.WizardSaveDraftTest(id, draftID, test))
+}
+
+// WizardRunDraft runs a draft for real without saving it as a flow.
+func (a *App) WizardRunDraft(id, draftID string, o core.FlowRunOptions) (core.FlowRunState, error) {
+	return ok(a.hub.WizardRunDraft(id, draftID, o))
+}
+
+// WizardApply saves a draft as a flow.
+func (a *App) WizardApply(id, draftID, name string) (core.FlowState, error) {
+	return ok(a.hub.WizardApply(id, draftID, name))
+}
+
 // SaveFlowVersion saves a flow as a new version of another.
 func (a *App) SaveFlowVersion(baseID string, f flow.Flow) (core.FlowState, error) {
 	return ok(a.hub.SaveFlowVersion(baseID, f))
@@ -338,6 +471,14 @@ func (a *App) SetToolTags(tool string, tags []string) (map[string][]string, erro
 func (a *App) FlowOps() map[string]any { return val(a.hub.FlowOps()) }
 
 // --- flow runs ---
+
+// FlowCommands lists a flow's command steps and whether each is approved.
+func (a *App) FlowCommands(id string) ([]core.FlowCommand, error) { return ok(a.hub.FlowCommands(id)) }
+
+// ApproveFlowCommands approves the commands of these steps for the open project.
+func (a *App) ApproveFlowCommands(id string, steps []string) ([]core.FlowCommand, error) {
+	return ok(a.hub.ApproveFlowCommands(id, steps))
+}
 
 // RunFlow starts a flow run.
 func (a *App) RunFlow(id string, o core.FlowRunOptions) (core.FlowRunState, error) {

@@ -160,38 +160,12 @@ func sanitizeName(s string) string {
 	return n
 }
 
-// schemaParams reads a JSON schema's top-level properties as parameters.
-func schemaParams(s map[string]any) []Param {
-	props, _ := s["properties"].(map[string]any)
-	req := map[string]bool{}
-	if l, ok := s["required"].([]any); ok {
-		for _, v := range l {
-			if n, ok := v.(string); ok {
-				req[n] = true
-			}
-		}
-	}
-	out := []Param{}
-	for name, v := range props {
-		p := Param{Name: name, Type: "string", Required: req[name]}
-		if m, ok := v.(map[string]any); ok {
-			if t, ok := m["type"].(string); ok {
-				p.Type = t
-			}
-			if d, ok := m["description"].(string); ok {
-				p.Desc = d
-			}
-		}
-		out = append(out, p)
-	}
-	sort.SliceStable(out, func(i, j int) bool {
-		if out[i].Required != out[j].Required {
-			return out[i].Required
-		}
-		return out[i].Name < out[j].Name
-	})
-	return out
-}
+// schemaParams reads a JSON schema's top-level properties as parameters
+// (see jsonSchemaParams).
+func schemaParams(s map[string]any) []Param { return jsonSchemaParams(s) }
+
+// CopilotParams reads a Copilot extension tool's parameters (JSON Schema).
+func CopilotParams(s map[string]any) []Param { return jsonSchemaParams(s) }
 
 // mergeCopilot brings the project's Copilot extensions into the tool list:
 // saved (approved) tools get their extension's current files fingerprint,
@@ -256,9 +230,17 @@ func (s *Store) PutCopilotTools(rel string, tools []Extension) error {
 		return err
 	}
 	keep := exts[:0]
+	refined := map[string]Extension{} // metadata refined by hand or AI survives reading the source again
 	for _, e := range exts {
 		if !(e.Kind == KindCopilot && e.Dir == rel) {
 			keep = append(keep, e)
+		} else if !e.MetaAt.IsZero() {
+			refined[e.Tool] = e
+		}
+	}
+	for i := range tools {
+		if r, ok := refined[tools[i].Tool]; ok {
+			tools[i].Params, tools[i].Output, tools[i].OutputBy, tools[i].Tests, tools[i].MetaAt = r.Params, r.Output, r.OutputBy, r.Tests, r.MetaAt
 		}
 	}
 	return s.write(append(keep, tools...))

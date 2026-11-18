@@ -1,13 +1,16 @@
 // Tiny syntax highlighter (Java/Kotlin/TS/Go-ish, Markdown, XML) that
 // returns tokens; colors come from the theme's --syn-* variables.
-const KW = /^(package|import|public|private|protected|final|class|interface|enum|record|static|void|new|return|if|else|throw|throws|this|for|while|try|catch|extends|implements|boolean|int|long|double|true|false|null|func|var|let|const|type|struct|def|from|export|async|await|fun|val|namespace|using)$/;
-const RE = /(\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*)|("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(<\/?[\w.-]+|\/?>)|(@\w+)|\b(\d+)\b|\b([A-Z]\w*)\b|\b([a-z_]\w*)(?=\()|\b(\w+)\b/g;
+const KW =
+  /^(package|import|public|private|protected|final|class|interface|enum|record|static|void|new|return|if|else|throw|throws|this|for|while|try|catch|extends|implements|boolean|int|long|double|true|false|null|func|var|let|const|type|struct|def|from|export|async|await|fun|val|namespace|using)$/;
+const RE =
+  /(\/\*[\s\S]*?\*\/|\/\/[^\n]*|#[^\n]*)|("(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*')|(<\/?[\w.-]+|\/?>)|(@\w+)|\b(\d+)\b|\b([A-Z]\w*)\b|\b([a-z_]\w*)(?=\()|\b(\w+)\b/g;
 
 // Returns an array of lines; each line is an array of [className|null, text].
 export function highlight(src, path) {
   const lines = [];
   if (/\.md$/i.test(path)) {
-    for (const l of src.split("\n")) lines.push([[/^#/.test(l) ? "syn-keyword" : /^\s*[-\d]/.test(l) ? "syn-string" : null, l]]);
+    for (const l of src.split("\n"))
+      lines.push([[/^#/.test(l) ? "syn-keyword" : /^\s*[-\d]/.test(l) ? "syn-string" : null, l]]);
     return lines;
   }
   const hashComments = /\.(py|sh|ya?ml|toml|rb)$/i.test(path);
@@ -15,11 +18,15 @@ export function highlight(src, path) {
   const push = (cls, text) => {
     const parts = text.split("\n");
     parts.forEach((p, i) => {
-      if (i > 0) { lines.push(cur); cur = []; }
+      if (i > 0) {
+        lines.push(cur);
+        cur = [];
+      }
       if (p) cur.push([cls, p]);
     });
   };
-  let last = 0, m;
+  let last = 0,
+    m;
   RE.lastIndex = 0;
   while ((m = RE.exec(src))) {
     if (m.index > last) push(null, src.slice(last, m.index));
