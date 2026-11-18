@@ -22,3 +22,21 @@ func TestHookDescribesExtensionReload(t *testing.T) {
 		t.Fatal("a reload is not a file edit: it is asked in the app")
 	}
 }
+
+// SpecWright's own tools are allowed without asking (as for Claude); other
+// tools still go to the app.
+func TestHookAllowsOwnTools(t *testing.T) {
+	var out strings.Builder
+	t.Setenv("CODEGEN_BRIDGE_URL", "http://127.0.0.1:9") // nothing there: anything asked gets no answer
+	if err := PermissionHook(strings.NewReader(`{"toolName":"agentbridge/save_flow","toolInput":{"flow":{}}}`), &out); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(out.String(), `"allow"`) {
+		t.Fatalf("own tool: %q", out.String())
+	}
+	out.Reset()
+	_ = PermissionHook(strings.NewReader(`{"toolName":"bash","toolInput":{"command":"rm -rf x"}}`), &out)
+	if strings.Contains(out.String(), "allow") {
+		t.Fatalf("other tools are still asked: %q", out.String())
+	}
+}

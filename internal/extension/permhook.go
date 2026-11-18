@@ -28,6 +28,13 @@ func PermissionHook(in io.Reader, out io.Writer) error {
 		return err
 	}
 	tool, input := hookRequest(raw)
+	// SpecWright's own tools (agentbridge: its built-ins, save_flow, and the
+	// project tools the user approved): allowed, as they are for Claude
+	// (--allowedTools mcp__agentbridge). Copilot's --allow-tool agentbridge
+	// does not match them, so every call used to ask the user.
+	if ownTool(tool) {
+		return json.NewEncoder(out).Encode(map[string]any{"behavior": "allow"})
+	}
 	describeCopilotTool(tool, input)
 	// file edits inside the project (or a folder the run added) need no
 	// question, as with Claude's acceptEdits; edits elsewhere are asked
@@ -90,6 +97,13 @@ func hookRequest(raw []byte) (string, map[string]any) {
 		tool = "tool"
 	}
 	return tool, input
+}
+
+// ownTool reports whether a Copilot tool name is one of SpecWright's
+// agentbridge tools ("agentbridge/read_file" in hooks, "agentbridge-…" in
+// events).
+func ownTool(tool string) bool {
+	return strings.HasPrefix(tool, "agentbridge/") || strings.HasPrefix(tool, "agentbridge-")
 }
 
 // describeCopilotTool says in words what Copilot's own extension tools
