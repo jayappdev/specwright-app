@@ -303,6 +303,7 @@ export async function openFlow(id) {
   if (f.dirty) await save();
   try {
     const flow = await backend.LoadFlow(id);
+    const repairs = takeRepairs(flow);
     Object.assign(f, {
       id,
       flow,
@@ -312,6 +313,7 @@ export async function openFlow(id) {
       preview: {},
       kbLink: null,
       conflict: null,
+      repairs,
     });
     resetHistory();
     f.issues = (await backend.ValidateFlow(flow).catch(() => [])) || [];
@@ -424,6 +426,14 @@ export async function save() {
   update();
 }
 
+// takeRepairs: what the backend repaired when the flow's file did not fit
+// the format (an agent edited it); shown once above the canvas.
+function takeRepairs(flow) {
+  const r = flow?.repairs || [];
+  if (flow) delete flow.repairs;
+  return r.length ? r : null;
+}
+
 // checkDisk keeps the designer and the flow's file the same. When the file
 // changed outside the designer (an agent in the Playground, another window,
 // git): with no unsaved edits the new version is loaded; with unsaved edits
@@ -448,7 +458,7 @@ export async function checkDisk(why = "") {
   if (!disk.rev || disk.rev === f.flow.rev) return; // the same
   if (!f.dirty && why !== "save") {
     clearTimeout(timer);
-    Object.assign(f, { flow: disk, dirty: false, conflict: null });
+    Object.assign(f, { flow: disk, dirty: false, conflict: null, repairs: takeRepairs(disk) });
     resetHistory();
     f.issues = (await backend.ValidateFlow(disk).catch(() => [])) || [];
     await refreshShapes();
@@ -1309,6 +1319,30 @@ export function Flows() {
               ]}
             />
           </header>
+          {f.repairs && (
+            <div className="banner fl-conflict" role="status">
+              <span>
+                <b>This flow's file did not fit the Flow Designer format</b> (it was changed outside the
+                designer, for example by the AI). It was repaired and saved:
+                <ul className="ai-changes">
+                  {f.repairs.map((r, i) => (
+                    <li key={i}>{r}</li>
+                  ))}
+                </ul>
+                Check the steps. Agents should change flows with the save_flow tool, which saves a new
+                version.
+              </span>
+              <button
+                className="link"
+                onClick={() => {
+                  f.repairs = null;
+                  update();
+                }}
+              >
+                Dismiss
+              </button>
+            </div>
+          )}
           {f.conflict && (
             <div className="banner fl-conflict" role="alert">
               {f.conflict.gone ? (

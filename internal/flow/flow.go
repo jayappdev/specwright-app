@@ -57,6 +57,9 @@ type Flow struct {
 	// editor never writes stale data over a change made elsewhere (an
 	// agent, another window, a git checkout).
 	Rev string `json:"rev,omitempty"`
+	// Repairs: the file did not fit the flow format (an outside edit) and
+	// was read leniently; what was changed to read it (not stored).
+	Repairs []string `json:"repairs,omitempty"`
 }
 
 // EstimatedMinutes is MinutesSaved, or an estimate from the steps.
@@ -1007,10 +1010,21 @@ func Load(root, id string) (*Flow, error) {
 		return nil, err
 	}
 	f, err := Parse(b)
-	if err == nil {
-		f.Rev = FileRev(b)
+	if err != nil {
+		// an outside edit (an agent, by hand) that does not fit the format:
+		// read it leniently rather than losing the flow, and say what changed
+		g, notes, lerr := ParseDesigned(b)
+		if lerr != nil {
+			return nil, fmt.Errorf("flow %s does not fit the flow format: %v", id, err)
+		}
+		f = g
+		f.Repairs = append([]string{"The file did not fit the flow format (" + err.Error() + "); it was read leniently."}, notes...)
 	}
-	return f, err
+	f.Rev = FileRev(b)
+	if f.ID == "" {
+		f.ID = id
+	}
+	return f, nil
 }
 
 // FileRev is the revision of a flow file's content.
@@ -1115,6 +1129,9 @@ func Save(root string, f *Flow) error {
 	f.normalize()
 	f.Updated = time.Now().UTC().Truncate(time.Second)
 	f.Rev = ""
+	repairs := f.Repairs
+	f.Repairs = nil
+	defer func() { f.Repairs = repairs }()
 	b, err := json.MarshalIndent(f, "", "  ")
 	if err != nil {
 		return err

@@ -268,6 +268,23 @@ func (h *Hub) continuationContext(parents []string) (string, error) {
 			fmt.Fprintf(&b, "Files it changed: %s\n", strings.Join(files, ", "))
 		}
 	}
+	// flows: where they are, and how to change them so they keep fitting the
+	// Flow Designer's format (an agent editing the JSON by hand broke them)
+	var flows []string
+	seenFlow := map[string]bool{}
+	for _, d := range all {
+		if d.Kind != "flow" {
+			continue
+		}
+		if r, err := h.Store.GetRun(d.ID); err == nil && r.Workflow != "" && !seenFlow[r.Workflow] && !strings.HasPrefix(r.Workflow, "draft-") {
+			seenFlow[r.Workflow] = true
+			flows = append(flows, fmt.Sprintf("- %s: .codegen/flows/%s.json (id %s)", firstNonEmpty(d.Title, r.Workflow), r.Workflow, r.Workflow))
+		}
+	}
+	if len(flows) > 0 {
+		b.WriteString("\n### Changing a flow\nThe flow(s) above:\n" + strings.Join(flows, "\n") +
+			"\nRead the flow's file to see it. To change it, call the save_flow tool (agentbridge MCP server) with the complete flow JSON and base_flow_id set to its id: it is checked against the Flow Designer format and saved as a new version (the original stays), and its answer lists any problems to fix (fix them and call save_flow again with update_version_id). Do NOT edit .codegen/flows/*.json directly: a file that does not fit the format breaks the flow.\n")
+	}
 	b.WriteString("\n---\n\nNow, continuing from the above:\n")
 	return b.String(), nil
 }

@@ -5904,7 +5904,17 @@ export function createMockBackend(methods) {
     },
     async LoadFlow(id) {
       if (!db.flows[id]) throw new Error(`no flow "${id}"`);
-      return { ...applyStepIDs(clone(db.flows[id])), rev: flowRev(db.flows[id]) };
+      // an outside edit the backend had to repair (window.__mockEditFlow(id, { repairs: [...] })): said once
+      const repairs = db.flows[id].repairs;
+      if (repairs) {
+        delete db.flows[id].repairs;
+        persist();
+      }
+      return {
+        ...applyStepIDs(clone(db.flows[id])),
+        rev: flowRev(db.flows[id]),
+        ...(repairs ? { repairs } : {}),
+      };
     },
     async NewFlow(name) {
       const id = uniqueFlowId(slug(name));
@@ -6197,6 +6207,7 @@ export function createMockBackend(methods) {
           `flow changed on disk: ${f.name} changed on disk since it was opened here; load the new version, or keep yours to overwrite it`,
         );
       delete f.rev;
+      delete f.repairs;
       f.updated = new Date().toISOString();
       db.flows[f.id] = f;
       persist();

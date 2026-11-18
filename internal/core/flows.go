@@ -4,8 +4,11 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+	"time"
 
 	"codegen/internal/extension"
 	"codegen/internal/flow"
@@ -25,12 +28,33 @@ func (h *Hub) Flows() ([]flow.Summary, error) {
 }
 
 // LoadFlow reads one flow.
+// A flow whose file did not fit the format (an agent edited it) is
+// repaired: the file as it was is kept in .codegen/flows/.backup/, the
+// repaired flow is saved in its place (same id: runs and links keep
+// working), and Repairs says what changed.
 func (h *Hub) LoadFlow(id string) (*flow.Flow, error) {
 	root, err := h.need()
 	if err != nil {
 		return nil, err
 	}
-	return flow.Load(root, id)
+	f, err := flow.Load(root, id)
+	if err != nil || len(f.Repairs) == 0 {
+		return f, err
+	}
+	src := flow.Path(root, id)
+	if b, rerr := os.ReadFile(src); rerr == nil {
+		bak := filepath.Join(filepath.Dir(src), ".backup", id+"-"+time.Now().Format("20060102-150405")+".json")
+		if os.MkdirAll(filepath.Dir(bak), 0o755) == nil && os.WriteFile(bak, b, 0o644) == nil {
+			rel, _ := filepath.Rel(root, bak)
+			f.Repairs = append(f.Repairs, "The file as it was is kept in "+filepath.ToSlash(rel)+".")
+		}
+	}
+	repairs := f.Repairs
+	if err := flow.Save(root, f); err != nil {
+		return nil, err
+	}
+	f.Repairs = repairs
+	return f, nil
 }
 
 // NewFlow creates and saves an empty flow with a free id.
