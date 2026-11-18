@@ -62,7 +62,7 @@ export function loadFileInto(slot, path) {
       d.name ||= String(d.path || path)
         .split(/[\\/]/)
         .pop();
-      // TEMP off
+      if (d.kind === "text") d.text = d.text ?? "";
       if (d.kind === "dir") d.entries = d.entries || [];
       d.matches = d.matches || [];
       slot.data = d;
