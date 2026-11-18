@@ -1,0 +1,62 @@
+# Backlog: history database and triggers (2026-11-18)
+
+Ideas to come back to, collected while adding triggers and the SQLite history database on `feature/ui-improvements`. Nothing here is built yet unless its row says so. Each item has an id (D… database, T… triggers, F… flows) so it can be referred to and marked done here.
+
+## What is already done (for context)
+
+| Area | State | Commit |
+|---|---|---|
+| Schedules as triggers (once, every, daily, weekly; until / count; catch-up; encrypted secrets; restart after the app closes) | Done | `45e86af` |
+| `schedule_flow` agent tool; Refresh and 30 s auto-refresh in Run History and Run flows | Done | `fe62cbb`, `d9c93cf` |
+| Triggers: after another flow, when files change | Done | `2153077` |
+| File triggers: absolute paths and folders outside the project | Done | `5c8e731` |
+| History database (SQLite, `modernc.org/sqlite` v1.62.0): runs, usage, trigger state, full-text search; History search inside runs; `history_search` agent tool | Done | `561b060` |
+
+Priorities, as in the code reviews:
+- **High:** fixes a gap people hit, or makes the AI and the designer better with every run.
+- **Medium:** clear value, no hurry.
+- **Low:** when touching the area.
+
+## History database (SQLite)
+
+| Id | Priority | Idea | Notes |
+|---|---|---|---|
+| D1 | High | **Lessons from reviews.** Keep every review rejection and its reason, "refine" feedback, edit-then-approve, and Improve-step verdicts, per project / flow / step. Add the most relevant ones to prompts so the AI does not repeat a mistake. | New `lessons` table (workspace, flow, step, text, source run, times used) in the FTS index. Show and edit them in the Flow Designer. |
+| D2 | High | **Tool reliability.** Record every tool call: duration, ok or failed, error, arguments shape. Show "failed 4 of the last 10 runs", "usually 3 s" in the Designer and on Tools; suggest arguments that worked in the typed test form; let the AI designer prefer reliable tools. | New `tool_calls` table, filled from `builtin.result` / tool events. |
+| D3 | High | **A queue for trigger runs.** Today a trigger whose previous run is still going skips that time. Queue it instead, and keep the queue across restarts; limit how many triggered runs go at once; retry with a wait. | New `trigger_queue` table; the scheduler takes from it. Pairs with T-settings "limits". |
+| D4 | Medium | **Items already seen**, for a "something new appears" trigger (T3): the ids of Jira issues / PRs already handled. | New `trigger_seen` table (trigger key, item id, first seen). |
+| D5 | Medium | **File changes while the app was closed.** Save the watcher's last scan; on start, compare, so file triggers see changes made while SpecWright was closed (today the watcher starts from a fresh scan). | Per watched folder: path, mtime, size. Decide whether such changes start runs (a setting, like catch-up). |
+| D6 | Medium | **A record of admin and approval actions:** tool approvals, approved commands (`approved-commands.json`), policy changes, "allow for this run" answers. Append-only, searchable. | For audits. Keep admin keys out of it (see "stays as files"). |
+| D7 | Medium | **Metrics over time.** Daily totals per flow, tool and model (tokens, cost, premium requests, minutes saved); budgets and premium-request limits as one query. | A rollup table refreshed when a run ends. |
+| D8 | Medium | **Move run events into the database** (instead of one `runs/<id>.jsonl` per run): Replay and Debug as queries ("only tool errors"), retention as one delete, one file to back up. | After the current version has proved itself. Keep an export to `.jsonl`. |
+| D9 | Low | **Similar-run lookup:** store an embedding per run / output and compare in Go (enough for tens of thousands of runs), to find runs like this one even with different words. | Builds on the FTS search. No native SQLite extension. |
+| D10 | Low | **Playground and AI-designer history:** earlier conversations, wizard drafts, why each flow version was saved, searchable. | Same index. |
+| D11 | Low | **Small settings files into the database:** `housekeeping.json`, `tool-tags.json`, `packages.json`, `profile.json` (safe saves, one backup). | Not urgent. |
+| D12 | Medium | **Stop writing the duplicate files** (run summaries `runs/<id>.json`, `usage.jsonl`, `triggers/<ws>.json`) after one release, once older builds are not in use. | The database is read first already; the files are written for older builds. |
+| D13 | Medium | **Import again what an older build wrote.** The import from files runs once; runs an older build records afterwards are not in the database. Re-import files newer than the database's newest run on open. | Only matters while both builds are used. |
+| D14 | Medium | **Backups and limits:** a daily `VACUUM INTO` copy; the retention settings ("archive after N days") also delete from the index; size shown on Admin. | |
+| D15 | Low | **A shared PostgreSQL backend for teams** (one history for several people), behind the same store interface. | Only if a team asks. PGlite (Postgres in WebAssembly) is not a fit for the Go backend. |
+
+**Stays as files (decided):** flows, project tools and run result folders (they belong to the project: git, agents, people read them); admin keys and trusted admins (security material); the secrets key (Keychain, or its private key file).
+
+## Triggers
+
+| Id | Priority | Idea | Notes |
+|---|---|---|---|
+| T1 | High | **Shared trigger settings:** conditions (only on a branch, during work hours, if the last run failed); limits (at most N runs per hour, a minimum gap). | With D3 (queue). |
+| T2 | Medium | **Git events:** a new commit on a branch, a branch switch, pulled changes, a new tag; checked on the scheduler tick, no service needed. | Release notes on a tag, checks on new commits to `main`. |
+| T3 | Medium | **Something new appears in a service:** new Jira issues matching a search, a new PR or issue, a failed CI build; polled with an existing tool every N minutes; one run per new item or per batch. | Needs D4. Better than webhooks for a desktop app (nothing has to reach the computer). |
+| T4 | Medium | **A watched value changes:** run a tool on a schedule, start the flow only when its output changes or matches a condition ("open bugs > 20"). | Covers many services without a trigger each. |
+| T5 | Low | **When the app or a project opens** (at most once a day): morning reports, refreshing dependencies. | |
+| T6 | Low | **When a spec workflow step finishes** (Plan, Tasks): start a review flow. | |
+| T7 | Low | **When an approval comes back:** a review or Improve step approved or rejected starts a follow-up flow. | |
+| T8 | Low | **Manual presets:** a named button that starts a flow with set inputs (menu bar, command palette, a system shortcut). | |
+| T9 | Low | **Webhook:** a local address with a token (saved like trigger secrets); the request body as inputs. | Most powerful, but security and reachability work (a tunnel for remote services). Last. |
+| T10 | Low | **System events:** wake from sleep, network back, idle for N minutes (heavy flows while away). | macOS-specific. |
+| T11 | Low | **Rename `schedule_flow`** to something like `trigger_flow`, now that it sets up every kind (keep the old name as an alias). | |
+
+## Flows
+
+| Id | Priority | Idea | Notes |
+|---|---|---|---|
+| F1 | Medium | **"Improve until done" for any section of steps**, not only the step before or after it. | The user asked for this "later" when the Improve step was added. |
