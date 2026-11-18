@@ -2636,6 +2636,48 @@ export function createMockBackend(methods) {
       steps: ["Run the tool", "Keep what matters", "Write the report"],
       risks: ["The tool finds nothing: the report says so"],
     };
+    // reusable components; a missing tool planned as a general one (browser preview: scripted)
+    const jira = /jira/i.test(s.request);
+    s.planInfo.components = [
+      jira
+        ? {
+            name: "Fetch issues",
+            kind: "new tool",
+            tool: "pull-jira-issues",
+            inputs: ["project", "status", "component"],
+            why: "One general fetch, driven by inputs: not this request's values.",
+          }
+        : {
+            name: "Collect",
+            kind: "tool",
+            tool: tl[0]?.name || "",
+            inputs: s.spec.inputs.map((x) => x.name),
+            why: "The tool does the work; its arguments come from the flow's inputs.",
+          },
+      { name: "Shape the result", kind: "step", inputs: [], why: "Plain data steps: filter and group." },
+      { name: "Deliver", kind: "step", inputs: ["format"], why: "Output in the format asked for." },
+    ];
+    s.planInfo.newTools = jira
+      ? [
+          {
+            name: "pull-jira-issues",
+            desc: "Lists Jira issues of a project, filtered by status and component",
+            params: [
+              { name: "project", type: "string", required: true, desc: "Project key", default: "ABC" },
+              {
+                name: "status",
+                type: "string",
+                desc: "Status to keep (empty: all)",
+                default: "Done",
+                enum: ["To Do", "In Progress", "Done"],
+              },
+              { name: "component", type: "string", desc: "Component to keep (empty: all)", default: "abc" },
+              { name: "max", type: "integer", desc: "At most this many issues", default: "50" },
+            ],
+            output: "JSON array of {key, summary, status, component}",
+          },
+        ]
+      : [];
     s.spec.secrets = s.spec.secrets.map((x) => ({ ...x, source: x.source || "keychain" }));
     const md = [
       "## Goal",

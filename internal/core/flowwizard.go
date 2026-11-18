@@ -34,6 +34,7 @@ import (
 	"time"
 
 	"codegen/internal/bus"
+	"codegen/internal/extension"
 	"codegen/internal/flow"
 	"codegen/internal/store"
 )
@@ -120,6 +121,28 @@ type WizPlanInfo struct {
 	Tools []WizPlanTool `json:"tools"`
 	Steps []string      `json:"steps"`
 	Risks []string      `json:"risks"`
+	// Components: the flow in small parts, each with the inputs that drive
+	// it; NewTools: tools that do not exist yet, described for general use
+	// (parameters, not this request's values) — created from the plan
+	Components []WizComponent `json:"components,omitempty"`
+	NewTools   []WizNewTool   `json:"newTools,omitempty"`
+}
+
+// WizComponent is one part of the planned flow.
+type WizComponent struct {
+	Name   string   `json:"name"`
+	Kind   string   `json:"kind,omitempty"` // tool | new tool | step | ai
+	Tool   string   `json:"tool,omitempty"`
+	Inputs []string `json:"inputs,omitempty"`
+	Why    string   `json:"why,omitempty"`
+}
+
+// WizNewTool is a tool the plan needs that the project does not have.
+type WizNewTool struct {
+	Name   string            `json:"name"`
+	Desc   string            `json:"desc"`
+	Params []extension.Param `json:"params,omitempty"`
+	Output string            `json:"output,omitempty"`
 }
 
 // WizPlanTool is a tool the plan uses, and why.
@@ -867,6 +890,7 @@ Write the plan the flow will be built from, as a Markdown document with these se
 ## Goal — one or two sentences.
 ## Requirements — every clarified requirement (by id), and any assumption you made for an unanswered question.
 ## Tools in context — the tools from the list above the flow will use, and for each why and with which arguments; say which steps need no tool (plain data steps) and which need AI, and why.
+## Reusable components — break the flow into small components that each do one job (fetch, filter, shape, summarise, deliver), and for each say the inputs that drive it. Design for the most reuse: every value the request names as a specific case (a project, a status, a component, a label, a date range, a folder, a URL, a limit) is a flow INPUT with the request's value as its default, passed to the tools' arguments — never hard-coded in a tool, a prompt or a step. When no listed tool does a job, describe the NEW TOOL to create as a general, parameterized one (e.g. "pull-jira-issues: project, status, component, max — not pull-done-abc-issues"), with its parameters, their types and defaults, and what it prints.
 ## Inputs — each flow input: name, type, required, example.
 ## Outputs — each output: format, what it contains, where it goes.
 ## Secrets — every password, token or API key: which tool needs it, the flow input that carries it (type secret, never sent to AI steps), and where its value comes from: the Keychain (best on a desktop), an environment variable (CI, scheduled runs), asked when the run starts, or asked when the step is reached. "None" if there are none.
@@ -880,6 +904,8 @@ Reply with ONLY this JSON, no explanation and no code fences:
  "outputs": [{"name": "...", "type": "md|txt|html|csv|json", "description": "...", "destination": "..."}],
  "secrets": [{"name": "<the secret input's name>", "usedBy": "<tool>", "source": "keychain|env|ask|prompt|auto", "env": "<variable, for env/auto>", "why": "..."}],
  "steps": ["<step 1>", "..."],
+ "components": [{"name": "<component>", "kind": "tool|new tool|step|ai", "tool": "<tool name, if any>", "inputs": ["<input or parameter that drives it>"], "why": "..."}],
+ "newTools": [{"name": "<kebab-case, general>", "desc": "<what it does, in general>", "params": [{"name": "...", "type": "string|integer|number|boolean|json", "required": false, "desc": "...", "default": "<the request's value>", "enum": [], "format": "", "example": ""}], "output": "<what it prints: JSON shape or text>"}],
  "risks": ["..."]}`)
 	summary := "Writing the plan"
 	if feedback != "" {
@@ -890,13 +916,15 @@ Reply with ONLY this JSON, no explanation and no code fences:
 		return err
 	}
 	var got struct {
-		Plan    string        `json:"plan"`
-		Tools   []WizPlanTool `json:"tools"`
-		Inputs  []WizIO       `json:"inputs"`
-		Outputs []WizIO       `json:"outputs"`
-		Secrets []WizSecret   `json:"secrets"`
-		Steps   []string      `json:"steps"`
-		Risks   []string      `json:"risks"`
+		Plan    string            `json:"plan"`
+		Tools   []WizPlanTool     `json:"tools"`
+		Inputs  []WizIO           `json:"inputs"`
+		Outputs []WizIO           `json:"outputs"`
+		Secrets []WizSecret       `json:"secrets"`
+		Steps   []string          `json:"steps"`
+		Risks   []string          `json:"risks"`
+		Comps   []WizComponent    `json:"components"`
+		New     []json.RawMessage `json:"newTools"`
 	}
 	if err := json.Unmarshal([]byte(firstJSON(jsonReply(text))), &got); err != nil || strings.TrimSpace(got.Plan) == "" {
 		err = fmt.Errorf("the AI did not return a plan (%v)", firstNonEmpty(fmt.Sprint(err), "empty"))
@@ -922,7 +950,41 @@ Reply with ONLY this JSON, no explanation and no code fences:
 		}
 	}
 	s.Plan = strings.TrimSpace(got.Plan)
-	s.PlanInfo = &WizPlanInfo{Tools: tools, Steps: got.Steps, Risks: got.Risks}
+	s.PlanInfo = &WizPlanInfo{Tools: tools, Steps: got.Steps, Risks: got.Risks, Components: got.Comps}
+	for _, raw := range got.New { // read leniently: params as the AI wrote them
+		var nt struct {
+			Name   string           `json:"name"`
+			Desc   string           `json:"desc"`
+			Params []map[string]any `json:"params"`
+			Output any              `json:"output"`
+		}
+		if json.Unmarshal(raw, &nt) != nil || strings.TrimSpace(nt.Name) == "" {
+			continue
+		}
+		t := WizNewTool{Name: nt.Name, Desc: nt.Desc}
+		if s, ok := nt.Output.(string); ok {
+			t.Output = s
+		} else if nt.Output != nil {
+			b, _ := json.Marshal(nt.Output)
+			t.Output = string(b)
+		}
+		for _, m := range nt.Params {
+			if p := aiParam(m); p.Name != "" {
+				t.Params = append(t.Params, p)
+			}
+		}
+		if known[t.Name] { // it exists after all
+			continue
+		}
+		s.PlanInfo.NewTools = append(s.PlanInfo.NewTools, t)
+	}
+	if n := len(s.PlanInfo.NewTools); n > 0 {
+		names := make([]string, 0, n)
+		for _, t := range s.PlanInfo.NewTools {
+			names = append(names, t.Name)
+		}
+		s.Notes = appendOnce(s.Notes, "The plan needs tool(s) the project does not have yet: "+strings.Join(names, ", ")+". Create them from the plan (general, with parameters), then build the drafts, which use only tools that exist.")
+	}
 	if len(got.Inputs) > 0 {
 		s.Spec.Inputs = got.Inputs
 	}

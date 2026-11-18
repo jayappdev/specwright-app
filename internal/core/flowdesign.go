@@ -213,6 +213,7 @@ Design rules, in order of preference:
 2. Connect and shape the data with DETERMINISTIC steps: transform, filter, aggregate, decision, loop/gather, merge, output.
 3. Use an "ai" step only for what no tool or deterministic step can do (judgement, prose, classification, summarising). When later steps read its fields, give it an "outputSchema" (a JSON Schema) so it replies with that JSON.
 4. Keep flows small and correct; never invent tools: use only the tool names listed below.
+5. REUSABLE: a value the user may vary (a project, a status, a component, a label, an id, a name, a date range, a path, a URL, a limit) is a flow INPUT with the request's value as its "default", passed into the tool arguments as {{inputs.<name>}} — never a constant in a tool argument, an ai prompt, a transform, a filter or a command. A flow asked for "project ABC, status Done" has inputs project (default "ABC") and status (default "Done"), so the same flow serves other projects and statuses. Small steps that each do one job, connected, over one step that does everything.
 
 Step types (node JSON; every node has "id" and "type" and may have "title"):
 - start: the flow's inputs; always present with id "start", nothing feeds it.

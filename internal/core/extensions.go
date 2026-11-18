@@ -307,12 +307,26 @@ type GenerateRequest struct {
 }
 
 const genInstructions = `You write small, safe developer tools that an AI coding agent can call.
+MAKE THE TOOL REUSABLE: write it for the general job, driven by its parameters,
+not for the one case in the request. Every specific value the request names
+(a project key, a status, a component, a label, an assignee, a date range, a
+folder, a URL, a limit, an output format) is a PARAMETER with that value as its
+default, never a constant in the script. Name and describe the tool for the
+general job ("pull-jira-issues": "Lists Jira issues of a project, filtered by
+status and component", not "pull-done-abc-issues"). Prefer one general tool
+with optional filters over several narrow ones; a filter left empty means "no
+filter". Put the request's specific values in "call" (the example arguments)
+and in "sampleTest", where they show how it is used.
 Write the tool in the language given under "Runs in". The language priority is
 Node.js, then Go, then Java, then Bash: only move down the list when the one
 above cannot do the job.
 Reply with ONE JSON object and nothing else, with these fields:
 {"name": kebab-case (max 40 chars), "desc": one sentence the agent sees,
- "lang": "Node.js"|"Go"|"Java"|"Bash"|"Python", "params": [{"name","type","required","desc"}],
+ "lang": "Node.js"|"Go"|"Java"|"Bash"|"Python",
+ "params": [{"name", "type": "string|integer|number|boolean|json", "required", "desc",
+             "default": the value used when it is left out (e.g. the request's value),
+             "enum": [allowed values, when it is a fixed set], "format": "path|directory|url|date|date-time|multiline|email|" ,
+             "example": a typical value}],
  "secrets": [{"name": ENV_VAR, "desc"}], "perms": ["read files", ...], "deps": [...],
  "command": how to run it, with {{param}} placeholders:
    Node.js "node .codegen/tools/<name>.js {{param}}" (standard library only, Node 18+),

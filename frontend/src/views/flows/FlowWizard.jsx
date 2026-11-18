@@ -11,6 +11,7 @@
 // Sessions are saved in the project (.codegen/flow-wizard) and can be
 // resumed. The Activity panel shows every AI call: what was asked, what came
 // back, how long it took and what it used.
+import { newTool } from "../Tools.jsx";
 import { DateTimeField } from "../../DateTimeField.jsx";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
@@ -726,6 +727,7 @@ function Plan({ s }) {
           ))}
         </div>
       )}
+      <Components info={s.planInfo} />
       <div className="row-actions">
         <button className="link" onClick={() => setEdit(!edit)}>
           {edit ? "Show the plan" : "Edit the plan"}
@@ -792,6 +794,100 @@ function Plan({ s }) {
       </div>
     </>
   );
+}
+
+// Components: the planned flow in small parts with the inputs that drive
+// them, and the tools to create (general, with parameters).
+function Components({ info }) {
+  const comps = info?.components || [],
+    news = info?.newTools || [];
+  if (!comps.length && !news.length) return null;
+  return (
+    <div className="fwz-spec">
+      {comps.length > 0 && (
+        <div style={{ gridColumn: "1 / -1" }}>
+          <h4>Reusable components</h4>
+          <ul>
+            {comps.map((c, i) => (
+              <li key={i}>
+                <b>{c.name}</b> {c.kind && <span className="badge">{c.kind}</span>}{" "}
+                {c.tool && (
+                  <code className="inline-code" data-nofile>
+                    {toolRef(c.tool)}
+                  </code>
+                )}
+                {c.inputs?.length > 0 && (
+                  <span className="muted">
+                    {" "}
+                    · driven by{" "}
+                    {c.inputs.map((x) => (
+                      <code key={x} className="inline-code" data-nofile>
+                        {x}{" "}
+                      </code>
+                    ))}
+                  </span>
+                )}
+                {c.why && <div className="muted">{c.why}</div>}
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+      {news.length > 0 && (
+        <div style={{ gridColumn: "1 / -1" }}>
+          <h4>Tools to create</h4>
+          <p className="muted fl-help">
+            The project has no tool for these yet. Each is planned for general use, driven by its parameters
+            (the request's values are only their defaults). Create them, then build the drafts.
+          </p>
+          <ul>
+            {news.map((t) => (
+              <li key={t.name}>
+                <code className="inline-code" data-nofile>
+                  {t.name}
+                </code>{" "}
+                {t.desc}
+                {t.params?.length > 0 && (
+                  <div className="muted">
+                    Parameters:{" "}
+                    {t.params
+                      .map(
+                        (p) =>
+                          `${p.name}${p.required ? "*" : ""} (${p.type}${p.default ? `, default ${p.default}` : ""})`,
+                      )
+                      .join(", ")}
+                  </div>
+                )}
+                {t.output && <div className="muted">Prints: {t.output}</div>}
+                <button className="btn secondary small" onClick={() => createTool(t)}>
+                  <Icon.spark /> Create this tool
+                </button>
+              </li>
+            ))}
+          </ul>
+        </div>
+      )}
+    </div>
+  );
+}
+
+// createTool opens Tools › New with the planned tool described, for the AI
+// to write (the wizard session stays; come back to it from New flow with AI).
+function createTool(t) {
+  const ps = (t.params || [])
+    .map(
+      (p) =>
+        `- ${p.name} (${p.type || "string"}${p.required ? ", required" : ", optional"}${p.default ? `, default ${p.default}` : ""}${p.enum?.length ? ", one of " + p.enum.join("/") : ""}): ${p.desc || ""}`,
+    )
+    .join("\n");
+  const prompt =
+    `Create the tool "${t.name}": ${t.desc}\n\nMake it general and reusable, driven by these parameters (the defaults are only defaults):\n${ps}` +
+    (t.output ? `\n\nIt prints: ${t.output}` : "");
+  wz().open = false;
+  newTool(false);
+  S.tb.prompt = prompt;
+  update();
+  toast("Describe step filled in from the plan: check it, then Generate tool with AI.");
 }
 
 // --- 4 drafts: temporary flows --------------------------------------------------------
