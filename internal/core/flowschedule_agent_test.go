@@ -10,10 +10,10 @@ import (
 
 func TestScheduleFlowTool(t *testing.T) {
 	stubKeychain(t)
-	h, ws := flowHub(t)
 	old := triggerNow
 	triggerNow = func() time.Time { return time.Date(2026, 11, 18, 8, 0, 0, 0, time.Local) }
 	t.Cleanup(func() { triggerNow = old })
+	h, ws := flowHub(t)
 	call := func(args map[string]any) (string, error) { return h.RunBuiltin(h.ctx, ScheduleFlowTool, args) }
 
 	found := false
@@ -29,7 +29,7 @@ func TestScheduleFlowTool(t *testing.T) {
 	out, err := call(map[string]any{"flow_id": "notes", "action": "set", "name": "Every morning",
 		"schedule": map[string]any{"mode": "weekly", "time": "09:30", "days": []any{"Monday", "wed"}, "count": 3},
 		"inputs":   map[string]any{"version": 2}})
-	if err != nil || !strings.Contains(out, "Added the schedule every-morning") || !strings.Contains(out, "next: Wed 2026-11-18 09:30") {
+	if err != nil || !strings.Contains(out, "Added the schedule trigger every-morning") || !strings.Contains(out, "next: Wed 2026-11-18 09:30") {
 		t.Fatal(out, err)
 	}
 	f, _ := flow.Load(ws, "notes")
@@ -63,5 +63,19 @@ func TestScheduleFlowTool(t *testing.T) {
 	}
 	if f, _ = flow.Load(ws, "notes"); len(f.Triggers) != 0 {
 		t.Fatal("removed")
+	}
+	// the other kinds: after another flow, when files change
+	echoFlow(t, h, "follow")
+	if out, err = call(map[string]any{"flow_id": "follow", "after": map[string]any{"flow": "notes", "on": []any{"done", "failed"}}, "inputs": map[string]any{"from": "{{trigger.output}}"}}); err != nil || !strings.Contains(out, "after Release notes completes or fails") {
+		t.Fatal(out, err)
+	}
+	if out, err = call(map[string]any{"flow_id": "follow", "action": "set", "kind": "files", "name": "On docs", "files": map[string]any{"paths": []any{"docs/**/*.md"}, "ops": []any{"modified"}}}); err != nil || !strings.Contains(out, "on-docs (On docs, files, on): when docs/**/*.md is modified") {
+		t.Fatal(out, err)
+	}
+	if _, err = call(map[string]any{"flow_id": "follow", "after": map[string]any{"flow": "missing"}}); err == nil {
+		t.Fatal("an unknown flow is refused")
+	}
+	if f, _ = flow.Load(ws, "follow"); len(f.Triggers) != 2 || f.Triggers[0].Kind != "flow" || f.Triggers[1].Files.Ops[0] != "modified" {
+		t.Fatalf("%+v", f.Triggers)
 	}
 }

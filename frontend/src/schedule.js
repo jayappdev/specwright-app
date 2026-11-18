@@ -88,3 +88,23 @@ export function describeSchedule(s) {
   }
   return s.mode || "";
 }
+
+// describeTrigger says any trigger in words (flow.Trigger.Describe)
+export function describeTrigger(t, flowName = (id) => id) {
+  if (t.kind === "schedule") return t.schedule ? describeSchedule(t.schedule) : "";
+  if (t.kind === "flow" && !t.after?.flow) return "after another flow (none chosen yet)";
+  if (t.kind === "flow" && t.after) {
+    const ends = { done: "completes", failed: "fails", stopped: "is stopped" };
+    return `after ${flowName(t.after.flow)} ${(t.after.on?.length ? t.after.on : ["done"]).map((o) => ends[o] || o).join(" or ")}`;
+  }
+  if (t.kind === "files" && t.files) {
+    const ops = t.files.ops || [];
+    return (
+      "when " +
+      (t.files.paths || []).join(", ") +
+      (ops.length && ops.length < 3 ? " is " + ops.join(" or ") : " changes") +
+      (t.files.ignore?.length ? " (not " + t.files.ignore.join(", ") + ")" : "")
+    );
+  }
+  return t.kind || "";
+}

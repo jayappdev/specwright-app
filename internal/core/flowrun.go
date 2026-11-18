@@ -361,8 +361,13 @@ func triggerTag(t *RunTrigger) string {
 	if t == nil {
 		return ""
 	}
-	if t.Kind == "schedule" {
+	switch t.Kind {
+	case "schedule":
 		return "scheduled"
+	case "flow":
+		return "after flow"
+	case "files":
+		return "file change"
 	}
 	return t.Kind
 }

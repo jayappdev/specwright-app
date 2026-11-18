@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"path/filepath"
+	"regexp"
 	"slices"
 	"strings"
 	"time"
@@ -14,14 +16,158 @@ import (
 // the flow (it is in the flow file, set up in the Flow Designer on the
 // Inputs step) and gives the values of the flow's inputs for the runs it
 // starts. The first kind is "schedule"; others (a file change, a webhook)
-// can follow with their own settings.
+// can follow with their own settings. Kinds:
+//
+//   - schedule: at a time, or every so often (Schedule);
+//   - flow: when another flow's run finishes (After), to chain flows;
+//   - files: when files in the project change (Files).
+//
+// A trigger's input values can use what started the run:
+// {{trigger.flow}}, {{trigger.run}}, {{trigger.status}}, {{trigger.output}}
+// and {{trigger.error}} (flow), {{trigger.files}} and {{trigger.file}}
+// (files), and {{trigger.name}} and {{trigger.kind}} (any).
 //
 // Secret values are not in the flow file: they are kept encrypted on the
 // computer that runs the trigger (core/triggers.go), as is the trigger's
 // state (next run, last run, how many runs).
 
 // TriggerKinds are the kinds of trigger.
-var TriggerKinds = []string{"schedule"}
+var TriggerKinds = []string{"schedule", "flow", "files"}
+
+// TriggerVars are the {{trigger.*}} values each kind gives its runs.
+var TriggerVars = map[string][]string{
+	"schedule": {"name", "kind"},
+	"flow":     {"name", "kind", "flow", "run", "status", "output", "error"},
+	"files":    {"name", "kind", "files", "file"},
+}
+
+// AfterFlow: a "flow" trigger starts when a run of Flow ends as On says.
+type AfterFlow struct {
+	Flow string   `json:"flow"`         // the flow's id
+	On   []string `json:"on,omitempty"` // done | failed | stopped (default done)
+}
+
+// AfterOutcomes are how a run can end, for AfterFlow.On.
+var AfterOutcomes = []string{"done", "failed", "stopped"}
+
+// Outcomes: the ends it starts on (default: done).
+func (a AfterFlow) Outcomes() []string {
+	if len(a.On) == 0 {
+		return []string{"done"}
+	}
+	return a.On
+}
+
+// Matches says whether a run that ended with status starts it ("interrupted"
+// counts as stopped).
+func (a AfterFlow) Matches(status string) bool {
+	if status == "interrupted" {
+		status = "stopped"
+	}
+	return slices.Contains(a.Outcomes(), status)
+}
+
+// FileWatch: a "files" trigger starts when files matching Paths (and none
+// of Ignore) change as Ops says, once the changes have been quiet for Wait
+// seconds (a burst of saves starts one run). Patterns are relative to the
+// project: * is any name part, ** any folders, a pattern without / matches
+// a file name in any folder (*.java).
+type FileWatch struct {
+	Paths  []string `json:"paths"`
+	Ignore []string `json:"ignore,omitempty"`
+	Ops    []string `json:"ops,omitempty"`  // created | modified | deleted (default all)
+	Wait   int      `json:"wait,omitempty"` // seconds of quiet before it runs (default DefaultFileWait)
+}
+
+// FileOps are the kinds of file change; DefaultFileWait the default quiet.
+var FileOps = []string{"created", "modified", "deleted"}
+
+const DefaultFileWait = 5
+
+// Quiet is how long the changes must be quiet before a run.
+func (w FileWatch) Quiet() time.Duration {
+	if w.Wait <= 0 {
+		return DefaultFileWait * time.Second
+	}
+	return time.Duration(w.Wait) * time.Second
+}
+
+// Matches says whether a change (path relative to the project, op) counts.
+// SpecWright's own folder (.codegen: flows, run results) never does, so a
+// flow's results do not start it again.
+func (w FileWatch) Matches(p, op string) bool {
+	p = strings.TrimPrefix(filepath.ToSlash(p), "./")
+	if p == ".codegen" || strings.HasPrefix(p, ".codegen/") {
+		return false
+	}
+	if len(w.Ops) > 0 && !slices.Contains(w.Ops, op) {
+		return false
+	}
+	hit := false
+	for _, g := range w.Paths {
+		hit = hit || GlobMatch(g, p)
+	}
+	if !hit {
+		return false
+	}
+	for _, g := range w.Ignore {
+		if GlobMatch(g, p) {
+			return false
+		}
+	}
+	return true
+}
+
+// GlobMatch matches a slash path against a pattern (see FileWatch).
+func GlobMatch(pattern, p string) bool {
+	pattern = strings.TrimPrefix(strings.TrimSpace(filepath.ToSlash(pattern)), "./")
+	if pattern == "" {
+		return false
+	}
+	if strings.HasSuffix(pattern, "/") { // a folder: everything in it
+		pattern += "**"
+	}
+	if !strings.Contains(pattern, "/") {
+		pattern = "**/" + pattern
+	}
+	re, err := globRE(pattern)
+	return err == nil && re.MatchString(p)
+}
+
+func globRE(pattern string) (*regexp.Regexp, error) {
+	var b strings.Builder
+	b.WriteString("^")
+	for i := 0; i < len(pattern); i++ {
+		c := pattern[i]
+		switch {
+		case strings.HasPrefix(pattern[i:], "**/"):
+			b.WriteString("(?:.*/)?")
+			i += 2
+		case strings.HasPrefix(pattern[i:], "**"):
+			b.WriteString(".*")
+			i++
+		case c == '*':
+			b.WriteString("[^/]*")
+		case c == '?':
+			b.WriteString("[^/]")
+		case c == '{':
+			j := strings.IndexByte(pattern[i:], '}')
+			if j < 0 {
+				return nil, fmt.Errorf("%q: a { without }", pattern)
+			}
+			var alts []string
+			for _, a := range strings.Split(pattern[i+1:i+j], ",") {
+				alts = append(alts, regexp.QuoteMeta(a))
+			}
+			b.WriteString("(?:" + strings.Join(alts, "|") + ")")
+			i += j
+		default:
+			b.WriteString(regexp.QuoteMeta(string(c)))
+		}
+	}
+	b.WriteString("$")
+	return regexp.Compile(b.String())
+}
 
 // Trigger is one way a flow starts by itself.
 type Trigger struct {
@@ -29,8 +175,10 @@ type Trigger struct {
 	Kind     string            `json:"kind"` // TriggerKinds
 	Name     string            `json:"name,omitempty"`
 	Enabled  bool              `json:"enabled"`
-	Schedule *Schedule         `json:"schedule,omitempty"`
-	Inputs   map[string]string `json:"inputs,omitempty"` // values for the flow's (non-secret) inputs
+	Schedule *Schedule         `json:"schedule,omitempty"` // kind schedule
+	After    *AfterFlow        `json:"after,omitempty"`    // kind flow
+	Files    *FileWatch        `json:"files,omitempty"`    // kind files
+	Inputs   map[string]string `json:"inputs,omitempty"`   // values for the flow's (non-secret) inputs
 	// CatchUp: a run missed while the app was closed or the computer
 	// asleep runs once when it is back (otherwise the trigger waits for
 	// its next time)
@@ -243,7 +391,9 @@ func (t Trigger) Hash() string {
 		S *Schedule
 		I map[string]string
 		C bool
-	}{t.Schedule, t.Inputs, t.CatchUp})
+		A *AfterFlow `json:",omitempty"`
+		F *FileWatch `json:",omitempty"`
+	}{t.Schedule, t.Inputs, t.CatchUp, t.After, t.Files})
 	h := sha256.Sum256(b)
 	return hex.EncodeToString(h[:8])
 }
@@ -275,6 +425,47 @@ func (f *Flow) checkTriggers(add func(node, level, format string, a ...any)) {
 			}
 			if p := t.Schedule.Check(); p != "" {
 				add("start", "error", "Schedule %s: %s.", name, p)
+			}
+		}
+		if t.Kind == "flow" {
+			switch {
+			case t.After == nil || strings.TrimSpace(t.After.Flow) == "":
+				add("start", "error", "Trigger %s: choose the flow whose runs start this one.", name)
+			case t.After.Flow == f.ID:
+				add("start", "error", "Trigger %s: a flow cannot start after itself (it would run forever).", name)
+			}
+			if t.After != nil {
+				for _, o := range t.After.On {
+					if !slices.Contains(AfterOutcomes, o) {
+						add("start", "error", "Trigger %s: %q is not how a run ends (done, failed, stopped).", name, o)
+					}
+				}
+			}
+		}
+		if t.Kind == "files" {
+			if t.Files == nil || len(t.Files.Paths) == 0 {
+				add("start", "error", "Trigger %s: say which files to watch (e.g. src/**/*.java).", name)
+			} else {
+				for _, g := range append(append([]string{}, t.Files.Paths...), t.Files.Ignore...) {
+					if _, err := globRE(g); err != nil || strings.TrimSpace(g) == "" {
+						add("start", "error", "Trigger %s: %q is not a file pattern.", name, g)
+					}
+				}
+				for _, o := range t.Files.Ops {
+					if !slices.Contains(FileOps, o) {
+						add("start", "error", "Trigger %s: %q is not a file change (created, modified, deleted).", name, o)
+					}
+				}
+				if t.Files.Wait < 0 || t.Files.Wait > 3600 {
+					add("start", "error", "Trigger %s: wait 0 to 3600 seconds.", name)
+				}
+			}
+		}
+		for k, v := range t.Inputs {
+			for _, m := range triggerVarRE.FindAllStringSubmatch(v, -1) {
+				if !slices.Contains(TriggerVars[t.Kind], m[1]) {
+					add("start", "warning", "Trigger %s: {{trigger.%s}} in %q is empty for this kind of trigger (it has %s).", name, m[1], k, strings.Join(TriggerVars[t.Kind], ", "))
+				}
 			}
 		}
 		for k := range t.Inputs {
@@ -310,3 +501,54 @@ func idOK(s string) bool {
 
 // TriggerIDOK says whether s can be a trigger's id.
 func TriggerIDOK(s string) bool { return idOK(s) }
+
+var triggerVarRE = regexp.MustCompile(`\{\{\s*trigger\.([a-z]+)\s*\}\}`)
+
+// FillTriggerVars puts what started a run into a trigger's input values
+// ({{trigger.x}}); a value the run does not have becomes empty.
+func FillTriggerVars(s string, vars map[string]string) string {
+	return triggerVarRE.ReplaceAllStringFunc(s, func(m string) string {
+		return vars[triggerVarRE.FindStringSubmatch(m)[1]]
+	})
+}
+
+// Describe says a trigger in words; flowName names a flow id (for
+// "after" triggers).
+func (t Trigger) Describe(flowName func(id string) string) string {
+	switch t.Kind {
+	case "schedule":
+		if t.Schedule != nil {
+			return t.Schedule.Describe()
+		}
+	case "flow":
+		if t.After == nil || strings.TrimSpace(t.After.Flow) == "" {
+			return "after another flow (none chosen yet)"
+		}
+		if t.After != nil {
+			n := t.After.Flow
+			if flowName != nil {
+				n = flowName(n)
+			}
+			ends := map[string]string{"done": "completes", "failed": "fails", "stopped": "is stopped"}
+			var w []string
+			for _, o := range t.After.Outcomes() {
+				w = append(w, firstNonEmptyStr(ends[o], o))
+			}
+			return fmt.Sprintf("after %s %s", n, strings.Join(w, " or "))
+		}
+	case "files":
+		if t.Files != nil {
+			s := "when " + strings.Join(t.Files.Paths, ", ")
+			if len(t.Files.Ops) > 0 && len(t.Files.Ops) < len(FileOps) {
+				s += " is " + strings.Join(t.Files.Ops, " or ")
+			} else {
+				s += " changes"
+			}
+			if len(t.Files.Ignore) > 0 {
+				s += " (not " + strings.Join(t.Files.Ignore, ", ") + ")"
+			}
+			return s
+		}
+	}
+	return t.Kind
+}

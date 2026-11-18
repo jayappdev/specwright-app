@@ -43,6 +43,7 @@ func (h *Hub) execFlow(ctx context.Context, root string, fr *flowRun) {
 		h.mu.Lock()
 		delete(h.flowRuns, st.ID)
 		h.mu.Unlock()
+		go h.onFlowFinished(root, st) // flows that start after this one (triggers.go)
 	}()
 
 	if !o.StartAt.IsZero() && time.Until(o.StartAt) > 0 {

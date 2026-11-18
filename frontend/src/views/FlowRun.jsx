@@ -4,6 +4,7 @@
 //            the review panel (accept, stop, refine with AI, run a command,
 //            edit, change settings and retry), outputs and activity
 //   sidebar  progress and metrics: steps, elapsed time, tokens, credits, tools
+import { TAG } from "./flows/Triggers.jsx";
 import { dateDefault } from "../dates.js";
 import { useEffect, useState } from "react";
 import { FLOW_STATUS_LABEL as STATUS_LABEL } from "../labels.js";
@@ -451,11 +452,11 @@ export function FlowRun() {
                           className="badge badge-sched"
                           style={{ marginLeft: 6 }}
                           title={
-                            "Started by the schedule " +
-                            (x.triggerName || S.flowRuns[x.id]?.options?.trigger?.name || "")
+                            "Started by " +
+                            (x.triggerName || S.flowRuns[x.id]?.options?.trigger?.name || "a trigger")
                           }
                         >
-                          scheduled
+                          {x.trigger || TAG[S.flowRuns[x.id]?.options?.trigger?.kind] || "trigger"}
                         </span>
                       )}
                     </span>

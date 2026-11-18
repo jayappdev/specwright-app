@@ -195,7 +195,7 @@ export function History() {
                       <span
                         className="badge badge-sched"
                         style={{ marginLeft: 6 }}
-                        title={"Started by " + (r.triggerName || "a schedule")}
+                        title={"Started by " + (r.triggerName || "a trigger")}
                       >
                         {r.trigger}
                       </span>

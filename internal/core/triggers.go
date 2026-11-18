@@ -15,6 +15,14 @@ package core
 // once when it is back if the trigger says so (CatchUp), and is skipped
 // otherwise. A trigger whose previous run is still going skips that time.
 // Its runs are unattended: no review pauses, inputs from the trigger.
+//
+// A "flow" trigger starts when another flow's run ends (onFlowFinished); a
+// chain of such runs carries the flows it went through, so a loop (A → B →
+// A) or a chain longer than maxTriggerChain is refused. A "files" trigger
+// collects the project's file changes that match it (noteFileChanges) and
+// starts one run once they have been quiet for a few seconds; changes
+// while the flow itself is running, and SpecWright's own .codegen folder,
+// do not count, so a flow does not start itself again.
 
 import (
 	"context"
@@ -36,14 +44,20 @@ import (
 
 	"codegen/internal/bus"
 	"codegen/internal/flow"
+	"codegen/internal/watch"
 )
 
 // RunTrigger says what started a run.
 type RunTrigger struct {
-	Kind string `json:"kind"` // schedule
+	Kind string `json:"kind"` // schedule | flow | files
 	ID   string `json:"id"`
 	Name string `json:"name,omitempty"`
+	// Chain: the flows whose runs led to this one ("flow" triggers)
+	Chain []string `json:"chain,omitempty"`
 }
+
+// maxTriggerChain is the most flows one chain of "flow" triggers runs.
+const maxTriggerChain = 5
 
 // TriggerState is what this computer knows about a trigger.
 type TriggerState struct {
@@ -79,6 +93,13 @@ type triggerStore struct {
 	mu   sync.Mutex
 	path string
 	data map[string]*TriggerState // "<flow>/<trigger>" → state
+	// pend: file changes a "files" trigger collected, waiting to be quiet
+	pend map[string]*filePend
+}
+
+type filePend struct {
+	files map[string]bool
+	timer *time.Timer
 }
 
 // triggerTick is how often the scheduler looks (replaceable in tests);
@@ -87,6 +108,8 @@ var (
 	triggerTick  = 15 * time.Second
 	triggerGrace = 2 * time.Minute
 	triggerNow   = time.Now
+	// triggerQuiet is how long a files trigger waits for quiet (tests shorten it)
+	triggerQuiet = func(w flow.FileWatch) time.Duration { return w.Quiet() }
 )
 
 func (h *Hub) triggers(root string) *triggerStore {
@@ -114,6 +137,15 @@ func (ts *triggerStore) get(key string) *TriggerState {
 	}
 	s := &TriggerState{}
 	ts.data[key] = s
+	return s
+}
+
+// current is a trigger's state, started again when its settings changed.
+func (ts *triggerStore) current(key string, t flow.Trigger, now time.Time) *TriggerState {
+	s := ts.get(key)
+	if s.Hash != t.Hash() {
+		*s = TriggerState{Hash: t.Hash(), Since: now, Secrets: s.Secrets}
+	}
 	return s
 }
 
@@ -250,8 +282,13 @@ func (h *Hub) triggerView(root string, f *flow.Flow, t flow.Trigger, st TriggerS
 	}
 	sort.Strings(v.SecretsSaved)
 	v.State.Secrets = nil // names only leave the backend
-	if t.Schedule != nil {
-		v.Describe = t.Schedule.Describe()
+	v.Describe = t.Describe(func(id string) string {
+		if g, err := flow.Load(root, id); err == nil {
+			return g.Name
+		}
+		return id
+	})
+	if t.Kind == "schedule" && t.Schedule != nil {
 		if !st.Done {
 			from := st.Since
 			if from.IsZero() {
@@ -374,14 +411,15 @@ func (h *Hub) RunTriggerNow(flowID, triggerID string) (FlowRunState, error) {
 	}
 	for _, t := range f.Triggers {
 		if t.ID == triggerID {
-			return h.fireTrigger(root, f, t, "run now")
+			return h.fireTrigger(root, f, t, "run now", nil, nil)
 		}
 	}
 	return FlowRunState{}, fmt.Errorf("the flow %s has no trigger %s", flowID, triggerID)
 }
 
-// fireTrigger starts a run of f for trigger t.
-func (h *Hub) fireTrigger(root string, f *flow.Flow, t flow.Trigger, why string) (FlowRunState, error) {
+// fireTrigger starts a run of f for trigger t; vars are what started it
+// ({{trigger.x}} in its input values), chain the flows that led to it.
+func (h *Hub) fireTrigger(root string, f *flow.Flow, t flow.Trigger, why string, vars map[string]string, chain []string) (FlowRunState, error) {
 	ts := h.triggers(root)
 	key := trigKey(f.ID, t.ID)
 	ts.mu.Lock()
@@ -391,9 +429,13 @@ func (h *Hub) fireTrigger(root string, f *flow.Flow, t flow.Trigger, why string)
 		sealed[k] = v
 	}
 	ts.mu.Unlock()
-	o := FlowRunOptions{Inputs: map[string]string{}, Review: "none", Trigger: &RunTrigger{Kind: t.Kind, ID: t.ID, Name: firstNonEmpty(t.Name, t.ID)}}
+	o := FlowRunOptions{Inputs: map[string]string{}, Review: "none", Trigger: &RunTrigger{Kind: t.Kind, ID: t.ID, Name: firstNonEmpty(t.Name, t.ID), Chain: chain}}
+	all := map[string]string{"name": firstNonEmpty(t.Name, t.ID), "kind": t.Kind}
+	for k, v := range vars {
+		all[k] = v
+	}
 	for k, v := range t.Inputs {
-		o.Inputs[k] = v
+		o.Inputs[k] = flow.FillTriggerVars(v, all)
 	}
 	if len(sealed) > 0 {
 		k, _, err := h.triggerKey()
@@ -476,7 +518,14 @@ func (h *Hub) checkTriggers(root string) {
 			continue
 		}
 		for _, t := range f.Triggers {
-			if t.Kind != "schedule" || t.Schedule == nil || t.Schedule.Check() != "" {
+			if t.Kind != "schedule" { // flow and files triggers: only how their last run went
+				s := ts.current(trigKey(f.ID, t.ID), t, now)
+				if h.refreshLast(s) {
+					changed = true
+				}
+				continue
+			}
+			if t.Schedule == nil || t.Schedule.Check() != "" {
 				continue
 			}
 			s := ts.get(trigKey(f.ID, t.ID))
@@ -489,12 +538,8 @@ func (h *Hub) checkTriggers(root string) {
 			if !t.Enabled || s.Done {
 				continue
 			}
-			// the last run: how it went
-			if s.LastRunID != "" && s.LastStatus == "running" {
-				if st, err := h.FlowRun(s.LastRunID); err == nil && !slicesContains(flowLive, st.Status) {
-					s.LastStatus, s.LastError = st.Status, st.Error
-					changed = true
-				}
+			if h.refreshLast(s) {
+				changed = true
 			}
 			if s.NextRun.IsZero() || now.Before(s.NextRun) {
 				continue
@@ -533,7 +578,7 @@ func (h *Hub) checkTriggers(root string) {
 	}
 	ts.mu.Unlock()
 	for _, d := range fire {
-		_, _ = h.fireTrigger(root, d.f, d.t, d.why)
+		_, _ = h.fireTrigger(root, d.f, d.t, d.why, nil, nil)
 	}
 }
 
@@ -546,4 +591,198 @@ func slicesContains(list []string, s string) bool {
 		}
 	}
 	return false
+}
+
+// refreshLast notes how a trigger's last run went once it has ended.
+func (h *Hub) refreshLast(s *TriggerState) bool {
+	if s.LastRunID == "" || s.LastStatus != "running" {
+		return false
+	}
+	st, err := h.FlowRun(s.LastRunID)
+	if err != nil || slicesContains(flowLive, st.Status) {
+		return false
+	}
+	s.LastStatus, s.LastError = st.Status, st.Error
+	return true
+}
+
+// flowRunning says whether a run of the flow is going (or waiting to start).
+func (h *Hub) flowRunning(flowID string) bool {
+	h.mu.RLock()
+	var runs []*flowRun
+	for _, fr := range h.flowRuns {
+		runs = append(runs, fr)
+	}
+	h.mu.RUnlock()
+	for _, fr := range runs {
+		if st := fr.snapshot(); st.FlowID == flowID && st.Trial == nil && slicesContains(flowLive, st.Status) {
+			return true
+		}
+	}
+	return false
+}
+
+func (h *Hub) rootIs(root string) bool {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+	return h.root == root
+}
+
+// --- after another flow ------------------------------------------------------------
+
+// onFlowFinished starts the flows whose "flow" triggers follow run.
+func (h *Hub) onFlowFinished(root string, run FlowRunState) {
+	if run.Trial != nil || !h.rootIs(root) {
+		return
+	}
+	list, err := flow.List(root)
+	if err != nil {
+		return
+	}
+	var chain []string
+	if run.Options.Trigger != nil {
+		chain = append(chain, run.Options.Trigger.Chain...)
+	}
+	chain = append(chain, run.FlowID)
+	output := ""
+	for _, o := range run.Outputs {
+		if strings.TrimSpace(o.Content) != "" {
+			output = o.Content
+			break
+		}
+	}
+	vars := map[string]string{"flow": run.FlowID, "run": run.ID, "status": run.Status, "output": trunc(output, 20000), "error": run.Error}
+	ts := h.triggers(root)
+	for _, sum := range list {
+		f, err := flow.Load(root, sum.ID)
+		if err != nil {
+			continue
+		}
+		for _, t := range f.Triggers {
+			if t.Kind != "flow" || !t.Enabled || t.After == nil || t.After.Flow != run.FlowID || !t.After.Matches(run.Status) {
+				continue
+			}
+			now := triggerNow()
+			skip := ""
+			switch {
+			case slicesContains(chain, f.ID):
+				skip = fmt.Sprintf("skipped at %s: it would loop (%s → %s)", now.Format("Jan 2 15:04"), strings.Join(chain, " → "), f.ID)
+			case len(chain) >= maxTriggerChain:
+				skip = fmt.Sprintf("skipped at %s: a chain runs at most %d flows (%s)", now.Format("Jan 2 15:04"), maxTriggerChain, strings.Join(chain, " → "))
+			case h.flowRunning(f.ID):
+				skip = fmt.Sprintf("skipped at %s: a run of this flow was still going", now.Format("Jan 2 15:04"))
+			}
+			if skip != "" {
+				ts.mu.Lock()
+				ts.current(trigKey(f.ID, t.ID), t, now).LastError = skip
+				_ = ts.save()
+				ts.mu.Unlock()
+				continue
+			}
+			ts.mu.Lock()
+			ts.current(trigKey(f.ID, t.ID), t, now)
+			ts.mu.Unlock()
+			_, _ = h.fireTrigger(root, f, t, fmt.Sprintf("after %s: %s", firstNonEmpty(run.FlowName, run.FlowID), run.Status), vars, chain)
+		}
+	}
+}
+
+// --- when files change -------------------------------------------------------------
+
+// noteFileChanges collects the project's file changes (those no step run
+// made) for the "files" triggers they match.
+func (h *Hub) noteFileChanges(root string, chs []watch.Change) {
+	if len(chs) == 0 || !h.rootIs(root) {
+		return
+	}
+	list, err := flow.List(root)
+	if err != nil {
+		return
+	}
+	ts := h.triggers(root)
+	for _, sum := range list {
+		f, err := flow.Load(root, sum.ID)
+		if err != nil {
+			continue
+		}
+		for _, t := range f.Triggers {
+			if t.Kind != "files" || !t.Enabled || t.Files == nil {
+				continue
+			}
+			var hit []string
+			for _, c := range chs {
+				if t.Files.Matches(c.Path, c.Op) {
+					hit = append(hit, c.Path)
+				}
+			}
+			if len(hit) == 0 || h.flowRunning(f.ID) { // changes while it runs are likely its own
+				continue
+			}
+			key, fid, tid, quiet := trigKey(f.ID, t.ID), f.ID, t.ID, triggerQuiet(*t.Files)
+			ts.mu.Lock()
+			if ts.pend == nil {
+				ts.pend = map[string]*filePend{}
+			}
+			p := ts.pend[key]
+			if p == nil {
+				p = &filePend{files: map[string]bool{}}
+				ts.pend[key] = p
+				p.timer = time.AfterFunc(quiet, func() { h.fireFiles(root, fid, tid) })
+			} else {
+				p.timer.Reset(quiet)
+			}
+			for _, x := range hit {
+				p.files[x] = true
+			}
+			ts.mu.Unlock()
+		}
+	}
+}
+
+// fireFiles starts a files trigger's run with the changes it collected.
+func (h *Hub) fireFiles(root, flowID, trigID string) {
+	if !h.rootIs(root) {
+		return
+	}
+	ts := h.triggers(root)
+	key := trigKey(flowID, trigID)
+	f, err := flow.Load(root, flowID)
+	var t *flow.Trigger
+	if err == nil {
+		for i := range f.Triggers {
+			if f.Triggers[i].ID == trigID {
+				t = &f.Triggers[i]
+			}
+		}
+	}
+	ts.mu.Lock()
+	p := ts.pend[key]
+	if p == nil {
+		ts.mu.Unlock()
+		return
+	}
+	if t == nil || !t.Enabled || t.Kind != "files" || t.Files == nil {
+		delete(ts.pend, key) // removed or turned off meanwhile
+		ts.mu.Unlock()
+		return
+	}
+	if h.flowRunning(flowID) { // wait for the run to end, then try again
+		p.timer.Reset(triggerQuiet(*t.Files))
+		ts.mu.Unlock()
+		return
+	}
+	delete(ts.pend, key)
+	ts.current(key, *t, triggerNow())
+	ts.mu.Unlock()
+	var files []string
+	for x := range p.files {
+		files = append(files, x)
+	}
+	sort.Strings(files)
+	shown := files
+	if len(shown) > 200 {
+		shown = append(append([]string{}, files[:200]...), fmt.Sprintf("… and %d more", len(files)-200))
+	}
+	vars := map[string]string{"files": strings.Join(shown, "\n"), "file": files[0]}
+	_, _ = h.fireTrigger(root, f, *t, fmt.Sprintf("%d file(s) changed", len(files)), vars, nil)
 }

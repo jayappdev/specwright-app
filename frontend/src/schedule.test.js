@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { checkSchedule, nextRun, upcoming, describeSchedule } from "./schedule.js";
+import { checkSchedule, nextRun, upcoming, describeSchedule, describeTrigger } from "./schedule.js";
 
 const at = (y, mo, d, h = 0, m = 0) => new Date(y, mo - 1, d, h, m);
 
@@ -37,5 +37,16 @@ describe("schedule", () => {
     expect(describeSchedule({ mode: "daily", time: "09:00", count: 1 })).toBe(
       "daily at 09:00, 1 run at most",
     );
+  });
+  it("describes the other kinds", () => {
+    expect(describeTrigger({ kind: "flow", after: { flow: "a", on: ["done", "failed"] } }, () => "A")).toBe(
+      "after A completes or fails",
+    );
+    expect(
+      describeTrigger({
+        kind: "files",
+        files: { paths: ["docs/**/*.md"], ops: ["modified"], ignore: ["draft-*"] },
+      }),
+    ).toBe("when docs/**/*.md is modified (not draft-*)");
   });
 });

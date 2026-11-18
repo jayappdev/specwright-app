@@ -389,14 +389,18 @@ func (h *Hub) onFiles(chs []watch.Change) {
 	h.mu.RLock()
 	r := h.runner
 	h.mu.RUnlock()
-	n := 0
+	var free []watch.Change // changes no step run made
 	for _, c := range chs {
 		if r != nil && r.FileChanged(c) {
 			continue
 		}
-		n++
+		free = append(free, c)
 	}
-	h.Bus.Publish(bus.Event{Type: "workspace.files", Summary: fmt.Sprintf("%d file(s) changed", len(chs)), Data: map[string]any{"changes": chs, "unattributed": n}})
+	h.Bus.Publish(bus.Event{Type: "workspace.files", Summary: fmt.Sprintf("%d file(s) changed", len(chs)), Data: map[string]any{"changes": chs, "unattributed": len(free)}})
+	h.mu.RLock()
+	root := h.root
+	h.mu.RUnlock()
+	h.noteFileChanges(root, free) // "files" triggers (triggers.go)
 }
 
 // SaveProfile stores the wizard profile.

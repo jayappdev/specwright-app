@@ -4,7 +4,7 @@
 
 import { resolveDate, dateDefault } from "./dates.js";
 import { inferParams, checkArgs } from "./toolParams.js";
-import { checkSchedule, upcoming, describeSchedule } from "./schedule.js";
+import { checkSchedule, upcoming, describeSchedule, describeTrigger } from "./schedule.js";
 import { stepNames, isStepField, isLoopField, applyStepIDs } from "./flowNames.js";
 import { shapes as flowShapes, parseSchema, checkPaths, sampleOf, toolOutput } from "./schema.js";
 import {
@@ -3802,7 +3802,9 @@ export function createMockBackend(methods) {
       title: f.name + (o.trial ? " (trial)" : ""),
       ...(o.trigger
         ? {
-            trigger: o.trigger.kind === "schedule" ? "scheduled" : o.trigger.kind,
+            trigger:
+              { schedule: "scheduled", flow: "after flow", files: "file change" }[o.trigger.kind] ||
+              o.trigger.kind,
             triggerName: o.trigger.name,
           }
         : {}),
@@ -4775,8 +4777,71 @@ export function createMockBackend(methods) {
       flowLive.delete(id);
       persist();
       setTimeout(() => writeResults(id), 150);
+      if (!o.trial) setTimeout(() => afterFlow(f, st, o), 200);
     })();
     return clone(st);
+  };
+  // triggers (core/triggers.go): start a run for a trigger, with what started it
+  const fireTrigger = (f, t, why, vars, chain) => {
+    const st = ((db.trig ||= {})[f.id + "/" + t.id] ||= { runs: 0, missed: 0, since: now() });
+    const all = { name: t.name || t.id, kind: t.kind, ...vars };
+    const inputs = Object.fromEntries(
+      Object.entries(t.inputs || {}).map(([k, v]) => [
+        k,
+        String(v).replace(/\{\{\s*trigger\.([a-z]+)\s*\}\}/g, (_, x) => all[x] ?? ""),
+      ]),
+    );
+    const run = startFlowRun(f, {
+      inputs,
+      review: "none",
+      trigger: { kind: t.kind, id: t.id, name: t.name || t.id, chain },
+    });
+    Object.assign(st, {
+      runs: (st.runs || 0) + 1,
+      lastRun: now(),
+      lastRunId: run.id,
+      lastStatus: "running",
+      lastError: "",
+    });
+    persist();
+    setTimeout(
+      () =>
+        emit({
+          type: "trigger.fired",
+          summary: `${f.name}: ${t.name || t.id} (${why})`,
+          flow: f.id,
+          trigger: t.id,
+          run: run.id,
+        }),
+      50,
+    );
+    return run;
+  };
+  // a flow's run ended: the flows that start after it (loops and long chains refused)
+  const afterFlow = (f, run, o) => {
+    const chain = [...(o.trigger?.chain || []), f.id];
+    const status = run.status === "interrupted" ? "stopped" : run.status;
+    const output = (run.outputs || []).find((x) => String(x.content || "").trim())?.content || "";
+    for (const g of Object.values(db.flows))
+      for (const t of g.triggers || []) {
+        if (t.kind !== "flow" || !t.enabled || t.after?.flow !== f.id) continue;
+        if (!(t.after.on?.length ? t.after.on : ["done"]).includes(status)) continue;
+        const st = ((db.trig ||= {})[g.id + "/" + t.id] ||= { runs: 0, missed: 0, since: now() });
+        if (chain.includes(g.id) || chain.length >= 5) {
+          st.lastError = chain.includes(g.id)
+            ? `skipped: it would loop (${chain.join(" → ")} → ${g.id})`
+            : `skipped: a chain runs at most 5 flows (${chain.join(" → ")})`;
+          persist();
+          continue;
+        }
+        fireTrigger(
+          g,
+          t,
+          `after ${f.name}: ${status}`,
+          { flow: f.id, run: run.id, status, output, error: run.error || "" },
+          chain,
+        );
+      }
   };
   const blobs = new Map(); // attachments, kept in memory for previews
   const runSecrets = new WeakMap(); // run options → secret input values (like FlowRunOptions.Secrets: never in the state)
@@ -6487,7 +6552,7 @@ export function createMockBackend(methods) {
           const key = f.id + "/" + t.id,
             st = ((db.trig ||= {})[key] ||= { runs: 0, missed: 0, since: now() });
           const s = t.schedule || {};
-          const ok = !checkSchedule(s);
+          const ok = t.kind === "schedule" && !checkSchedule(s);
           const up = ok ? upcoming(s, new Date(), new Date(st.since), 3, st.runs || 0) : [];
           out.push({
             flowId: f.id,
@@ -6498,8 +6563,14 @@ export function createMockBackend(methods) {
               secrets: undefined,
               nextRun: up[0] ? up[0].toISOString() : "",
               done: ok && !up.length,
+              lastStatus: db.runs.find((r) => r.id === st.lastRunId)?.state || st.lastStatus,
             },
-            describe: ok ? describeSchedule(s) : "",
+            describe:
+              t.kind === "schedule"
+                ? ok
+                  ? describeSchedule(s)
+                  : ""
+                : describeTrigger(t, (id) => db.flows[id]?.name || id),
             upcoming: up.map((d) => d.toISOString()),
             secretsNeeded: (f.inputs || []).filter((i) => i.type === "secret").map((i) => i.name),
             secretsSaved: Object.keys(st.secrets || {}),
@@ -6528,31 +6599,7 @@ export function createMockBackend(methods) {
       const f = db.flows[flowID],
         t = (f?.triggers || []).find((x) => x.id === triggerID);
       if (!t) throw new Error(`the flow ${flowID} has no trigger ${triggerID}`);
-      const st = ((db.trig ||= {})[flowID + "/" + triggerID] ||= { runs: 0, missed: 0, since: now() });
-      const run = startFlowRun(f, {
-        inputs: { ...(t.inputs || {}) },
-        review: "none",
-        trigger: { kind: t.kind, id: t.id, name: t.name || t.id },
-      });
-      Object.assign(st, {
-        runs: (st.runs || 0) + 1,
-        lastRun: now(),
-        lastRunId: run.id,
-        lastStatus: "running",
-      });
-      persist();
-      setTimeout(
-        () =>
-          emit({
-            type: "trigger.fired",
-            summary: `${f.name}: ${t.name || t.id} (run now)`,
-            flow: f.id,
-            trigger: t.id,
-            run: run.id,
-          }),
-        50,
-      );
-      return run;
+      return fireTrigger(f, t, "run now", {}, []);
     },
     async FlowRuns(limit) {
       return clone(

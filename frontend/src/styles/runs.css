@@ -2989,6 +2989,19 @@ select.fl-secret-pick {
 .fl-trigger.off {
   opacity: 0.7;
 }
+/* the cards fit a narrow inspector: their column shrinks, button rows wrap */
+.fl-triggers,
+.fl-trigger {
+  grid-template-columns: minmax(0, 1fr);
+}
+.fl-trigger .seg,
+.fl-triggers > .row-actions {
+  flex-wrap: wrap;
+}
+.fl-trigger textarea,
+.fl-trigger select {
+  max-width: 100%;
+}
 .fl-trigger-head {
   display: flex;
   gap: 8px;

@@ -429,7 +429,7 @@ export function onHubEvent(e) {
           at: Date.now(),
         });
       break;
-    case "trigger.fired": // a schedule started a run: Run flows and History list it
+    case "trigger.fired": // a trigger started a run: Run flows and History list it
       if (S.frun)
         backend
           .FlowRuns(100)

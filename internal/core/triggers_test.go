@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -14,11 +15,13 @@ import (
 
 func TestScheduleTrigger(t *testing.T) {
 	stubKeychain(t)
-	h, ws := flowHub(t)
 	clock := time.Date(2026, 11, 18, 9, 0, 0, 0, time.Local)
 	old := triggerNow
-	triggerNow = func() time.Time { return clock }
+	var clockMu sync.Mutex // the scheduler goroutine reads the clock too
+	triggerNow = func() time.Time { clockMu.Lock(); defer clockMu.Unlock(); return clock }
+	setClock := func(c time.Time) { clockMu.Lock(); clock = c; clockMu.Unlock() }
 	t.Cleanup(func() { triggerNow = old })
+	h, ws := flowHub(t) // after the fake clock: the scheduler goroutine reads it
 
 	f, _ := flow.Load(ws, "notes")
 	f.Inputs = append(f.Inputs, flow.Input{Name: "token", Label: "Token", Type: "secret"})
@@ -53,7 +56,7 @@ func TestScheduleTrigger(t *testing.T) {
 		t.Fatal("encrypted values do not leave the backend")
 	}
 	// due: it runs, tagged scheduled, with the trigger's inputs and secret
-	clock = clock.Add(time.Hour + 5*time.Second)
+	setClock(clock.Add(time.Hour + 5*time.Second))
 	h.checkTriggers(ws)
 	v, _ = h.FlowTriggers("notes")
 	runID := v[0].State.LastRunID
@@ -76,7 +79,7 @@ func TestScheduleTrigger(t *testing.T) {
 	}
 
 	// asleep for three hours, no catch-up: the missed time is skipped
-	clock = clock.Add(3 * time.Hour)
+	setClock(clock.Add(3 * time.Hour))
 	h.checkTriggers(ws)
 	v, _ = h.FlowTriggers("notes")
 	if v[0].State.Missed != 1 || v[0].State.Runs != 1 || !strings.Contains(v[0].State.LastError, "missed") {
@@ -98,7 +101,7 @@ func TestScheduleTrigger(t *testing.T) {
 		t.Fatal(err)
 	}
 	h2.ApproveExtension("echo-arg")
-	clock = v[0].State.NextRun.Add(10 * time.Second)
+	setClock(v[0].State.NextRun.Add(10 * time.Second))
 	h2.checkTriggers(ws)
 	v, _ = h2.FlowTriggers("notes")
 	if v[0].State.Runs != 2 || !v[0].State.Done || len(v[0].Upcoming) != 0 {
@@ -113,7 +116,7 @@ func TestScheduleTrigger(t *testing.T) {
 	h2.SaveFlow(*f)
 	h2.checkTriggers(ws) // new settings: starts again
 	v, _ = h2.FlowTriggers("notes")
-	clock = v[0].State.NextRun.Add(5 * time.Hour)
+	setClock(v[0].State.NextRun.Add(5 * time.Hour))
 	h2.checkTriggers(ws)
 	v, _ = h2.FlowTriggers("notes")
 	if v[0].State.Runs != 1 || v[0].State.Missed != 0 {
