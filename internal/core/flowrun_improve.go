@@ -69,6 +69,7 @@ type improvePair struct {
 	file       string // the result's file in the results folder
 	history    []ImproveRound
 	feedback   string // a person's feedback, for the next round
+	judged     bool   // the judge's reason was kept as a lesson in this run
 }
 
 func (h *Hub) runImprove(ctx context.Context, root string, fr *flowRun, n *flow.Node, d flow.Data, parents int) (string, store.Usage, error) {
@@ -158,6 +159,10 @@ func (h *Hub) runImprove(ctx context.Context, root string, fr *flowRun, n *flow.
 		}
 		changes := p.changes(v)
 		rec := ImproveRound{Round: round, By: "ai", Done: v.Done, Reason: clipText(v.Reason, 600), File: p.file}
+		if !v.Done && !p.judged && feedback == "" { // the judge's first "not yet" in this run (lessons.go)
+			p.judged = true
+			h.learnFromJudge(fr, n.ID, v.Reason)
+		}
 		if !v.Done {
 			rec.Changes = changes
 		}
@@ -189,6 +194,7 @@ func (h *Hub) runImprove(ctx context.Context, root string, fr *flowRun, n *flow.
 				h.improveNote(fr, n.ID, fmt.Sprintf("Approved by you after round %d", round))
 				return final, u, nil
 			case "edit":
+				h.learnFromEdit(fr, n.ID, final, dec.Output) // a small correction is a lesson (lessons.go)
 				h.improveNote(fr, n.ID, fmt.Sprintf("Edited by you after round %d", round))
 				return dec.Output, u, nil
 			case "stop":

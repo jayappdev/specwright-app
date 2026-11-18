@@ -48,6 +48,7 @@ func (h *Hub) reviewStep(ctx context.Context, root string, fr *flowRun, n *flow.
 			h.flowPublish(fr, "gate.rejected", "Stopped at "+firstNonEmpty(n.Title, n.ID), map[string]any{"_step": n.ID})
 			return "", errFlowStopped
 		case "edit":
+			h.learnFromEdit(fr, n.ID, out, dec.Output) // a small correction is a lesson (lessons.go)
 			out = dec.Output
 			note = "Edited by hand"
 		case "refine":

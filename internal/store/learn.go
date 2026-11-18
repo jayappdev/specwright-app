@@ -383,3 +383,15 @@ func (s *Store) Dequeue(id int64) error {
 	_, err := s.db.Exec(`DELETE FROM trigger_queue WHERE id=?`, id)
 	return err
 }
+
+// PruneLessons keeps only the newest keep lessons of one source for a step
+// (lessons a person typed are never pruned by callers; learned ones are).
+func (s *Store) PruneLessons(workspace, flow, step, source string, keep int) error {
+	if s.db == nil {
+		return ErrNoDB
+	}
+	_, err := s.db.Exec(`DELETE FROM lessons WHERE workspace=? AND flow=? AND step=? AND source=? AND id NOT IN
+		(SELECT id FROM lessons WHERE workspace=? AND flow=? AND step=? AND source=? ORDER BY created DESC, id DESC LIMIT ?)`,
+		workspace, flow, step, source, workspace, flow, step, source, keep)
+	return err
+}

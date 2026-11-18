@@ -9,7 +9,13 @@ import { toast, errMsg } from "../../store.js";
 import { fl } from "../Flows.jsx";
 import { ago } from "../../time.js";
 
-const FROM = { refine: "from a Refine review", improve: "from an Improve review", manual: "added by hand" };
+const FROM = {
+  refine: "from a Refine review",
+  improve: "from an Improve review",
+  edit: "from your edit of its result",
+  judge: "from the AI judge",
+  manual: "added by hand",
+};
 
 export function LessonsEditor({ n }) {
   const flow = fl().flow;
@@ -43,8 +49,10 @@ export function LessonsEditor({ n }) {
         </span>
       </summary>
       <p className="muted fl-help">
-        When you ask for changes while reviewing this step, the request is kept here and added to its prompt
-        in later runs (the newest 8 that are on). Kept on this computer, not in the flow file.
+        When you ask for changes while reviewing this step, or correct its result by hand, it is kept here and
+        added to its prompt in later runs; so is the AI judge&apos;s first &quot;not good enough&quot; in an
+        Improve step. Small on purpose: up to 8 that are on, about 1,500 characters in all, yours first; each
+        step keeps the newest 3 of each learned kind. Kept on this computer, not in the flow file.
       </p>
       {list.map((l) => (
         <div key={l.id} className={"fl-lesson" + (l.off ? " off" : "")}>
