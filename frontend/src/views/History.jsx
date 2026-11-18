@@ -3,7 +3,7 @@ import { RUN_KIND, runKind } from "../labels.js";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, fmtK } from "../store.js";
-import { Pill, RefreshButton } from "../ui.jsx";
+import { Pill, RefreshButton, usePoll } from "../ui.jsx";
 import { RunPanel } from "../components/RunPanel.jsx";
 import { Icon } from "../ui.jsx";
 import { continueInPlayground } from "./Playground.jsx";
@@ -103,6 +103,9 @@ function useReplayKeys(evCount) {
 
 // loadRuns reads the run list again (and the open run's events, which grow
 // while it runs); it is also the list's Refresh button.
+// how often the list refreshes by itself (seconds)
+const HISTORY_POLL = 30;
+
 export async function loadRuns(again) {
   const h = S.history;
   try {
@@ -125,6 +128,7 @@ export function History() {
     loadRuns();
     return stop;
   }, [S.ws?.root]);
+  usePoll(() => loadRuns(), HISTORY_POLL * 1000, [S.ws?.root]);
   const run = h.runs.find((r) => r.id === h.sel),
     evs = S.events[h.sel] || [];
   useReplayKeys(evs.length);
@@ -134,7 +138,12 @@ export function History() {
       <Pane k="history" v="--pane-l" pane=".ftree" min={220} max={560} label="Resize the run list" />
       <nav className="ftree" aria-label="Run history">
         <h1 className="list-head" style={{ padding: "0 14px 8px" }}>
-          History <RefreshButton label="Refresh the run history" onRefresh={() => loadRuns(true)} />
+          History{" "}
+          <RefreshButton
+            label="Refresh the run history"
+            every={HISTORY_POLL}
+            onRefresh={() => loadRuns(true)}
+          />
         </h1>
         {!h.runs.length && (
           <div className="empty-mini">

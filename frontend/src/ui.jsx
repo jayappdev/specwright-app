@@ -209,15 +209,44 @@ export function Chip({ on, onClick, children }) {
   );
 }
 
+// usePoll calls load every `ms` while the screen is shown and the window is
+// in front, and once when the window comes back to the front (runs a
+// schedule started meanwhile show up without pressing Refresh).
+export function usePoll(load, ms, deps = []) {
+  const fn = useRef(load);
+  fn.current = load;
+  useEffect(() => {
+    let busy = false;
+    const tick = async () => {
+      if (busy || document.hidden) return;
+      busy = true;
+      try {
+        await fn.current();
+      } catch {
+        /* the next tick tries again */
+      } finally {
+        busy = false;
+      }
+    };
+    const id = setInterval(tick, ms);
+    const shown = () => !document.hidden && tick();
+    document.addEventListener("visibilitychange", shown);
+    return () => {
+      clearInterval(id);
+      document.removeEventListener("visibilitychange", shown);
+    };
+  }, [ms, ...deps]);
+}
+
 // RefreshButton reloads a list; it turns while the load runs.
-export function RefreshButton({ onRefresh, label = "Refresh" }) {
+export function RefreshButton({ onRefresh, label = "Refresh", every }) {
   const [busy, setBusy] = useState(false);
   return (
     <button
       type="button"
       className={"icon-btn refresh-btn" + (busy ? " busy" : "")}
       aria-label={label}
-      title={label}
+      title={label + (every ? ` (it also refreshes by itself every ${every} s)` : "")}
       disabled={busy}
       onClick={async () => {
         setBusy(true);

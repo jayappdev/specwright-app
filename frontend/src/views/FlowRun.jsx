@@ -10,7 +10,7 @@ import { FLOW_STATUS_LABEL as STATUS_LABEL } from "../labels.js";
 export { STATUS_LABEL };
 import { backend } from "../backend.js";
 import { openFlowGuide } from "./FlowGuide.jsx";
-import { EmptyState, RefreshButton } from "../ui.jsx";
+import { EmptyState, RefreshButton, usePoll } from "../ui.jsx";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, isCopilot, refreshExtensions } from "../store.js";
 import { Icon, Pill } from "../ui.jsx";
@@ -66,6 +66,9 @@ export function openFlowRunner(id) {
   loadFlow(id);
   update();
 }
+
+// how often the list refreshes by itself (seconds)
+const FLOWRUN_POLL = 30;
 
 async function loadAll() {
   const r = frs();
@@ -372,6 +375,7 @@ export function FlowRun() {
       refreshExtensions();
     }
   }, [S.ws?.root]);
+  usePoll(() => S.ws && loadAll(), FLOWRUN_POLL * 1000, [S.ws?.root]);
   if (!S.ws) return <NeedWorkspace what="the flow runner" />;
   const st = r.runId ? S.flowRuns[r.runId] : null;
   const runsOf = (id) => r.runs.filter((x) => x.workflow === id).slice(0, 6);
@@ -391,7 +395,12 @@ export function FlowRun() {
       )}
       <nav className="ftree" aria-label="Flows and runs">
         <h1 className="list-head" style={{ padding: "0 8px 8px" }}>
-          Run flows <RefreshButton label="Refresh the flows, their runs and schedules" onRefresh={loadAll} />
+          Run flows{" "}
+          <RefreshButton
+            label="Refresh the flows, their runs and schedules"
+            every={FLOWRUN_POLL}
+            onRefresh={loadAll}
+          />
         </h1>
         {(r.flows || []).map((f) => (
           <div key={f.id} className="fr-flow">
