@@ -1,3 +1,4 @@
+import { ToolTester } from "./tools/ToolTester.jsx";
 import { useEffect } from "react";
 import { ShareMenu, exportTools } from "./tools/Share.jsx";
 import { backend } from "../backend.js";
@@ -40,10 +41,29 @@ const TEST_PHASES = [
   "Checking the result",
 ];
 
+// the kinds of parameter the Review table offers: type | format
+const PARAM_KINDS = [
+  ["string|", "text"],
+  ["string|multiline", "long text"],
+  ["string|path", "file path"],
+  ["string|directory", "folder"],
+  ["string|url", "URL"],
+  ["string|date", "date"],
+  ["string|date-time", "date and time"],
+  ["string|email", "email"],
+  ["string|password", "password"],
+  ["integer|", "whole number"],
+  ["number|", "number"],
+  ["boolean|", "yes / no"],
+  ["json|", "JSON"],
+  ["object|", "JSON object"],
+  ["array|", "JSON list"],
+];
+
 const STAGES = [
   ["describe", "Describe"],
   ["review", "Review"],
-  ["test", "Test with AI"],
+  ["test", "Test"],
   ["save", "Save"],
 ];
 const CONNECTS = [
@@ -202,6 +222,7 @@ async function generate(refining) {
     tb.draft = d;
     tb.refine = "";
     tb.test = null;
+    tb.direct = false;
     tb.stage = "review";
     if (!refining) tb.testPrompt = d.sampleTest || d.testPrompt || "";
     refreshSecrets();
@@ -335,6 +356,32 @@ async function saveTool() {
   }
 }
 
+// TestTabs: test a tool directly with arguments, or have the AI use it.
+function TestTabs({ tb }) {
+  const tab = tb.testTab || "args";
+  return (
+    <div className="tabs" role="tablist" aria-label="How to test">
+      {[
+        ["args", "Run with arguments"],
+        ["ai", "Test with AI"],
+      ].map(([k, l]) => (
+        <button
+          key={k}
+          role="tab"
+          className="tab"
+          aria-selected={tab === k}
+          onClick={() => {
+            tb.testTab = k;
+            update();
+          }}
+        >
+          {l}
+        </button>
+      ))}
+    </div>
+  );
+}
+
 export function Tools() {
   useEffect(() => {
     loadToolTags();
@@ -353,7 +400,7 @@ export function Tools() {
         // an imported tool ("needs approval") can be approved after reading it, without a test
         (k === 3 &&
           d &&
-          (d.kind === "npm" || d.status === "needs approval" || (tb.test && !tb.test.running)));
+          (d.kind === "npm" || d.status === "needs approval" || tb.direct || (tb.test && !tb.test.running)));
   const set = (k, v) => {
     tb[k] = v;
     update();
@@ -441,6 +488,8 @@ export function Tools() {
               tb.draft = manualDraft();
               tb.stage = "review";
               tb.test = null;
+              tb.direct = false;
+              tb.direct = false;
               update();
             }}
           >
@@ -589,15 +638,32 @@ export function Tools() {
                               />
                             </td>
                             <td>
-                              <input
+                              <select
                                 aria-label="Type"
-                                value={p.type}
+                                value={(p.type || "string") + "|" + (p.format || "")}
                                 style={{ width: "100%" }}
                                 onChange={(e) => {
-                                  p.type = e.target.value;
+                                  const [t, f] = e.target.value.split("|");
+                                  p.type = t;
+                                  if (f) p.format = f;
+                                  else delete p.format;
                                   update();
                                 }}
-                              />
+                              >
+                                {!PARAM_KINDS.some(
+                                  ([v]) => v === (p.type || "string") + "|" + (p.format || ""),
+                                ) && (
+                                  <option value={(p.type || "string") + "|" + (p.format || "")}>
+                                    {p.type}
+                                    {p.format ? " · " + p.format : ""}
+                                  </option>
+                                )}
+                                {PARAM_KINDS.map(([v, l]) => (
+                                  <option key={v} value={v}>
+                                    {l}
+                                  </option>
+                                ))}
+                              </select>
                             </td>
                             <td>
                               <input
@@ -738,7 +804,7 @@ export function Tools() {
               Back
             </button>
             <button className="btn primary" onClick={() => set("stage", npm ? "save" : "test")}>
-              {npm ? "Next: approve" : "Next: test with AI"}
+              {npm ? "Next: approve" : "Next: test"}
             </button>
             {!npm && d.status === "needs approval" && (
               <button
@@ -763,10 +829,33 @@ export function Tools() {
         </fieldset>
       </>
     );
+  } else if (tb.stage === "test" && d && (tb.testTab || "args") === "args") {
+    body = (
+      <>
+        <TestTabs tb={tb} />
+        <ToolTester tb={tb} d={d} />
+        <div className="row-actions">
+          <button className="btn secondary" onClick={() => set("stage", "review")}>
+            Back to review
+          </button>
+          {!tb.ro && (
+            <button
+              className="btn primary"
+              disabled={!(tb.direct || (tb.test && !tb.test.running))}
+              title={tb.direct ? "" : "Run it once (with arguments or with AI) first"}
+              onClick={() => set("stage", "save")}
+            >
+              {d.kind === "copilot" ? "Next" : tb.admin ? "Next: publish" : "Next: save"}
+            </button>
+          )}
+        </div>
+      </>
+    );
   } else if (tb.stage === "test" && d) {
     const t = tb.test;
     body = (
       <>
+        <TestTabs tb={tb} />
         <DropZone list={tb.attachments} className="card att-zone">
           <h3>Test with AI</h3>
           <p className="wf-desc">
@@ -959,7 +1048,7 @@ export function Tools() {
           {!tb.ro && (
             <button
               className="btn primary"
-              disabled={!(t && !t.running)}
+              disabled={!(tb.direct || (t && !t.running))}
               onClick={() => set("stage", "save")}
             >
               {tb.admin ? "Next: publish" : "Next: save"}

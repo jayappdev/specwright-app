@@ -3,6 +3,7 @@
 // flattened shape as bus.Event, driven by a scripted agent.
 
 import { resolveDate, dateDefault } from "./dates.js";
+import { inferParams, checkArgs } from "./toolParams.js";
 import { stepNames, isStepField, isLoopField, applyStepIDs } from "./flowNames.js";
 import { shapes as flowShapes, parseSchema, checkPaths, sampleOf, toolOutput } from "./schema.js";
 import {
@@ -6765,6 +6766,155 @@ export function createMockBackend(methods) {
       const rel = `.codegen/attachments/${stamp.slice(0, 8)}-${stamp.slice(8)}-${safe}`;
       blobs.set(rel, { rel, b64, mime: mime || "application/octet-stream", size });
       return { path: rel, name, size, mime, kind };
+    },
+    // tool metadata and direct tests (browser preview: rules as in Go, runs simulated)
+    async InspectTool(d) {
+      await wait(300);
+      let base = d;
+      let source = "the tool's definition";
+      if (d.kind === "copilot" && !(d.params || []).length) {
+        base = {
+          ...d,
+          params: [
+            {
+              name: "path",
+              type: "string",
+              required: true,
+              desc: "Path to an existing .html file inside the workspace.",
+            },
+          ],
+        };
+        source = "the extension's own schema";
+      }
+      const r = inferParams(base);
+      if (base !== d)
+        r.changes.unshift({
+          param: "*",
+          what: `read ${base.params.length} parameter(s) from the extension's schema`,
+        });
+      return { ...r, source, notes: [] };
+    },
+    async RefineToolWithAI(d) {
+      await wait(1200);
+      const { params } = inferParams(d);
+      for (const p of params) {
+        if (!p.desc) p.desc = `The ${p.name.replace(/_/g, " ")} the tool works on.`;
+        if (!p.example)
+          p.example =
+            p.type === "integer"
+              ? "10"
+              : p.format === "path"
+                ? "README.md"
+                : p.format === "directory"
+                  ? "src"
+                  : p.format === "date"
+                    ? "2026-11-01"
+                    : (p.enum || [])[0] || "";
+      }
+      const before = Object.fromEntries((d.params || []).map((p) => [p.name, p]));
+      const changes = params
+        .filter((p) => JSON.stringify(p) !== JSON.stringify(before[p.name]))
+        .map((p) => ({
+          param: p.name,
+          what: before[p.name]
+            ? "described, with an example" +
+              (before[p.name].type !== p.type ? `; type ${before[p.name].type} → ${p.type}` : "")
+            : "added",
+        }));
+      const args = Object.fromEntries(
+        params.filter((p) => p.required || p.example).map((p) => [p.name, p.example || p.default || "x"]),
+      );
+      const tests = [
+        { name: "Typical call", args, expect: { contains: [], fields: [], fail: false } },
+        ...(params.some((p) => p.required)
+          ? [{ name: "Refuses a missing argument", args: {}, expect: { fail: true } }]
+          : []),
+      ];
+      changes.push({ param: "tests", what: `${tests.length} test case(s)` });
+      return {
+        params,
+        output: d.output || null,
+        tests,
+        changes,
+        why: `(browser preview) Read ${d.script ? "the script" : "the command"} of ${d.name}: what it reads, the values it accepts and what it prints.`,
+        notes: [],
+      };
+    },
+    async SaveToolMeta(name, m) {
+      await wait(80);
+      const i = db.exts.findIndex((x) => x.name === name);
+      if (i < 0) throw new Error(`no tool named ${name}`);
+      Object.assign(db.exts[i], {
+        params: m.params || [],
+        output: m.output || null,
+        tests: m.tests || [],
+        metaAt: now(),
+      });
+      persist();
+      return clone(db.exts[i]);
+    },
+    async RunToolWith(d, args = {}, secrets = {}, expect = null) {
+      await wait(500);
+      const { args: checked, problems } = checkArgs(d, args);
+      if (problems.length)
+        return {
+          args: checked,
+          problems,
+          output: "",
+          ok: false,
+          durationMs: 0,
+          checks: [{ label: "The arguments fit the parameters", ok: false, note: problems.join("; ") }],
+        };
+      const missing = (d.secrets || []).filter(
+        (s) => !secrets?.[s.name] && !(s.name in kcStore) && !(s.name in secrets),
+      );
+      const words = (d.command || "").replace(/\{\{(\w+)\}\}/g, (_, k) =>
+        checked[k] === undefined
+          ? ""
+          : typeof checked[k] === "object"
+            ? JSON.stringify(checked[k])
+            : String(checked[k]),
+      );
+      const out =
+        d.sampleOutput ||
+        `${d.name}: ok\n${Object.entries(checked)
+          .map(([k, v]) => `${k} = ${typeof v === "object" ? JSON.stringify(v) : v}`)
+          .join("\n")}`;
+      const ok = !missing.length;
+      const x = expect || {};
+      const checks = [
+        x.fail
+          ? { label: "It fails, as expected", ok: !ok }
+          : {
+              label: "It runs without an error",
+              ok,
+              note: ok ? "" : "secrets: " + missing.map((s) => s.name).join(", ") + " has no value",
+            },
+      ];
+      for (const c of x.contains || [])
+        checks.push({ label: `The output contains "${c}"`, ok: out.includes(c) });
+      return {
+        args: checked,
+        command: words.trim(),
+        output: ok ? out : "",
+        error: ok ? "" : "secrets: no value for " + missing.map((s) => s.name).join(", "),
+        ok,
+        durationMs: 180 + Math.round(Math.random() * 300),
+        checks,
+      };
+    },
+    async RunToolTests(d, tests, secretVals = {}) {
+      tests = tests || d.tests || [];
+      if (!tests.length)
+        throw new Error(`${d.name} has no test cases yet: run it with arguments and save the run as one`);
+      const out = [];
+      for (const t of tests) {
+        const run = await api.RunToolWith(d, t.args || {}, secretVals, t.expect || {});
+        let pass = run.checks.length > 0 && run.checks.every((c) => c.ok);
+        if (t.expect?.fail && run.problems?.length) pass = true;
+        out.push({ name: t.name, pass, run });
+      }
+      return out;
     },
     async TestExtensionWith(d, q, files = []) {
       const r = await api.TestExtension(d, q);

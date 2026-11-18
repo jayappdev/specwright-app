@@ -2897,3 +2897,66 @@ select.fl-secret-pick {
     max-height: 40vh;
   }
 }
+
+/* Tools › Test › Run with arguments */
+.tt-form {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 10px 16px;
+}
+.tt-field > span {
+  display: block;
+  margin-bottom: 4px;
+}
+.tt-field input,
+.tt-field select,
+.tt-field textarea {
+  width: 100%;
+}
+.tt-mono {
+  font-family: var(--font-mono);
+}
+.tt-secrets {
+  margin-top: 12px;
+  display: grid;
+  gap: 8px;
+}
+.tt-secrets h4 {
+  margin: 0;
+}
+.tt-result {
+  margin-top: 12px;
+  border-left: 3px solid var(--border);
+  padding-left: 10px;
+  display: grid;
+  gap: 6px;
+}
+.tt-case-form {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+.tt-cases {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+  display: grid;
+  gap: 8px;
+}
+.tt-proposal {
+  display: grid;
+  gap: 6px;
+  margin-top: 8px;
+}
+.tt-params {
+  border-collapse: collapse;
+  width: 100%;
+  font-size: 13px;
+}
+.tt-params th,
+.tt-params td {
+  text-align: left;
+  padding: 4px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}

@@ -398,7 +398,8 @@ type ToolTestResult struct {
 }
 
 // RunToolTests runs a tool's test cases (its saved ones, or tests given).
-func (h *Hub) RunToolTests(e extension.Extension, tests []extension.ToolTest) ([]ToolTestResult, error) {
+// secrets: values typed on the test page for this session (never saved).
+func (h *Hub) RunToolTests(e extension.Extension, tests []extension.ToolTest, secrets map[string]string) ([]ToolTestResult, error) {
 	if tests == nil {
 		tests = e.Tests
 	}
@@ -408,7 +409,7 @@ func (h *Hub) RunToolTests(e extension.Extension, tests []extension.ToolTest) ([
 	var out []ToolTestResult
 	for _, t := range tests {
 		x := t.Expect
-		run, err := h.RunToolWith(e, t.Args, nil, &x)
+		run, err := h.RunToolWith(e, t.Args, secrets, &x)
 		if err != nil {
 			return out, err
 		}

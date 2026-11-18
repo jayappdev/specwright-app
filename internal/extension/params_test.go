@@ -58,7 +58,7 @@ func TestInferParams(t *testing.T) {
 	if strings.Join(by["mode"].Enum, ",") != "md,html,json" || by["mode"].Default != "md" {
 		t.Errorf("mode %+v", by["mode"])
 	}
-	if p, ok := by["extra"]; !ok || !p.Required {
+	if p, ok := by["extra"]; !ok || p.Required {
 		t.Errorf("a placeholder that is not a parameter becomes one: %+v", ps)
 	}
 	if len(ch) < 8 {

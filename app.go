@@ -334,8 +334,8 @@ func (a *App) RunToolWith(e extension.Extension, args map[string]any, secrets ma
 }
 
 // RunToolTests runs a tool's test cases.
-func (a *App) RunToolTests(e extension.Extension, tests []extension.ToolTest) ([]core.ToolTestResult, error) {
-	return ok(a.hub.RunToolTests(e, tests))
+func (a *App) RunToolTests(e extension.Extension, tests []extension.ToolTest, secrets map[string]string) ([]core.ToolTestResult, error) {
+	return ok(a.hub.RunToolTests(e, tests, secrets))
 }
 
 // --- flow wizard: requirements → clarify → plan → draft flows → apply ---

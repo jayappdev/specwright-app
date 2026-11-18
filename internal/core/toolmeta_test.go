@@ -26,7 +26,7 @@ func TestToolMetaInspectRunAndTestCases(t *testing.T) {
 	for _, p := range in.Params {
 		by[p.Name] = p
 	}
-	if by["count"].Type != "integer" || !by["mode"].Required || len(in.Changes) < 2 {
+	if by["count"].Type != "integer" || by["mode"].Required || len(in.Changes) < 2 {
 		t.Fatalf("%+v %+v", in.Params, in.Changes)
 	}
 	// saving metadata keeps the approval (what runs did not change)
@@ -44,11 +44,11 @@ func TestToolMetaInspectRunAndTestCases(t *testing.T) {
 	}
 	// refused before it runs
 	run, _ = h.RunToolWith(got, map[string]any{"who": "Bo", "count": "x"}, nil, nil)
-	if len(run.Problems) != 2 || run.OK || run.Output != "" {
+	if len(run.Problems) != 1 || run.OK || run.Output != "" { // count; mode is optional (added from the command)
 		t.Fatalf("%+v", run)
 	}
 	// the saved test cases
-	res, err := h.RunToolTests(got, nil)
+	res, err := h.RunToolTests(got, nil, nil)
 	if err != nil || len(res) != 2 || !res[0].Pass || !res[1].Pass {
 		t.Fatalf("%+v %v", res, err)
 	}

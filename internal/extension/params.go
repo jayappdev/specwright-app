@@ -227,7 +227,8 @@ func InferParams(e Extension) ([]Param, []ParamChange) {
 			continue
 		}
 		have[n] = true
-		ps = append(ps, Param{Name: n, Type: "string", Required: true, Desc: "Used in the command as {{" + n + "}}"})
+		// optional: calls that leave it out worked before (the word is dropped)
+		ps = append(ps, Param{Name: n, Type: "string", Desc: "Used in the command as {{" + n + "}}"})
 		ch = append(ch, ParamChange{n, "added: the command uses {{" + n + "}}"})
 	}
 	for i := range ps {
