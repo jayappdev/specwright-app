@@ -119,12 +119,10 @@ func (h *Hub) Observe(name string, args map[string]any, res extension.RunResult)
 		Data: map[string]any{"name": name, "args": args, "ok": res.OK, "exit_code": res.ExitCode, "duration_ms": res.DurationMS, "output": trunc(res.Output, 2000)}}
 	u, ev, used := toolAIUsage(name, res.AI)
 	if a := h.activeRun(); a != nil {
-		e.RunID, e.Step = a.Session.ID, a.Session.Step
-		_ = h.Store.Append(h.Bus.Publish(e))
+		h.emitRun(a, e)
 		if used { // the AI the tool used itself counts towards the run
 			a.AddUsage(u)
-			ev.RunID, ev.Step = a.Session.ID, a.Session.Step
-			_ = h.Store.Append(h.Bus.Publish(ev))
+			h.emitRun(a, ev)
 		}
 		return
 	}
@@ -624,7 +622,7 @@ func finishDraft(d extension.Extension, prompt string, from *extension.Extension
 	d.Status = "untested"
 	d.Revision = 1
 	if from != nil {
-		d.Revision = from.Revision + 1
+		d.Revision = max(from.Revision, 1) + 1 // a tool saved by hand starts at 0
 		d.Prompt = from.Prompt
 		d.Scope = from.Scope
 		if d.TestPrompt == "" {

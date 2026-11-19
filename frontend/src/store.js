@@ -366,7 +366,8 @@ export function onHubEvent(e) {
     if (!S.events[e.run_id]) pruneEvents();
     touchRun(e.run_id);
     const arr = (S.events[e.run_id] ||= []);
-    if (!arr.length || arr[arr.length - 1].seq < e.seq) arr.push(e);
+    // an event without a number (a permission or secret request) is never a repeat
+    if (!e.seq || !arr.length || arr[arr.length - 1].seq < e.seq) arr.push(e);
     else if (!arr.some((x) => x.seq === e.seq)) {
       arr.push(e);
       arr.sort((a, b) => a.seq - b.seq);

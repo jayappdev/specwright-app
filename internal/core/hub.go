@@ -688,6 +688,21 @@ func (h *Hub) onStepStatus(stepID, status, runID string) {
 	h.Bus.Publish(bus.Event{Type: "workflow.changed", RunID: runID, Step: stepID, Summary: status, Data: map[string]any{"status": status}})
 }
 
+// emitRun records e as an event of the run a, with the run's next sequence
+// number: the live view keeps a run's events by number, so an event without
+// one (0) was dropped once the run had another.
+func (h *Hub) emitRun(a *workflow.Run, e bus.Event) {
+	h.mu.RLock()
+	r := h.runner
+	h.mu.RUnlock()
+	if r == nil {
+		e.RunID, e.Step = a.Session.ID, a.Session.Step
+		_ = h.Store.Append(h.Bus.Publish(e))
+		return
+	}
+	r.Emit(a, e.Type, e.Summary, e.Data)
+}
+
 func (h *Hub) activeRun() *workflow.Run {
 	h.mu.RLock()
 	r := h.runner

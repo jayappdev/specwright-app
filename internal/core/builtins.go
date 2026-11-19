@@ -138,8 +138,7 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 	ev := bus.Event{Type: "builtin.result", Summary: name + map[bool]string{true: " ok", false: " failed"}[err == nil],
 		Data: map[string]any{"name": name, "args": args, "ok": err == nil, "duration_ms": time.Since(start).Milliseconds(), "output": trunc(firstNonEmpty(out, errText(err)), 2000)}}
 	if a := h.activeRun(); a != nil {
-		ev.RunID, ev.Step = a.Session.ID, a.Session.Step
-		_ = h.Store.Append(h.Bus.Publish(ev))
+		h.emitRun(a, ev)
 	} else {
 		h.Bus.Publish(ev)
 	}

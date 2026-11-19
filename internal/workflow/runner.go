@@ -158,6 +158,12 @@ func (rn *Runner) Start(ctx context.Context, wfID, stepID string, o StartOptions
 	return run, nil
 }
 
+// Emit sends an event of run (a tool's result during the run, say) with the
+// run's next sequence number, and records it, as the run's own events are.
+func (rn *Runner) Emit(run *Run, typ, summary string, data map[string]any) bus.Event {
+	return rn.publish(run, typ, summary, data)
+}
+
 // publish sends an event for run through the bus and records it.
 func (rn *Runner) publish(run *Run, typ, summary string, data map[string]any) bus.Event {
 	run.mu.Lock()

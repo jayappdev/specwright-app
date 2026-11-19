@@ -84,12 +84,21 @@ func TestBuiltinPolicyAndPlayground(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := map[string]bool{}
+	seqs := map[int]bool{}
+	last := 0
 	to := time.After(10 * time.Second)
 	for done := false; !done; {
 		select {
 		case e := <-ch:
 			if e.RunID == id && e.Type == "builtin.result" {
 				got[e.Str("name")] = e.Data["ok"] == true
+				// numbered within the run, or the live view drops it
+				if e.Seq <= last || seqs[e.Seq] {
+					t.Fatalf("builtin.result seq %d after %d", e.Seq, last)
+				}
+			}
+			if e.RunID == id && e.Seq > 0 {
+				seqs[e.Seq], last = true, max(last, e.Seq)
 				if e.Str("name") == "text_search" && !strings.Contains(e.Str("output"), "notes.md") {
 					t.Fatalf("search output: %s", e.Str("output"))
 				}
