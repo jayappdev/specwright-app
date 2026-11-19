@@ -737,7 +737,7 @@ const TRIGGER_VARS = {
 };
 
 // TAG: the tag of a run a trigger started (Run flows, Run History)
-export const TAG = { schedule: "scheduled", flow: "after flow", files: "file change" };
+export const TAG = { schedule: "scheduled", flow: "after flow", files: "file change", agent: "by an agent" };
 
 // the chip on the Inputs step's card: what starts the flow by itself
 export function triggerChip(flow) {

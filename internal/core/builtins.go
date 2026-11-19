@@ -42,6 +42,8 @@ func (h *Hub) newToolbox() *builtin.Box {
 			}
 			return ""
 		},
+		Secret: h.secretByName, // http_request, notify (desktop.go)
+		Notify: h.desktopNotify,
 		Problems: func(ctx context.Context) (string, string, error) {
 			res, err := h.Compile()
 			if err != nil {
@@ -94,6 +96,9 @@ func (h *Hub) Builtins() []extension.BuiltinInfo {
 	if !h.disabledBuiltins()[ScheduleFlowTool] {
 		out = append(out, scheduleFlowInfo()) // how agents schedule flows (flowschedule_agent.go)
 	}
+	if !h.disabledBuiltins()[RunFlowTool] {
+		out = append(out, runFlowInfo()) // agents reuse flows (runflow_agent.go)
+	}
 	if !h.disabledBuiltins()[HistorySearchTool] && h.Store.HasDB() {
 		out = append(out, historySearchInfo()) // run history for agents (history_search.go)
 	}
@@ -109,6 +114,9 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 	start := time.Now()
 	var out string
 	var err error
+	if e := h.agentOutwardAllowed(ctx, name, args); e != nil { // outward.go: a person approves what sends data out
+		return "", e
+	}
 	switch name {
 	case SaveFlowTool:
 		out, err = h.agentSaveFlow(args)
@@ -116,6 +124,8 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 		out, err = h.agentScheduleFlow(args)
 	case HistorySearchTool:
 		out, err = h.agentHistorySearch(args)
+	case RunFlowTool:
+		out, err = h.agentRunFlow(ctx, args)
 	default:
 		out, err = h.tools.Call(ctx, name, args)
 	}

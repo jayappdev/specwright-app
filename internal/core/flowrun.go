@@ -368,6 +368,8 @@ func triggerTag(t *RunTrigger) string {
 		return "after flow"
 	case "files":
 		return "file change"
+	case "agent":
+		return "by an agent"
 	}
 	return t.Kind
 }

@@ -30,6 +30,12 @@ const EXAMPLES = {
   get_command_output: {},
   get_problems: {},
   fetch_webpage: { url: "https://example.com", max_chars: 4000 },
+  git: { action: "log", max_count: 10 },
+  file_compare: { a: "README.md", b: "README.md" },
+  test_runner: { format: "text" },
+  export_doc: { path: "README.md", to: "html", out: "exports/readme.html" },
+  http_request: { url: "https://example.com", format: "json" },
+  notify: { title: "Hello from SpecWright", message: "Built-in notify works" },
   todo_list: {
     items: [
       { title: "Read the spec", status: "done" },

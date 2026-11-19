@@ -576,6 +576,363 @@ export const BUILTINS = [
     }
   },
   {
+    "name": "git",
+    "title": "Git",
+    "group": "search",
+    "description": "Read the project's git history and state, never changing it. action: status (branch, ahead/behind, changed files) | diff (base..ref, ref against the working tree, or uncommitted changes; with path for one file) | log (commits: max_count, since a date or a tag/commit, ref, path) | branches | tags | show (one commit, ref) | blame (path, start_line/end_line). format \"json\" returns data for later steps (commits with hash, author, date, subject, body; files with added/removed lines; branches; tags).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "action": {
+          "description": "What to read (default status)",
+          "enum": [
+            "status",
+            "diff",
+            "log",
+            "branches",
+            "tags",
+            "show",
+            "blame"
+          ],
+          "type": "string"
+        },
+        "base": {
+          "description": "diff: the older side, e.g. main or v1.2.0",
+          "type": "string"
+        },
+        "end_line": {
+          "description": "blame: last line",
+          "type": "integer"
+        },
+        "format": {
+          "description": "text (default) or json (data for later steps)",
+          "enum": [
+            "text",
+            "json"
+          ],
+          "type": "string"
+        },
+        "max_bytes": {
+          "description": "Cut diffs and blame after this many bytes (default 40000)",
+          "type": "integer"
+        },
+        "max_count": {
+          "description": "log: how many commits (default 30, at most 500)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "Only this file or folder",
+          "type": "string"
+        },
+        "ref": {
+          "description": "A branch, tag or commit (diff: compared with base, or with the working tree; log: where to start; show: which commit)",
+          "type": "string"
+        },
+        "since": {
+          "description": "log: commits after this date (2026-11-01) or after this tag/commit (v1.2.0)",
+          "type": "string"
+        },
+        "start_line": {
+          "description": "blame: first line",
+          "type": "integer"
+        }
+      },
+      "type": "object"
+    },
+    "readOnly": true,
+    "enabled": true
+  },
+  {
+    "name": "file_compare",
+    "title": "Compare files",
+    "group": "search",
+    "description": "Compare two files or two folders of the workspace. Text files: a unified diff. JSON files: the values added, removed or changed, by path ($.a.b[2]), ignoring layout. Folders: the files only in one of them and the ones that differ, with their diffs. format \"json\" returns the result as data.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "a": {
+          "description": "The first (older) file or folder",
+          "type": "string"
+        },
+        "b": {
+          "description": "The second (newer) file or folder",
+          "type": "string"
+        },
+        "format": {
+          "description": "text (default) or json (data for later steps)",
+          "enum": [
+            "text",
+            "json"
+          ],
+          "type": "string"
+        },
+        "max_bytes": {
+          "description": "Cut diffs after this many bytes (default 40000)",
+          "type": "integer"
+        },
+        "mode": {
+          "description": "auto (default: JSON for two .json files, else text), text or json",
+          "enum": [
+            "auto",
+            "text",
+            "json"
+          ],
+          "type": "string"
+        }
+      },
+      "required": [
+        "a",
+        "b"
+      ],
+      "type": "object"
+    },
+    "readOnly": true,
+    "enabled": true
+  },
+  {
+    "name": "test_runner",
+    "title": "Run tests",
+    "group": "execute",
+    "description": "Run the project's tests with its own tool and get what passed and what failed, per test, with the failure messages. The tool is found from the project's files (go.mod, pom.xml, build.gradle, package.json, pyproject.toml, Cargo.toml, a .NET project) or given. Prefer it over run_command for tests: the results are counted and the failures picked out. format \"json\" returns {tool, command, ok, passed, failed, skipped, durationMs, failures: [{name, suite, message}], outputTail}.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "filter": {
+          "description": "Only tests matching this (go -run, -Dtest, --tests, -k, -t, --filter)",
+          "type": "string"
+        },
+        "format": {
+          "description": "text (default) or json (data for later steps)",
+          "enum": [
+            "text",
+            "json"
+          ],
+          "type": "string"
+        },
+        "path": {
+          "description": "The project folder (default: the workspace root)",
+          "type": "string"
+        },
+        "timeout_seconds": {
+          "description": "Stop after this long (default 600, at most 3600)",
+          "type": "integer"
+        },
+        "tool": {
+          "description": "Default auto",
+          "enum": [
+            "auto",
+            "go",
+            "maven",
+            "gradle",
+            "npm",
+            "pytest",
+            "cargo",
+            "dotnet"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "readOnly": false,
+    "enabled": true
+  },
+  {
+    "name": "export_doc",
+    "title": "Export document",
+    "group": "edit",
+    "description": "Turn Markdown into a file to share: html (one self-contained page, light and dark), docx (Word, also opens in Pages, LibreOffice, Google Docs) or pdf (A4, standard fonts: Western European text). Headings, paragraphs, bold/italic/code, links, lists, code blocks, quotes, tables and rules carry over; raw HTML is left out and images are named, not embedded. Give the Markdown as text or as a file in the workspace; the file is written to out (default: next to the Markdown file, or exports/\u003ctitle\u003e.\u003cext\u003e).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "markdown": {
+          "description": "The Markdown text",
+          "type": "string"
+        },
+        "out": {
+          "description": "Where to write it, relative to the workspace",
+          "type": "string"
+        },
+        "overwrite": {
+          "description": "Replace the file if it exists",
+          "type": "boolean"
+        },
+        "path": {
+          "description": "Or: a Markdown file in the workspace",
+          "type": "string"
+        },
+        "title": {
+          "description": "The document's title (default: its first heading)",
+          "type": "string"
+        },
+        "to": {
+          "description": "The format (default html)",
+          "enum": [
+            "html",
+            "docx",
+            "pdf"
+          ],
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "readOnly": false,
+    "enabled": true
+  },
+  {
+    "name": "http_request",
+    "title": "HTTP request",
+    "group": "web",
+    "description": "Call an HTTP API: any method, headers, a query, a body or JSON, and a secret as the authentication (auth_secret: the secret's NAME, never its value; auth_scheme Bearer (default), Basic (the secret is user:token), Token, or header:X-Api-Key). Uses the corporate proxy. GET and HEAD run at once; other methods (they change things elsewhere) need a person's approval. format \"json\" returns {status, ok, url, headers, json or body}; raw returns the body exactly (failing on an error status).",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "auth_scheme": {
+          "description": "Bearer (default), Basic, Token, or header:\u003cHeader-Name\u003e",
+          "type": "string"
+        },
+        "auth_secret": {
+          "description": "The name of the secret to authenticate with, e.g. JIRA_TOKEN (only sent over https)",
+          "type": "string"
+        },
+        "body": {
+          "description": "A text body (instead of json)",
+          "type": "string"
+        },
+        "format": {
+          "description": "text (default), json (status, headers and the parsed body) or raw (the body exactly)",
+          "enum": [
+            "text",
+            "json",
+            "raw"
+          ],
+          "type": "string"
+        },
+        "headers": {
+          "description": "Request headers (not Authorization: use auth_secret)",
+          "type": "object"
+        },
+        "json": {
+          "description": "A JSON body (an object or array, or its text); sets Content-Type"
+        },
+        "max_chars": {
+          "description": "Characters of the body to return (default 20000 for text)",
+          "type": "integer"
+        },
+        "method": {
+          "description": "Default GET",
+          "enum": [
+            "GET",
+            "HEAD",
+            "POST",
+            "PUT",
+            "PATCH",
+            "DELETE",
+            "OPTIONS"
+          ],
+          "type": "string"
+        },
+        "query": {
+          "description": "Query parameters, added to the URL",
+          "type": "object"
+        },
+        "timeout_seconds": {
+          "description": "Default 30, at most 300",
+          "type": "integer"
+        },
+        "url": {
+          "description": "Absolute http(s) URL",
+          "type": "string"
+        }
+      },
+      "required": [
+        "url"
+      ],
+      "type": "object"
+    },
+    "readOnly": false,
+    "enabled": true,
+    "outputBy": {
+      "format": {
+        "json": {
+          "type": "object",
+          "properties": {
+            "status": {
+              "type": "integer",
+              "description": "HTTP status code, e.g. 200"
+            },
+            "ok": {
+              "type": "boolean",
+              "description": "true below 400"
+            },
+            "url": {
+              "type": "string",
+              "description": "the final URL, after redirects"
+            },
+            "headers": {
+              "type": "object",
+              "description": "a few useful response headers (Content-Type, Location, Link, Etag, rate limits)"
+            },
+            "json": {
+              "description": "the body parsed, when it is JSON"
+            },
+            "body": {
+              "type": "string",
+              "description": "the body as text, when it is not JSON"
+            }
+          },
+          "required": [
+            "status",
+            "ok",
+            "url",
+            "headers"
+          ]
+        }
+      }
+    }
+  },
+  {
+    "name": "notify",
+    "title": "Notify",
+    "group": "web",
+    "description": "Tell a person about a result: a desktop notification on this computer (default), or a message to Slack, Microsoft Teams or any webhook, whose address is a secret (default secret names SLACK_WEBHOOK_URL, TEAMS_WEBHOOK_URL, NOTIFY_WEBHOOK_URL). Use it at the end of a scheduled or triggered flow. Desktop notifications need nothing; messages to a webhook need a person's approval.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "channel": {
+          "description": "Where (default desktop)",
+          "enum": [
+            "desktop",
+            "slack",
+            "teams",
+            "webhook"
+          ],
+          "type": "string"
+        },
+        "link": {
+          "description": "A link to open, e.g. the report or the pull request",
+          "type": "string"
+        },
+        "message": {
+          "description": "The message (plain text; Slack also takes *bold* and links)",
+          "type": "string"
+        },
+        "title": {
+          "description": "A short title, e.g. Nightly tests: 2 failed",
+          "type": "string"
+        },
+        "webhook_secret": {
+          "description": "The name of the secret holding the webhook address (default by channel)",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "readOnly": false,
+    "enabled": true
+  },
+  {
     "name": "todo_list",
     "title": "Todo list",
     "group": "plan",

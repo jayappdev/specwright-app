@@ -431,6 +431,9 @@ export function onHubEvent(e) {
           at: Date.now(),
         });
       break;
+    case "notify": // the notify tool: also shown in the app (the OS shows its own notification)
+      toast((e.title || e.summary) + (e.message ? ": " + e.message : ""), "info");
+      break;
     case "trigger.queued": // a run waits for its turn (or was cancelled): Run flows shows it
       if (S.frun)
         backend

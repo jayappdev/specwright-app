@@ -233,11 +233,15 @@ async function approveCommands(steps) {
   }
 }
 
-// Commands: a flow's "Run a command" steps must be approved for the project before it runs
+// Commands: a flow's "Run a command" steps, and its steps that send data out
+// of the computer (an HTTP POST, a Slack message), must be approved for the
+// project before it runs
 export function Commands() {
   const r = frs(),
     cmds = r.cmds || [],
-    todo = cmds.filter((c) => !c.approved);
+    todo = cmds.filter((c) => !c.approved),
+    sends = cmds.some((c) => c.kind === "sends"),
+    shell = cmds.some((c) => c.kind !== "sends");
   if (!cmds.length) return null;
   return (
     <div
@@ -247,7 +251,13 @@ export function Commands() {
     >
       <div className="card-head">
         <Icon.warn />
-        <h3>Commands this flow runs</h3>
+        <h3>
+          {sends && !shell
+            ? "What this flow sends out"
+            : sends
+              ? "Commands and what this flow sends out"
+              : "Commands this flow runs"}
+        </h3>
         {todo.length ? (
           <span className="badge badge-warn">{todo.length} not approved</span>
         ) : (
@@ -255,15 +265,20 @@ export function Commands() {
         )}
       </div>
       <p className="wf-desc">
-        These steps run shell commands in the project folder. Flows can come from files, pasted steps or the
-        AI, so each command must be approved for this project before the flow runs; a changed command needs a
-        new approval.
+        {shell && "Some steps run shell commands in the project folder. "}
+        {sends &&
+          "Some steps send data out of this computer (an HTTP request that changes things, a message to Slack, Teams or a webhook). "}
+        Flows can come from files, pasted steps or the AI, so each must be approved for this project before
+        the flow runs; a changed step needs a new approval.
       </p>
       <ul className="fr-cmd-list">
         {cmds.map((c) => (
           <li key={c.step}>
             <b>{c.title}</b>
-            <code className="fr-cmd">$ {c.command}</code>
+            <code className="fr-cmd">
+              {c.kind === "sends" ? "↗ " : "$ "}
+              {c.command}
+            </code>
             {c.approved ? (
               <span className="badge badge-ok">approved</span>
             ) : (

@@ -4,6 +4,7 @@ go 1.26.0
 
 require (
 	github.com/wailsapp/wails/v2 v2.17.1
+	github.com/yuin/goldmark v1.7.17
 	modernc.org/sqlite v1.62.0
 )
 

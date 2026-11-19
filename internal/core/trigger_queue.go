@@ -26,7 +26,7 @@ func (h *Hub) triggeredLive() int {
 	h.mu.RUnlock()
 	n := 0
 	for _, fr := range runs {
-		if st := fr.snapshot(); st.Options.Trigger != nil && slicesContains(flowLive, st.Status) {
+		if st := fr.snapshot(); st.Options.Trigger != nil && st.Options.Trigger.Kind != "agent" && slicesContains(flowLive, st.Status) {
 			n++
 		}
 	}

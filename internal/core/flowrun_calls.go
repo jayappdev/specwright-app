@@ -58,6 +58,9 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 	}
 	var res extension.RunResult
 	if builtinTool {
+		if err := h.outwardAllowed(root, fr, strings.TrimSuffix(step, "-out"), name, args); err != nil { // outward.go
+			return fail(err)
+		}
 		// built-ins take their data through their fields; the connected
 		// steps' output is still saved for {{input_file}}
 		res = h.runFlowBuiltin(ctx, e, args, timeout)
