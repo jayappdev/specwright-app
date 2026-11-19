@@ -220,12 +220,13 @@ async function generate(refining) {
         ? {
             draft: tb.draft,
             change: tb.refine,
+            model: tb.genModel || "",
             // a failed test goes along, so the change can also fix it
             ...(tb.test && !tb.test.pass && !tb.test.running
               ? { failure: tb.test, question: tb.testPrompt, attachments: attPaths(tb) }
               : {}),
           }
-        : { prompt: tb.prompt, runsIn: tb.runsIn, connects: tb.connects },
+        : { prompt: tb.prompt, runsIn: tb.runsIn, connects: tb.connects, model: tb.genModel || "" },
     );
     d.scope = tb.scope;
     tb.draft = d;
@@ -285,6 +286,7 @@ async function autoFix() {
         failure: tb.test,
         question: tb.testPrompt,
         attachments: attPaths(tb),
+        model: tb.genModel || "",
         change: ask
           ? `The developer says: ${ask}\nFix the tool so the test passes, doing what the developer asks.`
           : "Fix the tool so the test passes.",
@@ -325,7 +327,7 @@ async function refineAndTest() {
   };
   say("Sending your change to the agent");
   try {
-    const d = await backend.GenerateExtension({ draft: tb.draft, change: ask });
+    const d = await backend.GenerateExtension({ draft: tb.draft, change: ask, model: tb.genModel || "" });
     d.scope = tb.scope;
     tb.draft = d;
     say(`Revision ${tb.draft.revision} written. Testing again…`);
@@ -527,6 +529,12 @@ export function Tools() {
           <button className="btn primary" disabled={!!tb.gen} onClick={() => generate(false)}>
             {tb.gen ? "Generating…" : "Generate tool with AI"}
           </button>
+          <ModelPicker
+            value={tb.genModel || ""}
+            onChange={(v) => set("genModel", v)}
+            label="Model for writing the tool"
+            disabled={!!tb.gen}
+          />
           <button
             className="btn secondary"
             onClick={() => {
@@ -829,6 +837,12 @@ export function Tools() {
                     <button className="btn secondary" disabled={!!tb.gen} onClick={() => generate(true)}>
                       {tb.gen ? "Updating…" : "Update"}
                     </button>
+                    <ModelPicker
+                      value={tb.genModel || ""}
+                      onChange={(v) => set("genModel", v)}
+                      label="Model for changing the tool"
+                      disabled={!!tb.gen}
+                    />
                   </div>
                 </label>
               )}
@@ -1080,6 +1094,11 @@ export function Tools() {
                           <Icon.spark /> Fix with AI
                         </button>
                       )}
+                      <ModelPicker
+                        value={tb.genModel || ""}
+                        onChange={(v) => set("genModel", v)}
+                        label="Model for changing the tool"
+                      />
                     </div>
                   </>
                 )}

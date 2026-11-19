@@ -307,6 +307,8 @@ type GenerateRequest struct {
 	Question string                `json:"question,omitempty"`
 	// Attachments are the files attached to Question (workspace paths).
 	Attachments []string `json:"attachments,omitempty"`
+	// Model writes the tool; empty: the session's model.
+	Model string `json:"model,omitempty"`
 }
 
 const genInstructions = `You write small, safe developer tools that an AI coding agent can call.
@@ -462,7 +464,7 @@ func (h *Hub) GenerateExtension(r GenerateRequest) (extension.Extension, error) 
 	}
 	h.mu.RLock()
 	name := h.agentName
-	model := h.model
+	model := firstNonEmpty(strings.TrimSpace(r.Model), h.model)
 	h.mu.RUnlock()
 	drv, err := h.Agents.Get(name)
 	if err != nil {
