@@ -221,6 +221,67 @@ export const GUIDE = [
     ],
   },
   {
+    type: "context",
+    name: "Context",
+    summary:
+      "Gathers what the AI steps after it should know — files, notes, inputs, past runs, lessons, web pages and the results of the steps connected into it — keeps what matters for its purpose within a budget, and hands it over.",
+    when: [
+      "An AI step has to decide or write something and needs the project's rules, docs or history, not just the data.",
+      "Several tools produced material and only the parts about one question matter.",
+      "Large files would overflow the AI's context window: give it the relevant parts only.",
+    ],
+    how: [
+      "Say what the context is for: its words rank every part. Parts that say nothing about it are left out; each source keeps its start.",
+      "Add sources: files (patterns, read in full), text, the flow's inputs, past runs (history search), lessons from reviews, a web page. Steps connected into it are sources too.",
+      "Each source gets a share of the budget by its priority (high, normal, low); what one does not need goes to the others. Repeated parts are dropped, secrets removed.",
+      "The pack has one section per source, labelled [S1], [S2] …, so the AI can say where a fact came from.",
+      "Condense (optional) asks the AI for a short brief for the purpose, keeping the labels: one AI call.",
+      "The AI and Improve steps after it get the pack in their prompt by themselves; the run shows what each source gave and what was cut.",
+    ],
+    settings: [
+      ["What is it for", "The purpose; its words decide what is relevant. Can use {{inputs.x}}."],
+      [
+        "Sources",
+        "Files, text, inputs, past runs, lessons, web page; each with a name, a priority and words to focus on.",
+      ],
+      ["Budget", "Tokens for the whole pack (about 4 characters each); default 8,000."],
+      ["Condense", "One AI call that turns the pack into a short brief."],
+    ],
+    examples: [
+      {
+        title: "Decide a refund with the policy and the ticket",
+        text: "The ticket and the refund policy go into one context; only the parts about refunds are kept. The AI step after it gets the pack.",
+        flowInputs: [{ name: "topic", label: "Topic", type: "text", default: "refund" }],
+        nodes: [
+          sample(
+            "ticket",
+            "Ticket",
+            "BILL-7: Customer asks for a refund of 620 EUR for a double charge on 3 Nov.\n\nThe customer also asked about the new invoice layout.",
+          ),
+          {
+            id: "ctx",
+            type: "context",
+            title: "Refund context",
+            goal: "decide the refund",
+            budget: 2000,
+            sources: [
+              {
+                kind: "text",
+                label: "Refund policy",
+                priority: "high",
+                text: "Refunds up to 500 EUR are approved by support.\n\nRefunds over 500 EUR need a manager's approval.\n\nInvoices are sent on the 1st of each month.",
+              },
+              { kind: "inputs" },
+            ],
+          },
+          out("pack", "Context pack"),
+        ],
+        edges: chain("start", "ticket", "ctx", "pack"),
+        focus: "ctx",
+      },
+    ],
+  },
+  {
     type: "merge",
     name: "Merge",
     summary:

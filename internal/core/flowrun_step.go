@@ -49,6 +49,8 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 		return h.toolStep(ctx, root, fr, n, d, len(parents) > 0)
 	case "improve":
 		return h.runImprove(ctx, root, fr, n, d, len(parents))
+	case "context":
+		return h.contextStep(ctx, root, fr, n, d, parents)
 	case "ai":
 		out, u, err := h.flowAgent(ctx, root, fr, n.ID, h.aiStepPrompt(f, n, d, len(parents)), firstNonEmpty(n.Model, fr.st.Options.Model))
 		if err == nil && n.OutputSchema != nil {
@@ -431,5 +433,5 @@ func (h *Hub) aiStepPrompt(f *flow.Flow, n *flow.Node, d flow.Data, parents int)
 	if n.OutputSchema != nil && n.OutputSchema.Known() {
 		prompt += "\n\nReply with only JSON in this shape, with no explanation and no code fences:\n" + n.OutputSchema.Compact()
 	}
-	return prompt + h.lessonsNote(f.ID, n.ID) + h.aiSuffix(f, d)
+	return prompt + h.contextPacks(f, n, d, n.Prompt) + h.lessonsNote(f.ID, n.ID) + h.aiSuffix(f, d)
 }

@@ -2,6 +2,7 @@
 // each step type's settings, decisions, filters, aggregates, connections, the
 // data panel (what a step gets and gives) and variable chips.
 import { LessonsEditor } from "./Lessons.jsx";
+import { ContextInspector } from "./ContextStep.jsx";
 import { Reliability } from "../../ToolTile.jsx";
 import { TriggersEditor } from "./Triggers.jsx";
 import { ModelPicker } from "../../ModelPicker.jsx";
@@ -928,6 +929,7 @@ function StepInspector({ n }) {
           {n.type === "decision" && <DecisionInspector n={n} set={set} />}
           {n.type === "filter" && <FilterInspector n={n} set={set} />}
           {n.type === "aggregate" && <AggregateInspector n={n} set={set} />}
+          {n.type === "context" && <ContextInspector n={n} set={set} />}
           {n.type === "merge" && (
             <>
               <Field label="How to merge">

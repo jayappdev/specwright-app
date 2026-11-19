@@ -1,5 +1,6 @@
 // Run flows: a run in progress or finished — the review pause, the steps and
 // their timing, outputs.
+import { ContextReport } from "../flows/ContextStep.jsx";
 import { useEffect, useState } from "react";
 import { ContentView } from "../../ContentView.jsx";
 import { backend } from "../../backend.js";
@@ -406,7 +407,7 @@ function Steps({ st }) {
       <ol className="fr-steps">
         {st.steps.map((s) => {
           const n = f?.nodes.find((x) => x.id === s.id) || { type: s.type, tool: s.tool };
-          const can = !!(s.output || s.error || s.args || s.rounds?.length);
+          const can = !!(s.output || s.error || s.args || s.rounds?.length || s.context);
           return (
             <li key={s.id} className={"fr-step s-" + s.status}>
               <button
@@ -473,6 +474,7 @@ function Steps({ st }) {
                     </div>
                   )}
                   {s.rounds?.length > 0 && <Rounds rounds={s.rounds} />}
+                  {s.context && <ContextReport r={s.context} />}
                   {(s.output || s.outputFile) && (
                     <ContentView
                       title={s.title}

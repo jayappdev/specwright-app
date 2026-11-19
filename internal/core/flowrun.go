@@ -120,6 +120,8 @@ type FlowStepState struct {
 	// chose them when the step was described in words.
 	Args map[string]any `json:"args,omitempty"`
 	Why  string         `json:"why,omitempty"`
+	// Context: what the step gathered and kept (flowrun_context.go)
+	Context *flow.CtxReport `json:"context,omitempty"`
 	// Decision: the paths it took (branch ids) and their names
 	Branches []string `json:"branches,omitempty"`
 	Path     string   `json:"path,omitempty"`

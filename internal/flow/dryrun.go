@@ -427,6 +427,8 @@ func (x *dryRun) exec(n *Node, d Data, live []string) (string, bool, error) {
 		}
 		out, err := Transform(*n, in, d)
 		return out, false, err
+	case "context":
+		return ContextPreview(x.f, *n, live, d), false, nil
 	case "merge":
 		titles := map[string]string{}
 		for _, p := range live {

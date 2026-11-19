@@ -76,6 +76,8 @@ func (f *Flow) EstimatedMinutes() int {
 			m += 10
 		case "ai", "improve":
 			m += 20
+		case "context":
+			m += 15
 		case "merge", "transform", "loop", "gather":
 			m += 5
 		case "output":
@@ -189,7 +191,7 @@ type Skill struct {
 // Node is one step on the canvas.
 type Node struct {
 	ID    string  `json:"id"`
-	Type  string  `json:"type"` // start | tool | ai | improve | merge | transform | loop | gather | decision | filter | aggregate | output
+	Type  string  `json:"type"` // start | tool | ai | improve | context | merge | transform | loop | gather | decision | filter | aggregate | output
 	Title string  `json:"title,omitempty"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
@@ -220,6 +222,11 @@ type Node struct {
 	Goal    string `json:"goal,omitempty"`    // when the result is good enough
 	Rounds  int    `json:"rounds,omitempty"`  // at most this many rounds (0: DefaultImproveRounds)
 	Approve string `json:"approve,omitempty"` // none | done | each: when a person confirms
+
+	// context (see context.go; Goal: what the context is for)
+	Sources  []CtxSource `json:"sources,omitempty"`
+	Budget   int         `json:"budget,omitempty"`   // tokens (0: DefaultCtxBudget)
+	Condense bool        `json:"condense,omitempty"` // an AI pass condenses the pack for the purpose
 
 	// merge
 	Mode      string `json:"mode,omitempty"`      // concat | json-object | json-array | template
@@ -278,7 +285,7 @@ type Edge struct {
 
 // NodeTypes, transform operations, merge modes and output formats.
 var (
-	NodeTypes   = []string{"start", "tool", "ai", "improve", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
+	NodeTypes   = []string{"start", "tool", "ai", "improve", "context", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
 	MergeModes  = []string{"concat", "json-object", "json-array", "template"}
 	Formats     = []string{"md", "txt", "html", "csv", "json"}
 	InputTypes  = []string{"text", "multiline", "secret", "number", "boolean", "date", "datetime", "choice", "multichoice", "file", "files", "clipboard"}
@@ -664,6 +671,12 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 			f.checkImprove(n, add)
 			checkVars(n, label(n), n.Prompt)
 			checkVars(n, label(n)+" › done when", n.Goal)
+		case "context":
+			f.checkContext(n, parents, add)
+			checkVars(n, label(n)+" › purpose", n.Goal)
+			for _, s := range n.Sources {
+				checkVars(n, label(n)+" › "+CtxLabel(s), strings.Join(s.Paths, " ")+" "+s.Text+" "+s.Query+" "+s.URL)
+			}
 		case "merge":
 			if !contains(MergeModes, n.Mode) {
 				add(n.ID, "error", "%s: choose how to merge.", label(n))

@@ -23,6 +23,64 @@ import { BUILTINS } from "./builtins.generated.js";
 
 // built-in tools as flow tools ("builtin:<name>"), shaped like project tools (mirrors core.FlowBuiltinTools)
 const NOT_IN_FLOWS = new Set(["todo_list", "get_command_output"]);
+// a Context step in the browser preview (flow/context.go, simplified):
+// sources in order, each cut to its share of the budget; files, past runs,
+// lessons and pages are named (the app reads them)
+function mockContext(f, n, parents, d, R) {
+  const budget = n.budget || 8000;
+  const pieces = [
+    ...parents.map((p) => ({
+      label: f.nodes.find((x) => x.id === p)?.title || p,
+      kind: "step",
+      text: d.steps?.[p] ?? "",
+    })),
+    ...(n.sources || []).map((s) => ({
+      label:
+        s.label ||
+        {
+          files: "Files " + (s.paths || []).join(", "),
+          text: "Notes",
+          inputs: "The flow's inputs",
+          history: "Past runs: " + (s.query || ""),
+          lessons: "Lessons from reviews",
+          url: s.url,
+        }[s.kind] ||
+        s.kind,
+      kind: s.kind,
+      priority: s.priority || "normal",
+      text:
+        s.kind === "text"
+          ? R(s.text || "")
+          : s.kind === "inputs"
+            ? JSON.stringify(d.inputs || {}, null, 2)
+            : `(${s.kind === "files" ? "the contents of " + (s.paths || []).join(", ") : s.kind === "url" ? s.url : s.kind}: read by the app when the flow runs)`,
+    })),
+  ];
+  const w = { high: 3, normal: 2, low: 1 },
+    total = pieces.reduce((a, p) => a + (w[p.priority] || 2), 0) || 1;
+  const report = { budget, used: 0, sources: [] };
+  let pack = `# Context: ${n.title || n.id}\n` + (n.goal ? `Purpose: ${R(n.goal)}\n` : "");
+  pieces.forEach((p, i) => {
+    const share = Math.floor(((budget * (w[p.priority] || 2)) / total) * 4),
+      kept = p.text.slice(0, share),
+      tokens = Math.ceil(p.text.length / 4),
+      keptT = Math.ceil(kept.length / 4);
+    report.sources.push({
+      id: "S" + (i + 1),
+      label: p.label,
+      kind: p.kind,
+      tokens,
+      kept: keptT,
+      chunks: 1,
+      keptChunks: kept ? 1 : 0,
+      note: kept.length < p.text.length ? "cut to its share of the budget" : "",
+    });
+    report.used += keptT;
+    if (kept) pack += `\n## [S${i + 1}] ${p.label}\n${kept}\n`;
+  });
+  return { pack, report };
+}
+
 function flowBuiltins() {
   return BUILTINS.filter((t) => !NOT_IN_FLOWS.has(t.name)).map((t) => {
     const props = t.inputSchema?.properties || {},
@@ -1817,6 +1875,8 @@ export function createMockBackend(methods) {
         }
         case "ai":
           return [mock(n, n.outputSchema, "answer"), true];
+        case "context":
+          return [mockContext(f, n, live, d, (t) => render(t, dd)).pack, false];
         case "transform": {
           const src = n.source ? render(n.source, dd) : input;
           if (n.op === "ai" || n.op === "command") return [mock(n, null, "result"), true];
@@ -4073,6 +4133,16 @@ export function createMockBackend(methods) {
           return ai(n.id, R(n.prompt, d) + (f.context?.text ? "\n\n## Context\n" + f.context.text : ""));
         case "improve":
           return improveStep(n, d);
+        case "context": {
+          const { pack, report } = mockContext(f, n, parents, d, (t) => R(t, d));
+          Object.assign(stepOf(n.id), { context: report });
+          pub(
+            "flow.context",
+            `${n.title || n.id}: ${report.used} of ${report.budget} tokens from ${report.sources.length} sources`,
+            { step: n.id },
+          );
+          return pack;
+        }
         case "gather":
           return gatherItems(n, gathered[n.id] || [], d);
         case "merge": {
@@ -6541,6 +6611,7 @@ export function createMockBackend(methods) {
         parents = f.edges.filter((e) => e.to === id).map((e) => e.from);
       const input = parents.map((p) => d.steps?.[p] ?? "").join("\n\n");
       try {
+        if (n.type === "context") return { output: mockContext(f, n, parents, d, (t) => render(t, d)).pack };
         if (n.type === "merge") {
           if (n.mode === "json-object")
             return {

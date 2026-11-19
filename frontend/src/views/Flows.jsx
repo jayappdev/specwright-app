@@ -35,6 +35,11 @@ export const STEP_TYPES = [
     name: "Improve until done",
     help: "Pairs with a tool: fixes its run, or has it check the AI's result, round after round until done",
   },
+  {
+    type: "context",
+    name: "Context",
+    help: "Gather files, notes, past runs and steps' results; keep what matters within a budget; the AI steps after it get it",
+  },
   { type: "merge", name: "Merge", help: "Combine several steps' outputs" },
   { type: "transform", name: "Transform", help: "Reshape data: JSON, CSV, text, Markdown → HTML, AI" },
   {
@@ -155,6 +160,18 @@ const sv = (d) =>
     );
   };
 const TYPE_ICON = {
+  context: {
+    color: "--ansi-cyan",
+    Icon: sv(
+      <>
+        <path d="M4 5h11" />
+        <path d="M4 10h8" />
+        <path d="M4 15h5" />
+        <circle cx="16.5" cy="15.5" r="3.5" />
+        <path d="M19 18l2.5 2.5" />
+      </>,
+    ),
+  },
   start: {
     color: "--ok",
     Icon: sv(
@@ -692,6 +709,11 @@ export function addNode(spec, x, y) {
     n.goal = "";
     n.rounds = 5;
     n.approve = "done";
+  }
+  if (spec.type === "context") {
+    n.goal = "";
+    n.sources = [];
+    n.budget = 8000;
   }
   if (spec.type === "merge") {
     n.mode = "concat";

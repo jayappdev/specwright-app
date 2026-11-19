@@ -446,37 +446,40 @@ export function Canvas() {
                 ? `${flow.inputs.length} input${flow.inputs.length === 1 ? "" : "s"}`
                 : n.type === "transform"
                   ? f.ops?.ops?.[n.op]?.name || n.op
-                  : n.type === "merge"
-                    ? MERGE_MODES.find(([m]) => m === n.mode)?.[1] || n.mode
-                    : n.type === "output"
-                      ? (n.format || "").toUpperCase() +
-                        " · " +
-                        (n.actions || []).map((a) => a.type).join(", ")
-                      : n.type === "ai"
-                        ? (n.prompt || "").slice(0, 40) || "No prompt yet"
-                        : n.type === "improve"
-                          ? (n.pair === "after" ? "Tool after checks · " : "Fixes the tool before · ") +
-                            `≤ ${n.rounds || 5} rounds` +
-                            ((n.approve || "done") !== "none" ? " · you confirm" : "")
-                          : n.type === "loop"
-                            ? (SPLIT_MODES.find(([m]) => m === (n.split || "auto"))?.[1] || n.split) +
-                              (loops.gather[n.id]
-                                ? " → " + (nodeOf(loops.gather[n.id])?.title || loops.gather[n.id])
-                                : " · no Gather yet")
-                            : n.type === "gather"
-                              ? GATHER_MODES.find(([m]) => m === (n.mode || "concat"))?.[1] || n.mode
-                              : n.type === "decision"
-                                ? `${(n.branches || []).length} path${(n.branches || []).length === 1 ? "" : "s"} + otherwise` +
-                                  (n.mode === "all" ? " · every match" : "")
-                                : n.type === "filter"
-                                  ? (n.mode === "drop" ? "Drop" : "Keep") +
-                                    ` rows · ${condCount(n.cond)} condition${condCount(n.cond) === 1 ? "" : "s"}`
-                                  : n.type === "aggregate"
-                                    ? (n.mode === "window" ? "Window" : "Group") +
-                                      ((n.groupBy || []).length
-                                        ? " by " + n.groupBy.join(", ")
-                                        : " · all rows")
-                                    : "";
+                  : n.type === "context"
+                    ? `${(n.sources || []).length} source${(n.sources || []).length === 1 ? "" : "s"} · ${Math.round((n.budget || 8000) / 1000)}k tokens` +
+                      (n.condense ? " · condensed" : "")
+                    : n.type === "merge"
+                      ? MERGE_MODES.find(([m]) => m === n.mode)?.[1] || n.mode
+                      : n.type === "output"
+                        ? (n.format || "").toUpperCase() +
+                          " · " +
+                          (n.actions || []).map((a) => a.type).join(", ")
+                        : n.type === "ai"
+                          ? (n.prompt || "").slice(0, 40) || "No prompt yet"
+                          : n.type === "improve"
+                            ? (n.pair === "after" ? "Tool after checks · " : "Fixes the tool before · ") +
+                              `≤ ${n.rounds || 5} rounds` +
+                              ((n.approve || "done") !== "none" ? " · you confirm" : "")
+                            : n.type === "loop"
+                              ? (SPLIT_MODES.find(([m]) => m === (n.split || "auto"))?.[1] || n.split) +
+                                (loops.gather[n.id]
+                                  ? " → " + (nodeOf(loops.gather[n.id])?.title || loops.gather[n.id])
+                                  : " · no Gather yet")
+                              : n.type === "gather"
+                                ? GATHER_MODES.find(([m]) => m === (n.mode || "concat"))?.[1] || n.mode
+                                : n.type === "decision"
+                                  ? `${(n.branches || []).length} path${(n.branches || []).length === 1 ? "" : "s"} + otherwise` +
+                                    (n.mode === "all" ? " · every match" : "")
+                                  : n.type === "filter"
+                                    ? (n.mode === "drop" ? "Drop" : "Keep") +
+                                      ` rows · ${condCount(n.cond)} condition${condCount(n.cond) === 1 ? "" : "s"}`
+                                    : n.type === "aggregate"
+                                      ? (n.mode === "window" ? "Window" : "Group") +
+                                        ((n.groupBy || []).length
+                                          ? " by " + n.groupBy.join(", ")
+                                          : " · all rows")
+                                      : "";
           const inLoop = loops.stack[n.id] || [],
             loopName = inLoop.length
               ? nodeOf(inLoop[inLoop.length - 1])?.title || inLoop[inLoop.length - 1]

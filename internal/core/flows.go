@@ -300,6 +300,8 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 				out = strings.Join(lines, "\n")
 			}
 		}
+	case "context":
+		out = flow.ContextPreview(&f, *n, parents, sample)
 	case "merge":
 		titles := map[string]string{}
 		for _, p := range parents {

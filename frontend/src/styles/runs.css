@@ -3115,3 +3115,44 @@ select.fl-secret-pick {
   display: block;
   padding-left: 2px;
 }
+/* the Context step: its sources in the designer, what it kept in a run */
+.fl-ctx-src {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  margin: 6px 0;
+}
+.fl-ctx-src-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.fl-ctx-src-head input {
+  flex: 1;
+  min-width: 0;
+}
+.fl-ctx-src textarea,
+.fl-ctx-src input {
+  max-width: 100%;
+}
+.fr-ctx {
+  margin: 6px 0;
+}
+.fr-ctx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  margin-top: 4px;
+}
+.fr-ctx-table th,
+.fr-ctx-table td {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.fr-ctx-table tr.none td {
+  opacity: 0.6;
+}
