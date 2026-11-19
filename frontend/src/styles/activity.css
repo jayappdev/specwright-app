@@ -29,7 +29,8 @@
   margin: 0;
   color: var(--muted);
 }
-.dlg input {
+/* text fields fill the dialog; checkboxes and radios keep their size */
+.dlg input:not([type="checkbox"], [type="radio"]) {
   width: 100%;
   padding: 7px 10px;
 }
