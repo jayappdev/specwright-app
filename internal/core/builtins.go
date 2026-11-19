@@ -79,31 +79,38 @@ func (h *Hub) BuiltinTools() []BuiltinTool {
 	for _, t := range builtin.Tools() {
 		out = append(out, BuiltinTool{BuiltinInfo: extension.BuiltinInfo{Name: t.Name, Title: t.Title, Description: t.Desc, InputSchema: t.Schema, ReadOnly: t.ReadOnly, Group: t.Group}, Enabled: !off[t.Name]})
 	}
+	for _, t := range h.appTools() {
+		out = append(out, BuiltinTool{BuiltinInfo: t, Enabled: !off[t.Name]})
+	}
+	return out
+}
+
+// appTools are SpecWright's own agent tools: how agents change, schedule
+// and run flows, read the run history and propose tools. They are offered
+// as their own MCP tools and through extension_managed.
+func (h *Hub) appTools() []extension.BuiltinInfo {
+	out := []extension.BuiltinInfo{
+		saveFlowInfo(),     // flowsave_agent.go
+		scheduleFlowInfo(), // flowschedule_agent.go
+		runFlowInfo(),      // runflow_agent.go
+		saveToolInfo(),     // toolsave_agent.go
+	}
+	if h.Store.HasDB() {
+		out = append(out, historySearchInfo()) // history_search.go
+	}
+	for i := range out {
+		out[i].App = true
+	}
 	return out
 }
 
 // Builtins implements extension.Provider: the enabled tools for agents.
 func (h *Hub) Builtins() []extension.BuiltinInfo {
 	var out []extension.BuiltinInfo
-	for _, t := range h.BuiltinTools() {
+	for _, t := range h.BuiltinTools() { // the built-ins and SpecWright's own (appTools)
 		if t.Enabled {
 			out = append(out, t.BuiltinInfo)
 		}
-	}
-	if !h.disabledBuiltins()[SaveFlowTool] {
-		out = append(out, saveFlowInfo()) // how agents change flows (flowsave_agent.go)
-	}
-	if !h.disabledBuiltins()[ScheduleFlowTool] {
-		out = append(out, scheduleFlowInfo()) // how agents schedule flows (flowschedule_agent.go)
-	}
-	if !h.disabledBuiltins()[RunFlowTool] {
-		out = append(out, runFlowInfo()) // agents reuse flows (runflow_agent.go)
-	}
-	if !h.disabledBuiltins()[SaveToolTool] {
-		out = append(out, saveToolInfo()) // agents propose tool revisions (toolsave_agent.go)
-	}
-	if !h.disabledBuiltins()[HistorySearchTool] && h.Store.HasDB() {
-		out = append(out, historySearchInfo()) // run history for agents (history_search.go)
 	}
 	return out
 }
@@ -176,4 +183,28 @@ func errText(err error) string {
 		return ""
 	}
 	return strings.TrimSpace(err.Error())
+}
+
+// AgentTool is a tool an agent is offered, as the Prompt Playground lists it.
+type AgentTool struct {
+	Name     string `json:"name"`
+	Title    string `json:"title"`
+	Group    string `json:"group"`
+	Desc     string `json:"desc"`
+	App      bool   `json:"app,omitempty"`
+	ReadOnly bool   `json:"readOnly,omitempty"`
+}
+
+// AgentTools are the built-in and SpecWright tools agents get here (the
+// project's own tools are listed with the tools), for the Playground.
+func (h *Hub) AgentTools() []AgentTool {
+	out := []AgentTool{}
+	for _, b := range h.Builtins() {
+		d := b.Description
+		if i := strings.IndexAny(d, "\n"); i >= 0 {
+			d = d[:i]
+		}
+		out = append(out, AgentTool{Name: b.Name, Title: b.Title, Group: b.Group, Desc: clipText(d, 260), App: b.App, ReadOnly: b.ReadOnly})
+	}
+	return out
 }

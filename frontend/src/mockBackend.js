@@ -5897,6 +5897,25 @@ export function createMockBackend(methods) {
     async FlowBuiltinTools() {
       return flowBuiltins();
     },
+    async AgentTools() {
+      const app = [
+        ["save_flow", "flows", "Save a flow (Flow Designer format)"],
+        ["schedule_flow", "flows", "Schedule a flow"],
+        ["run_flow", "flows", "Run a flow"],
+        ["history_search", "flows", "Search the run history"],
+        ["save_tool", "tools", "Propose a tool revision"],
+      ].map(([name, group, title]) => ({ name, group, title, desc: title, app: true }));
+      return [
+        ...app,
+        ...BUILTINS.map((b) => ({
+          name: b.name,
+          title: b.title,
+          group: b.group,
+          desc: b.description,
+          readOnly: b.readOnly,
+        })),
+      ];
+    },
     async BuiltinTools() {
       return unlocked ? clone(BUILTINS) : [];
     },

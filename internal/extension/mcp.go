@@ -95,9 +95,13 @@ func handleMCP(c *bridgeClient, req rpcReq) (any, *rpcErr) {
 		return map[string]any{}, nil
 	case "tools/list":
 		var out []any
+		var apps []BuiltinInfo
 		// built-in tools: one MCP tool each, with a typed schema
 		if bs, err := c.builtins(); err == nil {
 			for _, b := range bs {
+				if b.App {
+					apps = append(apps, b)
+				}
 				out = append(out, map[string]any{"name": b.Name, "title": b.Title, "description": b.Description, "inputSchema": b.InputSchema,
 					"annotations": map[string]any{"readOnlyHint": b.ReadOnly, "destructiveHint": b.Name == "delete_path", "openWorldHint": b.Name == "fetch_webpage"}})
 			}
@@ -111,7 +115,7 @@ func handleMCP(c *bridgeClient, req rpcReq) (any, *rpcErr) {
 			return map[string]any{"tools": out}, nil
 		}
 		tools, err := c.list()
-		desc := "Run a tool the user approved for this project."
+		desc := "Run a tool the user approved for this project, or one of SpecWright's own tools."
 		var names []string
 		if err != nil {
 			desc += " (The tool list is unavailable: " + err.Error() + ")"
@@ -138,6 +142,17 @@ func handleMCP(c *bridgeClient, req rpcReq) (any, *rpcErr) {
 					fmt.Fprintf(&b, " Arguments: %s.", strings.Join(ps, "; "))
 				}
 				b.WriteString("\n")
+			}
+			desc = b.String()
+		}
+		// SpecWright's own tools, for agents that reach tools only through
+		// extension_managed (a Copilot extension's, say)
+		if len(apps) > 0 {
+			var b strings.Builder
+			b.WriteString(desc + "\nSpecWright's own tools (also their own MCP tools; give their arguments as described there):\n")
+			for _, a := range apps {
+				names = append(names, a.Name)
+				fmt.Fprintf(&b, "- %s: %s\n", a.Name, clipDesc(a.Description, 300))
 			}
 			desc = b.String()
 		}
@@ -306,6 +321,15 @@ type BuiltinInfo struct {
 	InputSchema map[string]any `json:"inputSchema"`
 	ReadOnly    bool           `json:"readOnly"`
 	Group       string         `json:"group"`
+	// App: one of SpecWright's own tools (save_flow, run_flow, …). Agents
+	// can also call it through extension_managed, by its name.
+	App bool `json:"app,omitempty"`
+}
+
+// AppToolName is name without the prefix an agent's CLI may add
+// (agentbridge-save_flow in Copilot, mcp__agentbridge__save_flow in Claude).
+func AppToolName(name string) string {
+	return strings.TrimPrefix(strings.TrimPrefix(name, "mcp__agentbridge__"), "agentbridge-")
 }
 
 func (c *bridgeClient) builtins() ([]BuiltinInfo, error) {
@@ -322,4 +346,15 @@ func (c *bridgeClient) builtin(name string, args map[string]any) (BuiltinResult,
 type BuiltinResult struct {
 	Output string `json:"output"`
 	Error  string `json:"error,omitempty"`
+}
+
+// clipDesc is a description's first part, for a list of tools.
+func clipDesc(s string, n int) string {
+	if i := strings.Index(s, "\n"); i >= 0 {
+		s = s[:i]
+	}
+	if len(s) > n {
+		return s[:n] + "…"
+	}
+	return s
 }

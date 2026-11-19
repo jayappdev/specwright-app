@@ -13,6 +13,8 @@ const GROUPS = [
   ["execute", "Run"],
   ["web", "Web"],
   ["plan", "Plan"],
+  ["flows", "SpecWright: flows and history"],
+  ["tools", "SpecWright: tools"],
 ];
 const EXAMPLES = {
   read_file: { path: "README.md", start_line: 1, end_line: 40 },

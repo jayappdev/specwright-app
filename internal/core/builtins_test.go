@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -135,5 +136,62 @@ func TestBuiltinsAdminOnlyInUI(t *testing.T) {
 	}
 	if _, err := h.CallBuiltin("list_directory", nil); err != nil {
 		t.Fatalf("CallBuiltin in admin mode: %v", err)
+	}
+}
+
+// Agents that reach SpecWright only through extension_managed (a Copilot
+// extension's) can call its own tools too, by name or with the CLI's prefix.
+func TestAppToolsThroughExtensionManaged(t *testing.T) {
+	usePolicy(t, "")
+	h, _ := newHub(t)
+	for _, kv := range h.Bridge.Env() {
+		k, v, _ := strings.Cut(kv, "=")
+		t.Setenv(k, v)
+	}
+	flowJSON := `{"name":"Hello","inputs":[],"nodes":[{"id":"out","type":"output","title":"Out","format":"md","template":"hi"}],"edges":[]}`
+	call := func(id int, name string, args string) string {
+		return fmt.Sprintf(`{"jsonrpc":"2.0","id":%d,"method":"tools/call","params":{"name":"extension_managed","arguments":{"name":%q,"arguments":%s}}}`, id, name, args)
+	}
+	in := strings.Join([]string{
+		`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+		call(2, "save_flow", `{"flow":`+flowJSON+`}`),
+		call(3, "agentbridge-save_tool", `{"tool":{"name":"greet","command":"echo hi"}}`),
+		call(4, "no_such_tool", `{}`),
+	}, "\n")
+	var out bytes.Buffer
+	if err := extension.ServeMCP(strings.NewReader(in), &out); err != nil {
+		t.Fatal(err)
+	}
+	lines := strings.Split(strings.TrimSpace(out.String()), "\n")
+	for _, want := range []string{`"save_flow"`, `"schedule_flow"`, `"run_flow"`, `"save_tool"`, "SpecWright's own tools"} {
+		if !strings.Contains(lines[0], want) {
+			t.Fatalf("extension_managed does not offer %s:\n%s", want, lines[0])
+		}
+	}
+	if strings.Contains(lines[1], `"isError":true`) || !strings.Contains(lines[1], "Hello") {
+		t.Fatalf("save_flow through extension_managed: %s", lines[1])
+	}
+	if fs, _ := h.Flows(); len(fs) != 1 {
+		t.Fatalf("the flow was not saved: %d flows", len(fs))
+	}
+	if !strings.Contains(lines[2], "Proposed a new tool greet") {
+		t.Fatalf("save_tool with the Copilot prefix: %s", lines[2])
+	}
+	if !strings.Contains(lines[3], `"isError":true`) || !strings.Contains(lines[3], "no callable extension") {
+		t.Fatalf("unknown tool: %s", lines[3])
+	}
+	// they show in the Built-in tools list, and policy can turn them off
+	found := false
+	for _, b := range h.BuiltinTools() {
+		found = found || (b.Name == SaveFlowTool && b.App && b.Enabled)
+	}
+	if !found {
+		t.Fatal("save_flow is not listed with the built-in tools")
+	}
+	usePolicy(t, `{"disabledBuiltinTools":["save_flow"]}`)
+	for _, b := range h.Builtins() {
+		if b.Name == SaveFlowTool {
+			t.Fatal("policy did not turn save_flow off")
+		}
 	}
 }

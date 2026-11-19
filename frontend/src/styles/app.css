@@ -1410,3 +1410,24 @@
   flex: 1;
   min-width: 200px;
 }
+
+/* Playground: tools the agent can use */
+.pg-agenttools {
+  margin-top: 8px;
+}
+.pg-agenttools-body {
+  margin-top: 6px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.pg-agenttools-list {
+  list-style: none;
+  margin: 2px 0 8px;
+  padding: 0;
+}
+.pg-agenttools-list li {
+  padding: 2px 0;
+}

@@ -420,12 +420,112 @@ function Composer({ compact, box, r, running, anyRunning }) {
           Ask me to approve commands and edits outside the project
         </label>
       </div>
+      <AgentToolsList withProject={p.tools} />
       {!compact && (
         <p className="muted" style={{ margin: "8px 0 0" }}>
           Runs in <code className="inline-code">{S.ws.root}</code> with the workflow's token and cost budget.
           The agent can read and edit files there, as in a workflow step. The agent always has SpecWright's
           built-in tools for reading, searching and editing files and running commands.
         </p>
+      )}
+    </div>
+  );
+}
+
+const TOOL_GROUPS = [
+  ["flows", "SpecWright: flows and history"],
+  ["tools", "SpecWright: tools"],
+  ["read", "Read"],
+  ["search", "Search"],
+  ["edit", "Edit"],
+  ["execute", "Run"],
+  ["web", "Web"],
+  ["plan", "Plan"],
+];
+
+async function loadAgentTools() {
+  S.agentTools = (await backend.AgentTools().catch(() => [])) || [];
+  update();
+}
+
+// AgentToolsList: what the agent gets in a Playground run: SpecWright's own
+// tools (save_flow, run_flow, …), the built-ins and, with "Also offer
+// project and admin tools", the project's tools through extension_managed.
+// Names as the agent's CLI shows them, so a prompt can name them.
+function AgentToolsList({ withProject }) {
+  const [open, setOpen] = useState(false);
+  useEffect(() => {
+    if (open && !S.agentTools) loadAgentTools();
+  }, [open]);
+  const all = S.agentTools || [];
+  const project = withProject
+    ? (S.ws?.extensions || []).filter((t) => !t.managed || t.managed.status === "verified")
+    : [];
+  const cop = isCopilot();
+  const shown = (n) => (cop ? "agentbridge-" + n : "mcp__agentbridge__" + n);
+  return (
+    <div className="pg-agenttools">
+      <button className="link" onClick={() => setOpen(!open)} aria-expanded={open}>
+        {open ? "▾" : "▸"} Tools the agent can use{S.agentTools ? ` · ${all.length + project.length}` : ""}
+      </button>
+      {open && (
+        <div className="pg-agenttools-body">
+          <p className="muted">
+            On SpecWright&apos;s agentbridge MCP server, named as {cop ? "GitHub Copilot" : "the agent"} sees
+            them. SpecWright&apos;s own tools can also be called through extension_managed by their name.
+          </p>
+          {!S.agentTools && <span className="spinner" />}
+          {TOOL_GROUPS.map(([g, label]) => {
+            const ts = all.filter((t) => t.group === g);
+            if (!ts.length) return null;
+            return (
+              <div key={g}>
+                <div className="bt-group">{label}</div>
+                <ul className="pg-agenttools-list">
+                  {ts.map((t) => (
+                    <li key={t.name} title={t.desc}>
+                      <code className="inline-code" data-nofile>
+                        {shown(t.name)}
+                      </code>{" "}
+                      <span className="muted">{t.title || t.desc}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+          {all
+            .filter((t) => !TOOL_GROUPS.some(([g]) => g === t.group))
+            .map((t) => (
+              <div key={t.name}>
+                <code className="inline-code" data-nofile>
+                  {shown(t.name)}
+                </code>{" "}
+                <span className="muted">{t.title || t.desc}</span>
+              </div>
+            ))}
+          {withProject ? (
+            <div>
+              <div className="bt-group">Project tools (through {shown("extension_managed")})</div>
+              {project.length ? (
+                <ul className="pg-agenttools-list">
+                  {project.map((t) => (
+                    <li key={t.name} title={t.desc}>
+                      <code className="inline-code" data-nofile>
+                        {t.name}
+                      </code>{" "}
+                      <span className="muted">{t.desc}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted">No project tools yet.</p>
+              )}
+            </div>
+          ) : (
+            <p className="muted">Project tools are not offered: tick “Also offer project and admin tools”.</p>
+          )}
+        </div>
       )}
     </div>
   );

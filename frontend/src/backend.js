@@ -52,6 +52,7 @@ const METHODS = [
   "DeleteExtension",
   "GenerateExtension",
   "GenerateExtensionTrace",
+  "AgentTools",
   "ToolFromReply",
   "GenerateScript",
   "TestExtension",

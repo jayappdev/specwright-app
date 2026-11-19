@@ -612,6 +612,9 @@ func (a *App) ExportProjectZip(withContext bool) (core.ZipResult, error) {
 }
 
 // BuiltinTools lists the built-in tools for the UI, in admin mode only.
+// AgentTools lists the built-in and SpecWright tools agents are offered.
+func (a *App) AgentTools() []core.AgentTool { return val(a.hub.AgentTools()) }
+
 func (a *App) BuiltinTools() []core.BuiltinTool {
 	if !a.hub.BuiltinsVisible() {
 		return []core.BuiltinTool{}

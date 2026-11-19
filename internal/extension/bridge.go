@@ -200,8 +200,12 @@ func (b *Bridge) handleCall(w http.ResponseWriter, r *http.Request) {
 		Arguments map[string]any `json:"arguments"`
 		Agent     string         `json:"agent"` // the agent process (one run), for "allow for this run"
 	}
-	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 1<<20)).Decode(&req); err != nil {
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16<<20)).Decode(&req); err != nil { // a whole flow for save_flow
 		writeJSON(w, RunResult{Error: "bad request: " + err.Error()})
+		return
+	}
+	if out, ok := b.appTool(r.Context(), req.Name, req.Arguments); ok {
+		writeJSON(w, out)
 		return
 	}
 	e, ok := b.callable()[req.Name]
@@ -259,6 +263,28 @@ func (b *Bridge) handleCall(w http.ResponseWriter, r *http.Request) {
 	res.Output = forAgent(b.p.Root(), e.Name, res.Output, res.Truncated)
 	b.p.Observe(e.Name, req.Arguments, res)
 	writeJSON(w, res)
+}
+
+// appTool runs one of SpecWright's own tools (save_flow, …) called through
+// extension_managed: some agents reach SpecWright only that way. A project
+// tool of the same name wins. As when it is called as its own MCP tool, the
+// tool choice of a spec step (which covers project tools) does not apply.
+func (b *Bridge) appTool(ctx context.Context, name string, args map[string]any) (RunResult, bool) {
+	name = AppToolName(name)
+	if _, mine := b.callable()[name]; mine {
+		return RunResult{}, false
+	}
+	for _, t := range b.p.Builtins() {
+		if t.Name != name || !t.App {
+			continue
+		}
+		out, err := b.p.RunBuiltin(ctx, name, args)
+		if err != nil {
+			return RunResult{Error: err.Error(), Output: err.Error()}, true
+		}
+		return RunResult{OK: true, Output: forAgent(b.p.Root(), name, out, false)}, true
+	}
+	return RunResult{}, false
 }
 
 func (b *Bridge) handleBuiltin(w http.ResponseWriter, r *http.Request) {
