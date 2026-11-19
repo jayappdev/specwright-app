@@ -372,6 +372,10 @@ export function onHubEvent(e) {
       arr.push(e);
       arr.sort((a, b) => a.seq - b.seq);
     }
+    // a run the Playground list does not have yet (a trigger's or an
+    // agent's): it reads the list again
+    if ((e.type === "run.start" || e.type === "run.end") && S.pg && !S.pg.runs.some((x) => x.id === e.run_id))
+      S.pgStale = true;
   }
   switch (e.type) {
     case "workflow.changed":

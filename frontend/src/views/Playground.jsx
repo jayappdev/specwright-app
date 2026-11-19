@@ -9,7 +9,7 @@ import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHo
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
-import { EmptyState } from "../ui.jsx";
+import { EmptyState, RefreshButton, usePoll } from "../ui.jsx";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, isCopilot, fmtK, fmtMs, fmtCredits } from "../store.js";
 import { Icon, Pill, Stat, Chip } from "../ui.jsx";
@@ -88,14 +88,36 @@ const runTitle = (id) => {
     : id.slice(0, 15) + "…";
 };
 
-async function loadPast() {
+// How often the run list is read again while the Playground is open (as
+// History): runs started elsewhere (a flow, a trigger, an agent's run_flow)
+// show up without leaving the view.
+export const PLAYGROUND_POLL = 30;
+
+// loadPast reads the recorded runs of this project into the list, merging
+// with what it has: on opening, on Refresh, every PLAYGROUND_POLL seconds,
+// and when a run it does not know sends an event. Another project starts a
+// list of its own.
+export async function loadPast(force) {
   const p = pg();
-  if (p.loaded || !S.ws) return;
+  if (!S.ws) return;
+  if (p.root !== S.ws.root) {
+    if (p.root) Object.assign(p, { runs: [], sel: "", parents: [] });
+    p.root = S.ws.root;
+    p.loaded = false;
+  }
+  if (p.loaded && !force) return;
   p.loaded = true;
-  const runs = (await backend.Runs(500).catch(() => [])) || [];
+  const runs = (await backend.Runs(500).catch(() => null)) || null;
+  if (!runs) return;
   for (const r of runs.filter((x) => x.step === "playground" || x.step === "flow")) {
     const had = p.runs.find((x) => x.id === r.id);
-    if (had) Object.assign(had, { archived: !!r.archived, group: r.group || "" });
+    if (had)
+      Object.assign(had, {
+        archived: !!r.archived,
+        group: r.group || "",
+        title: had.title || r.title || "",
+        state: r.state || had.state,
+      });
     else
       p.runs.push({
         id: r.id,
@@ -454,9 +476,10 @@ async function loadAgentTools() {
 // Names as the agent's CLI shows them, so a prompt can name them.
 function AgentToolsList({ withProject }) {
   const [open, setOpen] = useState(false);
+  const toolKey = (S.ws?.extensions || []).map((t) => t.name + ":" + (t.revision || 0)).join(",");
   useEffect(() => {
-    if (open && !S.agentTools) loadAgentTools();
-  }, [open]);
+    if (open) loadAgentTools(); // read again each time: tools and policy change
+  }, [open, toolKey]);
   const all = S.agentTools || [];
   const project = withProject
     ? (S.ws?.extensions || []).filter((t) => !t.managed || t.managed.status === "verified")
@@ -598,6 +621,13 @@ export function Playground() {
   useEffect(() => {
     loadPast();
   }, [S.ws?.root]);
+  usePoll(() => loadPast(true), PLAYGROUND_POLL * 1000, [S.ws?.root]);
+  useEffect(() => {
+    if (!S.pgStale) return;
+    S.pgStale = false;
+    const t = setTimeout(() => loadPast(true), 400); // the run is recorded first
+    return () => clearTimeout(t);
+  }, [S.pgStale]);
   if (!S.ws) return <NeedWorkspace what="the playground" />;
   for (const [id, fst] of Object.entries(S.flowRuns))
     if (!p.runs.some((x) => x.id === id))
@@ -629,7 +659,14 @@ export function Playground() {
             padding: "0 8px 8px",
           }}
         >
-          <h1>Playground</h1>
+          <h1 className="list-head">
+            Playground{" "}
+            <RefreshButton
+              label="Refresh the Playground runs"
+              every={PLAYGROUND_POLL}
+              onRefresh={() => loadPast(true)}
+            />
+          </h1>
           <button
             className="btn primary"
             onClick={() => {
