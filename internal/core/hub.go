@@ -342,7 +342,8 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	h.exts = extension.NewStore(abs)
 	h.pkgs = extension.NewPackageStore(abs)
 	h.runner = &workflow.Runner{Bus: h.Bus, Store: h.Store, Agents: h.Agents, Workspace: abs,
-		Env: h.childEnv, MCPConfig: h.mcpConfig, OnStatus: h.onStepStatus}
+		Env: h.childEnv, MCPConfig: h.mcpConfig, OnStatus: h.onStepStatus,
+		ToolsReached: func(since time.Time) bool { return h.Bridge.LastContact().After(since) }}
 	h.tools.SetRoot(abs)
 	h.watcher = watch.New(abs, time.Second)
 	w0 := h.watcher

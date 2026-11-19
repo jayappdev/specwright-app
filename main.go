@@ -41,6 +41,9 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "tool" { // SpecWright's tools without MCP (agents' shell)
+		os.Exit(extension.RunToolCLI(os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
+	}
 	if len(os.Args) > 1 && os.Args[1] == "agentbridge" {
 		if err := extension.ServeMCP(os.Stdin, os.Stdout); err != nil {
 			fmt.Fprintln(os.Stderr, "agentbridge:", err)

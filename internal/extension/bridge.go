@@ -14,6 +14,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 )
 
@@ -59,12 +60,13 @@ type PermissionAnswer struct {
 // A random bearer token, passed to the MCP process through its environment,
 // keeps other local processes out.
 type Bridge struct {
-	p     Provider
-	ln    net.Listener
-	srv   *http.Server
-	token string
-	mu    sync.Mutex
-	extra map[string]Extension // temporary, for "Test with AI"
+	p       Provider
+	ln      net.Listener
+	srv     *http.Server
+	token   string
+	mu      sync.Mutex
+	extra   map[string]Extension // temporary, for "Test with AI"
+	contact atomic.Int64         // unix nanoseconds of the last agent contact (LastContact)
 }
 
 // StartBridge listens on 127.0.0.1 at a random port.
@@ -77,10 +79,10 @@ func StartBridge(p Provider) (*Bridge, error) {
 	_, _ = rand.Read(b)
 	br := &Bridge{p: p, ln: ln, token: hex.EncodeToString(b), extra: map[string]Extension{}}
 	mux := http.NewServeMux()
-	mux.HandleFunc("GET /list", br.auth(br.handleList))
-	mux.HandleFunc("POST /call", br.auth(br.handleCall))
-	mux.HandleFunc("GET /builtins", br.auth(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, br.p.Builtins()) }))
-	mux.HandleFunc("POST /builtin", br.auth(br.handleBuiltin))
+	mux.HandleFunc("GET /list", br.auth(br.touch(br.handleList)))
+	mux.HandleFunc("POST /call", br.auth(br.touch(br.handleCall)))
+	mux.HandleFunc("GET /builtins", br.auth(br.touch(func(w http.ResponseWriter, _ *http.Request) { writeJSON(w, br.p.Builtins()) })))
+	mux.HandleFunc("POST /builtin", br.auth(br.touch(br.handleBuiltin)))
 	mux.HandleFunc("POST /permission", br.auth(br.handlePermission))
 	br.srv = &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
 	go func() { _ = br.srv.Serve(ln) }()
@@ -95,7 +97,26 @@ func (b *Bridge) Token() string { return b.token }
 
 // Env returns the variables the MCP process (and the mock agent) need.
 func (b *Bridge) Env() []string {
-	return []string{"CODEGEN_BRIDGE_URL=" + b.URL(), "CODEGEN_BRIDGE_TOKEN=" + b.token}
+	env := []string{"CODEGEN_BRIDGE_URL=" + b.URL(), "CODEGEN_BRIDGE_TOKEN=" + b.token}
+	if exe, err := os.Executable(); err == nil { // "$CODEGEN_TOOL" tool …, without MCP (toolcli.go)
+		env = append(env, ToolEnv+"="+exe)
+	}
+	return env
+}
+
+// LastContact is when an agent last asked the bridge for or ran a tool (its
+// MCP server listing them as it starts, or the tool command): a run with
+// no contact never had SpecWright's tools.
+func (b *Bridge) LastContact() time.Time {
+	return time.Unix(0, b.contact.Load())
+}
+
+// touch notes contact from an agent, then serves h.
+func (b *Bridge) touch(h http.HandlerFunc) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		b.contact.Store(time.Now().UnixNano())
+		h(w, r)
+	}
 }
 
 // Close stops the server.

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"fmt"
 	"path/filepath"
 	"testing"
 	"time"
@@ -86,7 +87,15 @@ func TestReopenKeepsOutsideWatch(t *testing.T) {
 	if len(v[0].State.Watching) != 1 {
 		t.Fatalf("still watching after reopening: %+v", v[0].State)
 	}
-	writeFile(t, out, "a.txt", "x")
+	// the watcher reports itself before its first look at the folder: a
+	// file written at once may be part of that look, so write until it fires
+	for i := 0; i < 20; i++ {
+		writeFile(t, out, fmt.Sprintf("a%d.txt", i), "x")
+		time.Sleep(250 * time.Millisecond)
+		if v, _ = h.FlowTriggers("inbox"); v[0].State.Runs > 0 {
+			break
+		}
+	}
 	if st := waitTrigger(t, h, "inbox", 1); st.Status != "done" {
 		t.Fatal(st.Status)
 	}

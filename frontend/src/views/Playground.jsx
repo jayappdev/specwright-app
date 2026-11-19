@@ -643,7 +643,7 @@ export function Playground() {
     .map((e) => e.text)
     .join("\n\n");
   const problems = evs.filter((e) =>
-    ["error", "loop.detected", "budget.exceeded", "run.retry"].includes(e.type),
+    ["error", "loop.detected", "budget.exceeded", "run.retry", "tools.unreachable"].includes(e.type),
   );
   const model = [...evs].reverse().find((e) => e.type === "model.request" && e.model)?.model;
   const anyRunning = p.runs.some((x) => stateOf(S.events[x.id] || []) === "running");
@@ -827,7 +827,12 @@ export function Playground() {
               )}
             </div>
             {problems.map((e) => (
-              <div key={e.seq} className={"banner" + (e.type === "run.retry" ? "" : " error")}>
+              <div
+                key={e.seq}
+                className={
+                  "banner" + (e.type === "run.retry" || e.type === "tools.unreachable" ? "" : " error")
+                }
+              >
                 <Linkify text={e.summary} />
               </div>
             ))}

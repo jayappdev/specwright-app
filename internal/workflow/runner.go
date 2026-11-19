@@ -39,6 +39,10 @@ type Runner struct {
 	// Flush is called when the agent finishes, so file changes it made just
 	// before exiting are attributed to this run (the watcher polls).
 	Flush func()
+	// ToolsReached says whether an agent reached SpecWright's tools since a
+	// time (the bridge's last contact): a run that never did gets a
+	// tools.unreachable event, as its CLI did not load the MCP server.
+	ToolsReached func(since time.Time) bool
 
 	mu     sync.Mutex
 	active *Run
@@ -190,7 +194,14 @@ func (rn *Runner) execute(ctx context.Context, run *Run, drv agent.Driver, wfID,
 	_ = sess.To(session.Running, "started")
 	rn.publish(run, "run.start", "Started "+stepID+" with "+drv.Name(), map[string]any{"agent": drv.Name(), "model": o.Model, "cwd": rn.Workspace, "workflow": wfID})
 	prompt := o.Prompt
+	offered := rn.MCPConfig != nil && drv.Name() != "mock"
+	if offered {
+		prompt += ToolCommandNote
+	}
 	finish := func(state session.State, reason string) {
+		if offered && rn.ToolsReached != nil && !rn.ToolsReached(run.started) && ctx.Err() == nil {
+			rn.publish(run, "tools.unreachable", "SpecWright's tools did not reach "+drv.Name()+" in this run: its MCP server (agentbridge) was not loaded. A company policy for MCP servers, or the CLI, may block it. The agent can still run them with its shell (\"$CODEGEN_TOOL\" tool list), as the prompt tells it.", map[string]any{"agent": drv.Name()})
+		}
 		_ = sess.To(state, reason)
 		u := run.Usage()
 		u.DurationMS = time.Since(run.started).Milliseconds()
@@ -435,3 +446,9 @@ func Exists(path string) bool { _, err := os.Stat(path); return err == nil }
 func appOwned(p string) bool {
 	return strings.HasPrefix(p, ".codegen/workflows/") || p == ".codegen/profile.json" || p == ".codegen/extensions.json"
 }
+
+// ToolCommandNote tells the agent how to reach SpecWright's tools when its
+// CLI did not load the agentbridge MCP server (extension/toolcli.go).
+const ToolCommandNote = "\n\n(SpecWright: its tools are on the agentbridge MCP server — agentbridge-<name> in GitHub Copilot, mcp__agentbridge__<name> in Claude Code. " +
+	"If they are not in your tool list, run them with your shell instead: \"$CODEGEN_TOOL\" tool list shows them, " +
+	"\"$CODEGEN_TOOL\" tool <name> --schema shows a tool's arguments, and \"$CODEGEN_TOOL\" tool <name> '<arguments as one JSON object>' runs it. Use exactly that form, nothing chained to it.)"
