@@ -367,8 +367,8 @@ func (a *App) InspectTool(e extension.Extension) (core.ToolInspect, error) {
 }
 
 // RefineToolWithAI proposes a tool's parameters, output shape and test cases.
-func (a *App) RefineToolWithAI(e extension.Extension, model string) (core.ToolRefine, error) {
-	return ok(a.hub.RefineToolWithAI(e, model))
+func (a *App) RefineToolWithAI(e extension.Extension, model, ask string) (core.ToolRefine, error) {
+	return ok(a.hub.RefineToolWithAI(e, model, ask))
 }
 
 // SaveToolMeta saves a tool's parameters, output shape and test cases.

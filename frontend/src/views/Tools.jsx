@@ -95,6 +95,7 @@ const tbDefaults = () => ({
   gen: null,
   draft: null,
   refine: "",
+  fixAsk: "",
   testPrompt: "",
   attachments: [],
   test: null,
@@ -216,7 +217,14 @@ async function generate(refining) {
   try {
     const d = await backend.GenerateExtension(
       refining
-        ? { draft: tb.draft, change: tb.refine }
+        ? {
+            draft: tb.draft,
+            change: tb.refine,
+            // a failed test goes along, so the change can also fix it
+            ...(tb.test && !tb.test.pass && !tb.test.running
+              ? { failure: tb.test, question: tb.testPrompt, attachments: attPaths(tb) }
+              : {}),
+          }
         : { prompt: tb.prompt, runsIn: tb.runsIn, connects: tb.connects },
     );
     d.scope = tb.scope;
@@ -255,24 +263,31 @@ async function runTest() {
 }
 
 // Ask the agent to fix the draft from the failed test, then test again;
-// repeat until it passes or MAX_FIX attempts are used.
+// repeat until it passes or MAX_FIX attempts are used. What the developer
+// typed under the test result (tb.fixAsk) goes with every attempt.
 async function autoFix() {
   const tb = S.tb;
-  tb.fix = { running: true, log: [] };
+  const ask = (tb.fixAsk || "").trim();
+  tb.fix = { running: true, log: [], ask };
+  tb.fixAsk = "";
   update();
   const say = (l) => {
     tb.fix.log.push(l);
     update();
   };
   for (let a = 1; a <= MAX_FIX; a++) {
-    say(`Attempt ${a} of ${MAX_FIX}: sending the failed test to the agent`);
+    say(
+      `Attempt ${a} of ${MAX_FIX}: sending the failed test${ask ? " and your instructions" : ""} to the agent`,
+    );
     try {
       const d = await backend.GenerateExtension({
         draft: tb.draft,
         failure: tb.test,
         question: tb.testPrompt,
         attachments: attPaths(tb),
-        change: "Fix the tool so the test passes.",
+        change: ask
+          ? `The developer says: ${ask}\nFix the tool so the test passes, doing what the developer asks.`
+          : "Fix the tool so the test passes.",
       });
       d.scope = tb.scope;
       tb.draft = d;
@@ -288,11 +303,40 @@ async function autoFix() {
     }
     if (a === MAX_FIX)
       say(
-        `Still failing after ${MAX_FIX} attempts. Review the script, or describe the fix under Review › Ask AI to change something.`,
+        `Still failing after ${MAX_FIX} attempts. Tell the AI what to change in the box above and try again, or review the script.`,
       );
   }
   tb.fix.running = false;
   update();
+}
+
+// The test passed but the developer wants a change: revise the draft with
+// their words, then test it again.
+async function refineAndTest() {
+  const tb = S.tb;
+  const ask = (tb.fixAsk || "").trim();
+  if (!ask) return toast("Say what to change.");
+  tb.fix = { running: true, log: [], ask };
+  tb.fixAsk = "";
+  update();
+  const say = (l) => {
+    tb.fix.log.push(l);
+    update();
+  };
+  say("Sending your change to the agent");
+  try {
+    const d = await backend.GenerateExtension({ draft: tb.draft, change: ask });
+    d.scope = tb.scope;
+    tb.draft = d;
+    say(`Revision ${tb.draft.revision} written. Testing again…`);
+    await runTest();
+    say(tb.test.pass ? "Changed, and the test still passes." : "Changed, but the test fails now.");
+  } catch (e) {
+    say("The agent could not change it: " + errMsg(e));
+  }
+  tb.fix.running = false;
+  update();
+  if (tb.test && !tb.test.pass && tb.autoFix !== false && !tb.ro) autoFix();
 }
 
 // Run the test; when it fails and "fix automatically" is on, start autoFix.
@@ -989,28 +1033,55 @@ export function Tools() {
             <p className="muted">
               <Linkify text={t.summary} />
             </p>
-            {!t.pass && !tb.fix?.running && (
-              <div className="sub-row">
-                <span>
-                  {missing.length ? (
-                    <>
-                      Give {missing.map((s) => s.name).join(", ")} a value first (environment variable,
-                      session value or “Ask me”): the AI cannot supply secrets.
-                    </>
-                  ) : (
-                    <>
-                      <b>Let the AI fix it</b>{" "}
-                      <span className="muted">
-                        · sends the failed checks and output to the agent, applies its fix and tests again (up
-                        to {MAX_FIX} attempts)
+            {!tb.fix?.running && !tb.ro && (
+              <div className="fix-ask">
+                {!t.pass && missing.length > 0 ? (
+                  <p className="muted">
+                    Give {missing.map((s) => s.name).join(", ")} a value first (environment variable, session
+                    value or “Ask me”): the AI cannot supply secrets.
+                  </p>
+                ) : (
+                  <>
+                    <label className="field">
+                      <span>
+                        <b>{t.pass ? "Change something" : "Let the AI fix it"}</b>{" "}
+                        <span className="muted">
+                          {t.pass
+                            ? "· say what to change; the AI revises the tool and tests it again"
+                            : `· say what is wrong or what to do (optional); it also gets the failed checks and output, applies its fix and tests again (up to ${MAX_FIX} attempts)`}
+                        </span>
                       </span>
-                    </>
-                  )}
-                </span>
-                {!tb.ro && (
-                  <button className="btn primary" disabled={missing.length > 0} onClick={autoFix}>
-                    Fix with AI
-                  </button>
+                      <textarea
+                        rows={3}
+                        value={tb.fixAsk || ""}
+                        placeholder={
+                          t.pass
+                            ? "e.g. also return the file count; sort the results by size"
+                            : "e.g. the API wants the token in an Authorization header; dates are YYYY-MM-DD"
+                        }
+                        onChange={(e) => set("fixAsk", e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey))
+                            t.pass ? refineAndTest() : autoFix();
+                        }}
+                      />
+                    </label>
+                    <div className="row-actions">
+                      {t.pass ? (
+                        <button
+                          className="btn secondary"
+                          disabled={!(tb.fixAsk || "").trim()}
+                          onClick={refineAndTest}
+                        >
+                          <Icon.spark /> Change and test again
+                        </button>
+                      ) : (
+                        <button className="btn primary" onClick={autoFix}>
+                          <Icon.spark /> Fix with AI
+                        </button>
+                      )}
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -1019,15 +1090,24 @@ export function Tools() {
         {tb.fix && (
           <div className="card">
             <div className="card-head">
-              <h3>Automatic fix</h3>
+              <h3>{tb.fix.ask ? "AI change" : "Automatic fix"}</h3>
               {tb.fix.running ? (
                 <span className="spinner" />
               ) : (
                 <span className={"badge " + (t?.pass ? "badge-ok" : "badge-warn")}>
-                  {t?.pass ? "fixed" : "not fixed"}
+                  {t?.pass
+                    ? tb.fix.ask && !tb.fix.log.some((l) => l.startsWith("Attempt"))
+                      ? "done"
+                      : "fixed"
+                    : "not fixed"}
                 </span>
               )}
             </div>
+            {tb.fix.ask && (
+              <p className="muted">
+                You asked: <i>{tb.fix.ask}</i>
+              </p>
+            )}
             <ul className="lib-list">
               {tb.fix.log.map((l, k) => (
                 <li key={k}>{l}</li>

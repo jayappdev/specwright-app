@@ -7369,7 +7369,7 @@ export function createMockBackend(methods) {
         });
       return { ...r, source, notes: [] };
     },
-    async RefineToolWithAI(d) {
+    async RefineToolWithAI(d, _model, ask) {
       await wait(1200);
       const { params } = inferParams(d);
       for (const p of params) {
@@ -7411,7 +7411,9 @@ export function createMockBackend(methods) {
         output: d.output || null,
         tests,
         changes,
-        why: `(browser preview) Read ${d.script ? "the script" : "the command"} of ${d.name}: what it reads, the values it accepts and what it prints.`,
+        why:
+          `(browser preview) Read ${d.script ? "the script" : "the command"} of ${d.name}: what it reads, the values it accepts and what it prints.` +
+          (ask ? ` It took your request into account: “${ask.split("\n")[0]}”.` : ""),
         notes: [],
       };
     },

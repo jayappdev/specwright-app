@@ -558,13 +558,33 @@ async function infer(tb, d) {
   update();
 }
 
+// refineAsk: what the developer typed, plus the last run when it failed,
+// so the AI can see what went wrong.
+function refineAsk(t) {
+  let ask = (t.ask || "").trim();
+  const r = t.run;
+  if (ask && r && !r.ok) {
+    const failed = (r.checks || []).filter((c) => !c.ok).map((c) => c.label);
+    ask +=
+      "\n\nThe last run with these arguments failed:\n" +
+      JSON.stringify(argsOf(t.params || [], t.vals)) +
+      (r.error ? "\nError: " + r.error : "") +
+      (failed.length ? "\nFailed checks: " + failed.join("; ") : "") +
+      (r.output ? "\nOutput:\n" + String(r.output).slice(0, 3000) : "");
+  }
+  return ask;
+}
+
 async function refine(tb, d, model) {
   const t = tt(tb, d);
-  t.meta = { busy: "ai" };
+  t.params = d.params || [];
+  const ask = refineAsk(t);
+  t.meta = { busy: "ai", ask: (t.ask || "").trim() };
   update();
   try {
-    const r = await backend.RefineToolWithAI(d, model || "");
-    t.meta = { kind: "ai", ...r };
+    const r = await backend.RefineToolWithAI(d, model || "", ask);
+    t.meta = { kind: "ai", ask: (t.ask || "").trim(), ...r };
+    t.ask = "";
   } catch (e) {
     t.meta = { error: errMsg(e) };
   }
@@ -586,6 +606,27 @@ function Meta({ tb, d }) {
           : "no parameters declared"}
         {d.output?.type ? ` → output: ${d.output.type}` : " → output: text"}
       </p>
+      {!tb.ro && !managed && (
+        <label className="field tt-ask">
+          <span className="muted">
+            Tell the AI what to change (optional) · it reads the tool&apos;s source; a failed run above goes
+            along
+          </span>
+          <textarea
+            rows={2}
+            value={t.ask || ""}
+            disabled={!!m?.busy}
+            placeholder="e.g. path should default to the project root; tags is a list, not one text; add a case for an empty folder"
+            onChange={(e) => {
+              t.ask = e.target.value;
+              update();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) refine(tb, d, model);
+            }}
+          />
+        </label>
+      )}
       {!tb.ro && !managed && (
         <div className="row-actions">
           <button
@@ -623,6 +664,11 @@ function Meta({ tb, d }) {
             {m.kind === "ai" ? "The AI proposes" : "Found"}
             {m.source ? ` (from ${m.source})` : ""}:
           </div>
+          {m.ask && (
+            <p className="muted">
+              You asked: <i>{m.ask}</i>
+            </p>
+          )}
           {(m.changes || []).length ? (
             <ul className="ai-changes">
               {m.changes.map((c, i) => (
