@@ -1738,6 +1738,20 @@ export function createMockBackend(methods) {
       expr: "Field (optional: empty is the whole input)",
       exprOptional: true,
     },
+    "json-md-table": {
+      name: "JSON array → Markdown table",
+      group: "JSON",
+      help: 'One row per element, one column per field, in the order the JSON has them. Name the columns to choose and order them: paths into each element, with a header after "as" (name, user.email as Email, tags[0]). An object that holds the list ({"items": [...]}) gives the list\'s table.',
+      expr: "Columns (optional: empty is every field)",
+      exprOptional: true,
+    },
+    "json-html-table": {
+      name: "JSON array → HTML table",
+      group: "JSON",
+      help: 'A <table> with a header row, one row per element, one column per field (in the order the JSON has them), values escaped. Name the columns to choose and order them: paths with an optional header after "as" (name, user.email as Email). An object that holds the list ({"items": [...]}) gives the list\'s table.',
+      expr: "Columns (optional: empty is every field)",
+      exprOptional: true,
+    },
     "json-pretty": { name: "Format JSON", group: "JSON" },
     "json-minify": { name: "Minify JSON", group: "JSON" },
     "csv-to-json": { name: "CSV → JSON", group: "Convert" },
@@ -3392,6 +3406,48 @@ export function createMockBackend(methods) {
     }
     return wild ? cur : cur[0];
   };
+  // JSON array → table (as internal/flow/tables.go): columns in the JSON's
+  // order, or the ones named ("user.email as Email").
+  const jsonTable = (input, expr = "") => {
+    let v = JSON.parse(input);
+    if (v && !Array.isArray(v) && typeof v === "object") {
+      const lists = Object.keys(v).filter(
+        (k) => Array.isArray(v[k]) && v[k][0] && typeof v[k][0] === "object",
+      );
+      v = lists.length === 1 ? v[lists[0]] : [v];
+    }
+    if (!Array.isArray(v)) throw new Error("a table needs a JSON array (or an object holding one)");
+    const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
+    let cols = (expr || "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((x) => {
+        const m = x.match(/^(.+?)\s+as\s+(.+)$/i);
+        return m ? { path: m[1].trim(), head: m[2].trim() } : { path: x, head: x };
+      });
+    if (!cols.length) {
+      const seen = new Set();
+      for (const r of v) if (isObj(r)) for (const k of Object.keys(r)) seen.add(k);
+      cols = [...seen].map((k) => ({ path: k, head: k }));
+      if (v.some((r) => !isObj(r))) cols.push({ path: "", head: "value" });
+    }
+    if (!cols.length) throw new Error("the array is empty: there is no table to make");
+    const at = (o, p) =>
+      p
+        .replace(/\[(\d+)\]/g, ".$1")
+        .split(".")
+        .filter(Boolean)
+        .reduce((a, k) => (a == null ? undefined : a[k]), o);
+    const cell = (x) =>
+      x == null ? "" : typeof x === "string" ? x : typeof x === "object" ? JSON.stringify(x) : String(x);
+    return {
+      head: cols.map((c) => c.head),
+      rows: v.map((r) =>
+        cols.map((c) => (c.path === "" ? (isObj(r) ? "" : cell(r)) : isObj(r) ? cell(at(r, c.path)) : "")),
+      ),
+    };
+  };
   const toCsv = (v) => {
     const rows = (Array.isArray(v) ? v : [v]).map((r) => (r && typeof r === "object" ? r : { value: r }));
     const head = [...new Set(rows.flatMap((r) => Object.keys(r)))];
@@ -3547,6 +3603,34 @@ export function createMockBackend(methods) {
           throw new Error(`${field}: nothing at "${m[0]}"`);
         };
         return JSON.stringify(walk(v, 0), null, 2);
+      }
+      case "json-md-table":
+      case "json-html-table": {
+        const { head, rows } = jsonTable(input, n.expr);
+        if (n.op === "json-md-table") {
+          const c = (x) => String(x).trim().replace(/\n/g, "<br>").replace(/\|/g, "\\|");
+          return (
+            [
+              "| " + head.map(c).join(" | ") + " |",
+              "|" + " --- |".repeat(head.length),
+              ...rows.map((r) => "| " + r.map(c).join(" | ") + " |"),
+            ].join("\n") + "\n"
+          );
+        }
+        const e = (x) =>
+          String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&#34;");
+        return (
+          "<table>\n<thead><tr>" +
+          head.map((h) => "<th>" + e(h) + "</th>").join("") +
+          "</tr></thead>\n<tbody>\n" +
+          rows
+            .map(
+              (r) =>
+                "<tr>" + r.map((x) => "<td>" + e(x).replace(/\n/g, "<br>") + "</td>").join("") + "</tr>\n",
+            )
+            .join("") +
+          "</tbody>\n</table>\n"
+        );
       }
       case "json-pretty":
         return JSON.stringify(JSON.parse(input), null, 2);
