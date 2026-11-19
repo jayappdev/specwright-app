@@ -652,6 +652,37 @@ export const GUIDE = [
     ],
     examples: [
       {
+        title: "Let the AI decide, and ask when unsure",
+        text: "The AI reads the test summary and chooses Ship it or Hold, with a reason and how sure it is. Below 70% sure it asks you to choose; your choice is kept as a lesson for later runs.",
+        nodes: [
+          sample(
+            "tests",
+            "Test summary",
+            "Tests: 412 passed, 2 failed (flaky: PaymentRetryTest)\nLint: clean\nCoverage: 81%",
+          ),
+          {
+            id: "go",
+            type: "decision",
+            title: "Ship or hold",
+            decide: "ai",
+            prompt: "Can this build be released today?",
+            confidence: 70,
+            branches: [
+              { id: "ship", label: "Ship it", hint: "every check passed, or only known-flaky tests failed" },
+              { id: "hold", label: "Hold", hint: "a real failure, or not enough information" },
+            ],
+          },
+          out("ship", "Release notes"),
+          out("hold", "Why we hold"),
+        ],
+        edges: [
+          ...chain("start", "tests", "go"),
+          { from: "go", to: "ship", branch: "ship" },
+          { from: "go", to: "hold", branch: "hold" },
+        ],
+        focus: "go",
+      },
+      {
         title: "Errors found, or all clear",
         text: "A quality gate's summary decides between asking AI for fixes and an “all clear” output.",
         nodes: [

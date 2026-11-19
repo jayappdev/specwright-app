@@ -122,6 +122,8 @@ type FlowStepState struct {
 	Why  string         `json:"why,omitempty"`
 	// Context: what the step gathered and kept (flowrun_context.go)
 	Context *flow.CtxReport `json:"context,omitempty"`
+	// Confidence: how sure the AI was of a decision (percent; Why is its reason)
+	Confidence int `json:"confidence,omitempty"`
 	// Decision: the paths it took (branch ids) and their names
 	Branches []string `json:"branches,omitempty"`
 	Path     string   `json:"path,omitempty"`
@@ -157,6 +159,10 @@ type FlowReview struct {
 	Verdict string         `json:"verdict,omitempty"`
 	Reason  string         `json:"reason,omitempty"`
 	History []ImproveRound `json:"history,omitempty"`
+	// a Decision the AI decides, unsure: the paths to choose from and the AI's
+	// choice (flowrun_decide.go)
+	Choices   []FlowChoice `json:"choices,omitempty"`
+	Suggested string       `json:"suggested,omitempty"`
 }
 
 // FlowRunState is a run as the UI shows it.
@@ -188,12 +194,13 @@ type FlowRunState struct {
 
 // FlowDecision answers a review.
 type FlowDecision struct {
-	Action  string     `json:"action"` // continue | stop | refine | command | edit | retry | no-more-reviews | next (an Improve step: another round, Prompt the feedback)
+	Action  string     `json:"action"` // continue | stop | refine | command | edit | retry | no-more-reviews | next (an Improve step: another round, Prompt the feedback) | choose (a Decision: Branch)
 	Prompt  string     `json:"prompt,omitempty"`
 	Command string     `json:"command,omitempty"`
 	Output  string     `json:"output,omitempty"`
-	Node    *flow.Node `json:"node,omitempty"` // retry with these settings
-	Save    bool       `json:"save,omitempty"` // keep the improvement in the flow
+	Node    *flow.Node `json:"node,omitempty"`   // retry with these settings
+	Save    bool       `json:"save,omitempty"`   // keep the improvement in the flow
+	Branch  string     `json:"branch,omitempty"` // choose: the path a person chose (a Decision the AI decides)
 }
 
 type flowRun struct {

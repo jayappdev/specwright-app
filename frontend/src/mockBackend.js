@@ -2012,7 +2012,9 @@ export function createMockBackend(methods) {
         try {
           const [out, mocked] = exec(n, d, live);
           if (n.type === "decision") {
-            const bs = decide(n, out, (m) => render(m, d));
+            // the AI decides when the flow runs: the dry run follows the first path
+            const bs =
+              n.decide === "ai" ? [(n.branches || [])[0]?.id || "else"] : decide(n, out, (m) => render(m, d));
             d.branches = { ...d.branches, [id]: bs };
             st.path = bs.map((b) => branchLabel(n, b)).join(", ");
           }
@@ -3049,10 +3051,21 @@ export function createMockBackend(methods) {
             add(n.id, "error", `${label}: the path "${name}" needs an id other than "else".`);
           else if (bids.has(b.id)) add(n.id, "error", `${label}: two paths have the id "${b.id}".`);
           bids.add(b.id);
+          if (n.decide === "ai") {
+            if (!(b.label || "").trim())
+              add(n.id, "error", `${label}: give the path ${b.id} a name the AI can choose.`);
+            continue;
+          }
           const e = condCheck(b.when);
           if (e) add(n.id, "error", `${label} › ${name}: ${e}`);
           condTemplates(b.when).forEach((t) => check(n, label + " › " + name, t));
         }
+        if (n.decide === "ai" && !(n.prompt || "").trim())
+          add(
+            n.id,
+            "error",
+            `${label}: write the question the AI decides (e.g. Can this release go out today?).`,
+          );
         const used = new Set();
         for (const e of f.edges.filter((x) => x.from === n.id)) {
           const to = f.nodes.find((x) => x.id === e.to)?.title || e.to;
@@ -4161,8 +4174,59 @@ export function createMockBackend(methods) {
             rnd = (m) => R(m, d);
           if (n.type === "filter") return filterRows(n, src, rnd);
           if (n.type === "aggregate") return aggregateRows(n, src, rnd);
-          const bs = decide(n, src, rnd),
-            path = bs.map((b) => branchLabel(n, b)).join(", ");
+          let bs = n.decide === "ai" ? null : decide(n, src, rnd);
+          if (n.decide === "ai") {
+            // the AI decides (core/flowrun_decide.go, simplified): the path whose name
+            // the data mentions, else the first; "unsure" in the data: 40% sure
+            await wait(400);
+            const low = String(src).toLowerCase(),
+              hit =
+                (n.branches || []).find((b) => b.label && low.includes(b.label.toLowerCase())) ||
+                (n.branches || [])[0];
+            const pick = hit?.id || "else",
+              conf = low.includes("unsure") ? 40 : 90,
+              why = `The data points to ${hit?.label || "none of the paths"}.`;
+            Object.assign(stepOf(n.id), { why, confidence: conf });
+            bs = [pick];
+            if (
+              conf < (n.confidence || 70) &&
+              (n.unsure || "ask") === "ask" &&
+              o.review !== "none" &&
+              !lr.noReview
+            ) {
+              const s = stepOf(n.id);
+              st.status = "review";
+              st.review = {
+                step: n.id,
+                title: s.title,
+                type: n.type,
+                output: String(src).slice(0, 24000),
+                verdict: `The AI suggests "${branchLabel(n, pick)}", ${conf}% sure (below ${n.confidence || 70}%)`,
+                reason: why,
+                suggested: pick,
+                choices: [
+                  ...(n.branches || []).map((b) => ({ id: b.id, label: b.label || b.id, hint: b.hint })),
+                  { id: "else", label: "Otherwise" },
+                ],
+              };
+              s.status = "review";
+              state();
+              pub("flow.review", "Waiting for you: choose the path at " + s.title, {
+                step: n.id,
+                node: n.id,
+              });
+              const dec = await new Promise((res) => {
+                lr.decide = res;
+              });
+              lr.decide = null;
+              st.status = "running";
+              st.review = null;
+              s.status = "running";
+              if (dec.action === "stop") throw Object.assign(new Error("stopped by you"), { stopped: true });
+              if (dec.action === "choose" && dec.branch) bs = [dec.branch];
+            } else if (conf < (n.confidence || 70) && n.unsure === "else") bs = ["else"];
+          }
+          const path = bs.map((b) => branchLabel(n, b)).join(", ");
           Object.assign(stepOf(n.id), { branches: bs, path });
           pub("flow.decision", `${n.title || n.id} → ${path}`, { step: n.id, branches: bs });
           return src;
@@ -6687,6 +6751,12 @@ export function createMockBackend(methods) {
             rnd = (m) => render(m, d);
           if (n.type === "filter") return { output: filterRows(n, src, rnd) };
           if (n.type === "aggregate") return { output: aggregateRows(n, src, rnd) };
+          if (n.decide === "ai")
+            return {
+              output:
+                "→ the AI decides when the flow runs: " +
+                [...(n.branches || []).map((b) => b.label || b.id), "Otherwise"].join(", "),
+            };
           return {
             output: decide(n, src, rnd)
               .map((b) => {

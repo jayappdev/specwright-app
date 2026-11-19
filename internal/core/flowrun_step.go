@@ -87,7 +87,15 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 			out, err := flow.Aggregate(*n, in, d)
 			return out, u, err
 		}
-		bs, err := flow.Decide(*n, in, d)
+		var bs []string
+		var err error
+		if flow.AIDecides(*n) { // the AI chooses the path (flowrun_decide.go)
+			var au store.Usage
+			bs, au, err = h.aiDecision(ctx, root, fr, n, d, in)
+			u.Add(au)
+		} else {
+			bs, err = flow.Decide(*n, in, d)
+		}
 		if err != nil {
 			return "", u, err
 		}

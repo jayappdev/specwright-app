@@ -3,6 +3,7 @@
 import { MATCHES, ROW_FORMATS, changed, fl, nodeOf, removeSelected } from "../Flows.jsx";
 import { Field, Preview } from "./Inspector.jsx";
 import { track } from "./Fields.jsx";
+import { Icon } from "../../ui.jsx";
 
 // --- decisions, filters, aggregates ---------------------------------------------------
 
@@ -295,19 +296,77 @@ export function DecisionInspector({ n, set }) {
     while ((n.branches || []).some((b) => b.id === "path" + k)) k++;
     return "path" + k;
   };
+  const ai = n.decide === "ai";
   return (
     <>
-      <p className="muted fl-help">
-        Checks the data from the step before and sends the flow down a path: the steps connected on that path
-        run, the others are skipped. The data passes on unchanged. Paths are checked in order;{" "}
-        <b>Otherwise</b> runs when none matches.
-      </p>
-      <Field label="When several paths match">
-        <select value={n.mode || "first"} onChange={(e) => set("mode", e.target.value)}>
-          <option value="first">Take the first one</option>
-          <option value="all">Take every one that matches</option>
-        </select>
+      <Field label="How it decides">
+        <div className="seg">
+          <button type="button" aria-pressed={!ai} onClick={() => set("decide", undefined)}>
+            Conditions
+          </button>
+          <button type="button" aria-pressed={ai} onClick={() => set("decide", "ai")}>
+            <Icon.spark /> AI decides
+          </button>
+        </div>
       </Field>
+      {ai ? (
+        <>
+          <p className="muted fl-help">
+            The AI reads the data from the step before, the Context steps before this one and this step&apos;s
+            lessons, and chooses one path, with a reason and how sure it is. The data passes on unchanged.
+          </p>
+          <Field label="The question">
+            <textarea
+              rows={3}
+              value={n.prompt || ""}
+              placeholder="e.g. Can this release go out today?"
+              {...track}
+              onChange={(e) => set("prompt", e.target.value)}
+            />
+          </Field>
+          <div className="fl-row">
+            <Field label="Sure enough at (%)">
+              <input
+                type="number"
+                min={1}
+                max={100}
+                value={n.confidence || 70}
+                aria-label="Confidence threshold in percent"
+                onChange={(e) => set("confidence", Math.max(1, Math.min(100, +e.target.value || 70)))}
+              />
+            </Field>
+            <Field label="When it is less sure">
+              <select
+                value={n.unsure || "ask"}
+                onChange={(e) => set("unsure", e.target.value === "ask" ? undefined : e.target.value)}
+              >
+                <option value="ask">Ask a person to choose</option>
+                <option value="else">Take Otherwise</option>
+                <option value="accept">Take the AI&apos;s choice anyway</option>
+              </select>
+            </Field>
+          </div>
+          <small className="muted">
+            In a run nobody reviews (a scheduled one), &quot;ask&quot; takes Otherwise when it leads
+            somewhere, else the AI&apos;s choice. When you choose another path than the AI, that is kept as a
+            lesson.
+          </small>
+        </>
+      ) : (
+        <>
+          <p className="muted fl-help">
+            Checks the data from the step before and sends the flow down a path: the steps connected on that
+            path run, the others are skipped. The data passes on unchanged. Paths are checked in order;{" "}
+            <b>Otherwise</b> runs when none matches.
+          </p>
+          <Field label="When several paths match">
+            <select value={n.mode || "first"} onChange={(e) => set("mode", e.target.value)}>
+              <option value="first">Take the first one</option>
+              <option value="all">Take every one that matches</option>
+            </select>
+          </Field>
+        </>
+      )}
       {(n.branches || []).map((b, i) => (
         <div key={b.id} className="fl-branch">
           <div className="fl-branch-head">
@@ -348,15 +407,27 @@ export function DecisionInspector({ n, set }) {
               ✕
             </button>
           </div>
-          <CondEditor
-            cond={b.when}
-            what="the data"
-            listId={"paths-" + n.id}
-            onChange={(c) => {
-              n.branches[i] = { ...b, when: c || newCond() };
-              put();
-            }}
-          />
+          {ai ? (
+            <input
+              aria-label={`When to take the path ${b.label || b.id}`}
+              value={b.hint || ""}
+              placeholder="When to take it, e.g. every check passed"
+              onChange={(e) => {
+                n.branches[i] = { ...b, hint: e.target.value };
+                put();
+              }}
+            />
+          ) : (
+            <CondEditor
+              cond={b.when}
+              what="the data"
+              listId={"paths-" + n.id}
+              onChange={(c) => {
+                n.branches[i] = { ...b, when: c || newCond() };
+                put();
+              }}
+            />
+          )}
           <small className="muted">
             Leads to:{" "}
             {targets(b.id).join(", ") ||
@@ -368,7 +439,11 @@ export function DecisionInspector({ n, set }) {
         className="btn secondary"
         onClick={() => {
           const id = nextId();
-          (n.branches ||= []).push({ id, label: "Path " + id.replace("path", ""), when: newCond() });
+          (n.branches ||= []).push(
+            ai
+              ? { id, label: "Path " + id.replace("path", "") }
+              : { id, label: "Path " + id.replace("path", ""), when: newCond() },
+          );
           put();
         }}
       >

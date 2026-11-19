@@ -280,7 +280,13 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 			out, err = flow.Aggregate(*n, in, sample)
 		default:
 			var bs []string
-			if bs, err = flow.Decide(*n, in, sample); err == nil {
+			if flow.AIDecides(*n) {
+				var names []string
+				for _, b := range n.Branches {
+					names = append(names, flow.BranchLabel(*n, b.ID))
+				}
+				out = "→ the AI decides when the flow runs: " + strings.Join(append(names, "Otherwise"), ", ")
+			} else if bs, err = flow.Decide(*n, in, sample); err == nil {
 				var lines []string
 				for _, b := range bs {
 					to := []string{}

@@ -252,6 +252,12 @@ type Node struct {
 
 	// decision: the paths out of it (Mode: first | all); see rows.go
 	Branches []Branch `json:"branches,omitempty"`
+	// Decide "ai": the AI chooses the path (Prompt: the question; Model;
+	// Confidence: below it the step is unsure, Unsure: ask | else |
+	// accept); see decide_ai.go
+	Decide     string `json:"decide,omitempty"`
+	Confidence int    `json:"confidence,omitempty"`
+	Unsure     string `json:"unsure,omitempty"`
 	// filter: the rows to keep (Mode: keep | drop; Unique, Max, OrderBy);
 	// filter and aggregate read their rows as Split (RowFormats)
 	Cond *Cond `json:"cond,omitempty"`
@@ -737,6 +743,9 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 					add(n.ID, "error", "%s: two paths have the id %q.", label(n), b.ID)
 				}
 				bids[b.ID] = true
+				if AIDecides(n) { // the AI chooses: no conditions
+					continue
+				}
 				if err := b.When.Check(); err != nil {
 					add(n.ID, "error", "%s › %s: %v", label(n), name, err)
 				}
@@ -763,6 +772,10 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				}
 			}
 			checkVars(n, label(n), n.Source)
+			if AIDecides(n) {
+				f.checkAIDecision(n, add)
+				checkVars(n, label(n)+" › question", n.Prompt)
+			}
 		case "filter":
 			if !contains(FilterModes, firstNonEmptyStr(n.Mode, "keep")) {
 				add(n.ID, "error", "%s: choose whether to keep or drop the matching rows.", label(n))

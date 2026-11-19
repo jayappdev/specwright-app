@@ -14,6 +14,7 @@ const FROM = {
   improve: "from an Improve review",
   edit: "from your edit of its result",
   judge: "from the AI judge",
+  decision: "you chose another path than the AI",
   manual: "added by hand",
 };
 

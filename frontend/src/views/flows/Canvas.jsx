@@ -469,8 +469,9 @@ export function Canvas() {
                               : n.type === "gather"
                                 ? GATHER_MODES.find(([m]) => m === (n.mode || "concat"))?.[1] || n.mode
                                 : n.type === "decision"
-                                  ? `${(n.branches || []).length} path${(n.branches || []).length === 1 ? "" : "s"} + otherwise` +
-                                    (n.mode === "all" ? " · every match" : "")
+                                  ? (n.decide === "ai" ? "✦ AI decides · " : "") +
+                                    `${(n.branches || []).length} path${(n.branches || []).length === 1 ? "" : "s"} + otherwise` +
+                                    (n.mode === "all" && n.decide !== "ai" ? " · every match" : "")
                                   : n.type === "filter"
                                     ? (n.mode === "drop" ? "Drop" : "Keep") +
                                       ` rows · ${condCount(n.cond)} condition${condCount(n.cond) === 1 ? "" : "s"}`

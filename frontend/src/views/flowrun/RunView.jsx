@@ -133,8 +133,52 @@ function ImproveReview({ st }) {
 }
 
 function Review({ st }) {
+  if (st.review?.choices?.length) return <ChoiceReview st={st} />;
   if (st.review?.type === "improve") return <ImproveReview st={st} />;
   return <ReviewStep st={st} />;
+}
+
+// a Decision the AI decides was not sure enough: a person chooses the path
+function ChoiceReview({ st }) {
+  const rv = st.review;
+  const data = String(rv.output || "");
+  return (
+    <div className="card fr-review" role="region" aria-label="Choose the path">
+      <div className="card-head">
+        <span className="fr-review-dot" />
+        <h3>Choose the path: {rv.title}</h3>
+        <span className="badge badge-warn">waiting for you</span>
+      </div>
+      <p className="wf-desc">
+        <Icon.spark /> {rv.verdict}.{rv.reason ? " " + rv.reason : ""}
+      </p>
+      {data.trim() && (
+        <details>
+          <summary className="muted">The data it decided on</summary>
+          <pre className="code fr-pre">{data.length > 4000 ? data.slice(0, 4000) + "\n…" : data}</pre>
+        </details>
+      )}
+      <div className="fr-choices" role="group" aria-label="Paths">
+        {rv.choices.map((c) => (
+          <button
+            key={c.id}
+            className={"btn " + (c.id === rv.suggested ? "primary" : "secondary")}
+            title={c.hint ? "Take it when " + c.hint : ""}
+            onClick={() => decide("choose", { branch: c.id })}
+          >
+            {c.label}
+            {c.id === rv.suggested ? " (the AI's choice)" : ""}
+          </button>
+        ))}
+        <button className="btn secondary danger-text" onClick={() => decide("stop")}>
+          Stop the flow
+        </button>
+      </div>
+      <small className="muted">
+        If you choose another path than the AI, it is kept as a lesson for this step.
+      </small>
+    </div>
+  );
 }
 
 function ReviewStep({ st }) {
@@ -407,7 +451,7 @@ function Steps({ st }) {
       <ol className="fr-steps">
         {st.steps.map((s) => {
           const n = f?.nodes.find((x) => x.id === s.id) || { type: s.type, tool: s.tool };
-          const can = !!(s.output || s.error || s.args || s.rounds?.length || s.context);
+          const can = !!(s.output || s.error || s.args || s.rounds?.length || s.context || s.why);
           return (
             <li key={s.id} className={"fr-step s-" + s.status}>
               <button
@@ -435,6 +479,7 @@ function Steps({ st }) {
                         : ""}
                     {s.failedItems ? ` · ${s.failedItems} failed` : ""}
                     {s.path ? ` · → ${s.path}` : ""}
+                    {s.confidence ? ` · AI ${s.confidence}% sure` : ""}
                     {s.notes?.length ? " · " + s.notes[s.notes.length - 1] : ""}
                   </small>
                 </span>
@@ -475,6 +520,12 @@ function Steps({ st }) {
                   )}
                   {s.rounds?.length > 0 && <Rounds rounds={s.rounds} />}
                   {s.context && <ContextReport r={s.context} />}
+                  {s.type === "decision" && s.why && (
+                    <p className="fr-why">
+                      <Icon.spark /> {s.why}
+                      {s.confidence ? <span className="muted"> · {s.confidence}% sure</span> : ""}
+                    </p>
+                  )}
                   {(s.output || s.outputFile) && (
                     <ContentView
                       title={s.title}

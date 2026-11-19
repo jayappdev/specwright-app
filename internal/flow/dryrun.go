@@ -280,6 +280,12 @@ func (x *dryRun) run(ids []string, d *Data, status map[string]string) string {
 		}
 		if n.Type == "decision" {
 			bs, _ := Decide(*n, out, dd)
+			if AIDecides(*n) { // decided when the flow runs: the dry run follows the first path
+				bs = []string{ElseBranch}
+				if len(n.Branches) > 0 {
+					bs = []string{n.Branches[0].ID}
+				}
+			}
 			d.Branches = maps.Clone(d.Branches)
 			d.Branches[id] = bs
 			var ls []string
@@ -449,6 +455,9 @@ func (x *dryRun) exec(n *Node, d Data, live []string) (string, bool, error) {
 		case "aggregate":
 			out, err := Aggregate(*n, in, d)
 			return out, false, err
+		}
+		if AIDecides(*n) {
+			return in, true, nil // the AI decides when the flow runs
 		}
 		_, err := Decide(*n, in, d)
 		return in, false, err

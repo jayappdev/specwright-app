@@ -3156,3 +3156,13 @@ select.fl-secret-pick {
 .fr-ctx-table tr.none td {
   opacity: 0.6;
 }
+/* a Decision the AI decides: a person chooses the path; the AI's reason */
+.fr-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.fr-why {
+  margin: 4px 0;
+}

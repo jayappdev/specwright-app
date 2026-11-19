@@ -422,6 +422,9 @@ func mockFlowAnswer(prompt string) string {
 	if strings.HasPrefix(prompt, "You are improving") {
 		return mockImprove(prompt)
 	}
+	if strings.HasPrefix(prompt, "You decide which path a flow takes next.") {
+		return mockDecision(prompt)
+	}
 	if strings.Contains(prompt, `{"arguments":`) && strings.Contains(prompt, "Its parameters:") {
 		// building a tool's arguments: fill every parameter from the request
 		req := ""
@@ -513,4 +516,50 @@ func MockScript(prompt string) string {
 	}
 	b, _ := json.Marshal(map[string]string{"fileName": "count-todos.sh", "content": content, "summary": "Counts TODO comments under a folder (src by default). Run: .codegen/scripts/count-todos.sh src/main"})
 	return string(b)
+}
+
+// mockDecision answers an AI decision: the path whose name the data
+// mentions (else the first), 90% sure, or 40% when the data says
+// "[mock:unsure]"; "[mock:bad]" gives a path that does not exist.
+func mockDecision(prompt string) string {
+	paths := map[string]string{} // id -> label
+	var order []string
+	if i := strings.Index(prompt, "## Paths (choose exactly one)\n"); i >= 0 {
+		for _, l := range strings.Split(prompt[i:], "\n")[1:] {
+			if !strings.HasPrefix(l, "- ") {
+				break
+			}
+			id, rest, _ := strings.Cut(strings.TrimPrefix(l, "- "), ": ")
+			label, _, _ := strings.Cut(rest, " — ")
+			if id != "else" {
+				paths[id] = label
+				order = append(order, id)
+			}
+		}
+	}
+	data := ""
+	if i := strings.Index(prompt, "## The data that reached this step"); i >= 0 {
+		data = strings.ToLower(prompt[i:])
+		if j := strings.Index(data, "\n```\n\n"); j >= 0 {
+			data = data[:j]
+		}
+	}
+	pick := "else"
+	if len(order) > 0 {
+		pick = order[0]
+	}
+	for _, id := range order {
+		if strings.Contains(data, strings.ToLower(paths[id])) {
+			pick = id
+			break
+		}
+	}
+	conf := 90
+	if strings.Contains(data, "[mock:unsure]") {
+		conf = 40
+	}
+	if strings.Contains(data, "[mock:bad]") {
+		pick = "no-such-path"
+	}
+	return fmt.Sprintf(`{"path": %q, "reason": "The data points to %s.", "confidence": %d}`, pick, paths[pick], conf)
 }
