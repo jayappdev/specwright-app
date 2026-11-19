@@ -99,6 +99,9 @@ func (h *Hub) Builtins() []extension.BuiltinInfo {
 	if !h.disabledBuiltins()[RunFlowTool] {
 		out = append(out, runFlowInfo()) // agents reuse flows (runflow_agent.go)
 	}
+	if !h.disabledBuiltins()[SaveToolTool] {
+		out = append(out, saveToolInfo()) // agents propose tool revisions (toolsave_agent.go)
+	}
 	if !h.disabledBuiltins()[HistorySearchTool] && h.Store.HasDB() {
 		out = append(out, historySearchInfo()) // run history for agents (history_search.go)
 	}
@@ -126,6 +129,8 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 		out, err = h.agentHistorySearch(args)
 	case RunFlowTool:
 		out, err = h.agentRunFlow(ctx, args)
+	case SaveToolTool:
+		out, err = h.agentSaveTool(args)
 	default:
 		out, err = h.tools.Call(ctx, name, args)
 	}

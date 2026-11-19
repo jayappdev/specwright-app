@@ -79,7 +79,7 @@ export function playgroundPrompt(draft, history, test, question, ask) {
   const d = draftForAI(draft);
   const lines = [
     `Help me improve the SpecWright tool "${d.name || "new tool"}". Talk it through with me: you may read the project's files and try commands to find the cause.`,
-    `When you change the tool, end your answer with the WHOLE revised tool as one JSON object in a \`\`\`json fence, in the same shape as below (name, desc, lang, command, script, params, secrets, deps), plus "why": what you changed and why. I will apply it to the tool and test it again.`,
+    `When you change the tool, hand it to me with SpecWright's save_tool tool (agentbridge-save_tool in GitHub Copilot, mcp__agentbridge__save_tool in Claude Code; if you see only its name, load it with your tool search): give the WHOLE revised tool in the same shape as below (name, desc, lang, command, script, params, secrets, deps) and "why", what you changed and why. It does not save or run anything: I apply it to the tool and test it again. If you cannot call it, end your answer with the whole tool as one JSON object in a \`\`\`json fence instead. Do not edit .codegen/extensions.json or the tool's files.`,
     "",
     `## The tool now (revision ${d.revision || 1})`,
     "```json",
@@ -120,4 +120,21 @@ export function playgroundPrompt(draft, history, test, question, ask) {
         : "Suggest how to make this tool better."),
   );
   return lines.join("\n");
+}
+
+// proposedTool: the last tool the agent handed over with save_tool in this
+// run (its arguments), or null.
+export function proposedTool(evs) {
+  const e = [...evs]
+    .reverse()
+    .find((x) => x.type === "builtin.result" && x.name === "save_tool" && x.ok !== false && x.args?.tool);
+  if (!e) return null;
+  let t = e.args.tool;
+  if (typeof t === "string")
+    try {
+      t = JSON.parse(t);
+    } catch {
+      return null;
+    }
+  return t?.name ? { tool: t, why: e.args.why || "" } : null;
 }

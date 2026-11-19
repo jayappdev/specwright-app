@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { lineDiff, diffCount, testText, genTurns, draftForAI, playgroundPrompt } from "./toolHistory.js";
+import {
+  lineDiff,
+  diffCount,
+  testText,
+  genTurns,
+  draftForAI,
+  playgroundPrompt,
+  proposedTool,
+} from "./toolHistory.js";
 
 describe("tool history", () => {
   it("diffs lines", () => {
@@ -61,5 +69,29 @@ describe("tool history", () => {
     expect(p).toContain("No such file");
     expect(p).toMatch(/## What I want\nthe folder has spaces$/);
     expect(p).not.toContain('"hash"');
+  });
+});
+
+describe("proposedTool", () => {
+  it("takes the last save_tool call that worked", () => {
+    const evs = [
+      {
+        type: "builtin.result",
+        name: "save_tool",
+        ok: true,
+        args: { tool: { name: "a", script: "1" }, why: "first" },
+      },
+      { type: "builtin.result", name: "save_tool", ok: false, args: { tool: { name: "a", script: "bad" } } },
+      { type: "builtin.result", name: "read_file", ok: true, args: {} },
+      {
+        type: "builtin.result",
+        name: "save_tool",
+        ok: true,
+        args: { tool: '{"name":"a","script":"2"}', why: "second" },
+      },
+    ];
+    expect(proposedTool(evs)).toEqual({ tool: { name: "a", script: "2" }, why: "second" });
+    expect(proposedTool(evs.slice(0, 3))).toEqual({ tool: { name: "a", script: "1" }, why: "first" });
+    expect(proposedTool([])).toBeNull();
   });
 });

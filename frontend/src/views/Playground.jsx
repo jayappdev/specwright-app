@@ -22,6 +22,7 @@ import { openFlowRunner } from "./FlowRun.jsx";
 import { ResultsLink } from "../RunResults.jsx";
 import { AiProgress } from "../AiProgress.jsx";
 import { applyToolRevision, reloadTool } from "./Tools.jsx";
+import { proposedTool } from "./tools/toolHistory.js";
 
 const EXAMPLES = [
   "Summarize what this project does and how it is organised",
@@ -433,9 +434,9 @@ function Composer({ compact, box, r, running, anyRunning }) {
 // ToolApply: this conversation is about a tool: take the revision in the
 // answer into the tool builder and test it, or read the tool's files again
 // when the agent changed them.
-function ToolApply({ name, answer, runId }) {
+function ToolApply({ name, answer, runId, proposed }) {
   const [busy, setBusy] = useState(false);
-  const has = /```json[\s\S]*?"(script|command)"\s*:/.test(answer);
+  const has = !!proposed || /```json[\s\S]*?"(script|command)"\s*:/.test(answer);
   const saved = (S.ws?.extensions || []).some((x) => x.name === name);
   const apply = async () => {
     const draft =
@@ -445,7 +446,11 @@ function ToolApply({ name, answer, runId }) {
     if (!draft) return toast(`Open the tool ${name} in Tools first.`, "error");
     setBusy(true);
     try {
-      const tr = await backend.ToolFromReply(answer, draft);
+      const text = proposed
+        ? "```json\n" + JSON.stringify({ ...proposed.tool, why: proposed.why }) + "\n```"
+        : answer;
+      const tr = await backend.ToolFromReply(text, draft);
+      if (!tr.reply || proposed) tr.reply = answer;
       await applyToolRevision(tr, name, runId);
     } catch (e) {
       toast(errMsg(e), "error");
@@ -455,7 +460,8 @@ function ToolApply({ name, answer, runId }) {
   return (
     <div className="pg-toolapply">
       <span>
-        <Icon.tool /> About the tool <b>{name}</b>
+        <Icon.tool /> {proposed ? "The AI proposes a revision of" : "About the tool"} <b>{name}</b>
+        {proposed?.why && <span className="muted"> · {proposed.why}</span>}
         {!has && (
           <span className="muted"> · no revised tool in this answer yet: ask for the whole tool as JSON</span>
         )}
@@ -712,8 +718,13 @@ export function Playground() {
                   <Icon.shield /> Waiting for your approval to use <b>{S.permAsks[0].tool}</b>.
                 </div>
               )}
-              {!running && answer && toolFor()[r.id] && (
-                <ToolApply name={toolFor()[r.id]} answer={answer} runId={r.id} />
+              {!running && (toolFor()[r.id] || proposedTool(evs)) && (
+                <ToolApply
+                  name={proposedTool(evs)?.tool.name || toolFor()[r.id]}
+                  answer={answer}
+                  runId={r.id}
+                  proposed={proposedTool(evs)}
+                />
               )}
               {!running && answer && evs.some((e) => e.type === "run.end") && (
                 <div className={"pg-reply" + (asksUser(answer) ? " asks" : "")}>
