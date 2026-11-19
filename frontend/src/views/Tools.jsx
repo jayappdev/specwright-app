@@ -463,6 +463,14 @@ async function testAndMaybeFix() {
   if (tb.test && !tb.test.pass && tb.autoFix !== false && !missing && !tb.ro) autoFix();
 }
 
+// lastTestOf: the tool's latest test, the AI test or its test cases,
+// whichever ran last (or what it had); a passing one makes it "tested".
+function lastTestOf(tb, d) {
+  const xs = [tb.test, tb.caseTest, d.lastTest].filter((x) => x && !x.running);
+  if (!xs.length) return null;
+  return xs.reduce((a, b) => (String(b.at || "") > String(a.at || "") ? b : a));
+}
+
 async function saveTool() {
   const tb = S.tb,
     d = tb.draft;
@@ -501,8 +509,8 @@ async function saveTool() {
             testPrompt: tb.testPrompt,
             testFiles: attPaths(tb),
             prompt: tb.prompt || d.prompt,
-            lastTest: tb.test && !tb.test.running ? tb.test : null,
-            status: tb.test?.pass ? "tested" : "untested",
+            lastTest: lastTestOf(tb, d),
+            status: lastTestOf(tb, d)?.pass ? "tested" : "untested",
           });
     toast(
       rec.status === "in review"

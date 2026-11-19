@@ -7574,6 +7574,22 @@ export function createMockBackend(methods) {
         if (t.expect?.fail && run.problems?.length) pass = true;
         out.push({ name: t.name, pass, run });
       }
+      // a saved tool's cases are its last test (as the desktop app records it)
+      const x = db.exts.find(
+        (e) => e.name === d.name && (e.script || "") === (d.script || "") && e.command === d.command,
+      );
+      if (x && x.kind !== "copilot") {
+        const n = out.filter((r) => r.pass).length;
+        x.lastTest = {
+          pass: n === out.length,
+          summary: `${n} of ${out.length} test cases passed (run with arguments, no AI)`,
+          checks: out.map((r) => ({ label: "Test case: " + r.name, ok: r.pass })),
+          steps: [],
+          at: now(),
+        };
+        if (x.status !== "in review") x.status = x.lastTest.pass ? "tested" : "untested";
+        persist();
+      }
       return out;
     },
     async TestExtensionWith(d, q, files = []) {

@@ -446,6 +446,8 @@ function SaveCase({ tb, d, args, r }) {
               tests: [...(d.tests || []).filter((x) => x.name !== test.name), test],
             });
             setOpen(false);
+            // run them all, so the tool's status follows its cases
+            await runCases(tb, d);
           }}
         >
           Save the test case
@@ -459,6 +461,45 @@ function SaveCase({ tb, d, args, r }) {
 }
 
 // Cases lists the saved test cases and runs them.
+// casesResult: a test-case run as the tool's test result (as the backend
+// records it for a saved tool): it passes when every case passes.
+export function casesResult(res) {
+  const n = res.filter((x) => x.pass).length;
+  return {
+    pass: res.length > 0 && n === res.length,
+    summary: `${n} of ${res.length} test cases passed (run with arguments, no AI)`,
+    checks: res.map((x) => ({ label: "Test case: " + x.name, ok: x.pass })),
+    steps: res
+      .filter((x) => !x.pass)
+      .map((x) => ({ k: "out", v: x.name + ": " + (x.run?.error || x.run?.output || "") })),
+    at: new Date().toISOString(),
+    cases: true,
+  };
+}
+
+// runCases: run the tool's test cases; their result becomes the tool's
+// last test (status "tested" when all pass), in the draft and, for a saved
+// tool, on disk.
+export async function runCases(tb, d) {
+  const t = tt(tb, d);
+  const tests = d.tests || [];
+  if (!tests.length) return;
+  t.casesRunning = true;
+  update();
+  try {
+    t.results = await backend.RunToolTests(d, tests, t.secrets);
+    tb.direct = true;
+    tb.caseTest = casesResult(t.results);
+    d.lastTest = tb.caseTest;
+    if (d.status !== "in review") d.status = tb.caseTest.pass ? "tested" : "untested";
+    if (tb.editing) await refreshExtensions();
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+  t.casesRunning = false;
+  update();
+}
+
 function Cases({ tb, d }) {
   const t = tt(tb, d);
   const tests = d.tests || [];
@@ -469,6 +510,9 @@ function Cases({ tb, d }) {
     <div className="card">
       <div className="card-head">
         <h3>Test cases</h3>
+        {res.length > 0 && passed === res.length && (
+          <span className="muted">· the tool counts as tested</span>
+        )}
         {res.length > 0 && (
           <span className={"badge " + (passed === res.length ? "badge-ok" : "badge-warn")}>
             {passed} of {res.length} passed
@@ -519,23 +563,14 @@ function Cases({ tb, d }) {
           );
         })}
       </ul>
+      {!tb.editing && !tb.ro && (
+        <div className="banner">
+          This tool is a draft: its test cases are kept with it, but flows and agents can use it only once it
+          is saved. Use <b>Next: save</b> below.
+        </div>
+      )}
       <div className="row-actions">
-        <button
-          className="btn primary"
-          disabled={t.casesRunning}
-          onClick={async () => {
-            t.casesRunning = true;
-            update();
-            try {
-              t.results = await backend.RunToolTests(d, tests, t.secrets);
-              tb.direct = true;
-            } catch (e) {
-              toast(errMsg(e), "error");
-            }
-            t.casesRunning = false;
-            update();
-          }}
-        >
+        <button className="btn primary" disabled={t.casesRunning} onClick={() => runCases(tb, d)}>
           {t.casesRunning ? "Running…" : `Run all ${tests.length} test case${tests.length === 1 ? "" : "s"}`}
         </button>
       </div>

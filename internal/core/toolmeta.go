@@ -431,5 +431,28 @@ func (h *Hub) RunToolTests(e extension.Extension, tests []extension.ToolTest, se
 		}
 		out = append(out, ToolTestResult{Name: t.Name, Pass: pass, Run: run})
 	}
+	// a saved tool, run as saved: its test cases are its last test, so a
+	// tool whose cases pass is "tested" (in Tools and for flows)
+	if saved, err := h.exts.Get(e.Name); err == nil && saved.Fingerprint() == e.Fingerprint() && saved.Kind != extension.KindCopilot {
+		_ = h.exts.SetTest(e.Name, CasesResult(out))
+	}
 	return out, nil
+}
+
+// CasesResult is a test-case run as a tool's test result: it passes when
+// every case passes.
+func CasesResult(rs []ToolTestResult) extension.TestResult {
+	tr := extension.TestResult{Pass: len(rs) > 0, At: time.Now(), Checks: []extension.Check{}, Steps: []extension.TestStep{}}
+	n := 0
+	for _, r := range rs {
+		tr.Checks = append(tr.Checks, extension.Check{Label: "Test case: " + r.Name, OK: r.Pass})
+		if r.Pass {
+			n++
+		} else {
+			tr.Pass = false
+			tr.Steps = append(tr.Steps, extension.TestStep{K: "out", V: r.Name + ": " + clipText(firstNonEmpty(r.Run.Error, r.Run.Output), 600)})
+		}
+	}
+	tr.Summary = fmt.Sprintf("%d of %d test cases passed (run with arguments, no AI)", n, len(rs))
+	return tr
 }

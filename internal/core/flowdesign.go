@@ -187,7 +187,11 @@ func (h *Hub) designTools() []designTool {
 				continue // not runnable yet
 			}
 			st, ok := stats[e.Name]
-			out = append(out, designTool{Name: e.Name, Desc: e.Desc + reliabilityNote(st, ok), Params: e.Params, Output: e.Output, OutputBy: e.OutputBy})
+			desc := e.Desc + reliabilityNote(st, ok)
+			if e.LastTest != nil && e.LastTest.Pass {
+				desc += " (tested: " + clipText(e.LastTest.Summary, 80) + ")"
+			}
+			out = append(out, designTool{Name: e.Name, Desc: desc, Params: e.Params, Output: e.Output, OutputBy: e.OutputBy})
 		}
 	}
 	for _, e := range h.FlowBuiltinTools() {
