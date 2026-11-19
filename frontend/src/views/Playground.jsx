@@ -29,7 +29,7 @@ const EXAMPLES = [
 ];
 
 const pg = () =>
-  (S.pg ||= { prompt: "", tools: true, model: "", runs: [], sel: "", loaded: false, parents: [] });
+  (S.pg ||= { prompt: "", tools: true, ask: true, model: "", runs: [], sel: "", loaded: false, parents: [] });
 
 // Start a new prompt in the playground that continues from earlier runs.
 export function continueInPlayground(ids) {
@@ -121,7 +121,12 @@ async function run() {
   if (!prompt) return toast("Type a prompt first.");
   try {
     const parents = [...(p.parents || [])];
-    const id = await backend.RunPrompt(prompt, { tools: p.tools, model: p.model.trim(), parents });
+    const id = await backend.RunPrompt(prompt, {
+      tools: p.tools,
+      model: p.model.trim(),
+      parents,
+      interactive: p.ask !== false,
+    });
     S.loaded[id] = true;
     S.events[id] ||= [];
     p.runs.unshift({
@@ -357,6 +362,20 @@ function Composer({ compact, box, r, running, anyRunning }) {
             }}
           />{" "}
           Also offer project and admin tools
+        </label>
+        <label
+          className="check"
+          title="Copilot: instead of refusing what it may not do on its own (a command, or editing a file outside the project, such as your own extension in ~/.copilot/extensions), it asks you here. Edits inside the project need no question. Copilot reads files without asking, so with this on it can also read files outside the project."
+        >
+          <input
+            type="checkbox"
+            checked={p.ask !== false}
+            onChange={(e) => {
+              p.ask = e.target.checked;
+              update();
+            }}
+          />{" "}
+          Ask me to approve commands and edits outside the project
         </label>
       </div>
       {!compact && (

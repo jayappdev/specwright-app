@@ -94,6 +94,9 @@ type StartOptions struct {
 	// (a Spec Kit project folder inside it); AddDirs are opened to it too.
 	Dir     string
 	AddDirs []string
+	// Interactive: a person answers permission questions in the app while
+	// it runs (the Playground); see agent.Request.Interactive.
+	Interactive bool
 }
 
 // NewRunID returns a unique, sortable run id: the local date and time the
@@ -284,7 +287,7 @@ func (rn *Runner) once(parent context.Context, run *Run, drv agent.Driver, o Sta
 		dir = o.Dir
 	}
 	req := agent.Request{Purpose: "step", Step: run.Session.Step, Prompt: prompt, Dir: dir, AddDirs: o.AddDirs, Model: o.Model,
-		AllowTools: []string{"mcp__agentbridge"}} // every agentbridge tool: built-ins + extension_managed
+		AllowTools: []string{"mcp__agentbridge"}, Interactive: o.Interactive} // every agentbridge tool: built-ins + extension_managed
 	if rn.Env != nil {
 		req.Env = rn.Env()
 	}

@@ -814,6 +814,10 @@ type PromptOptions struct {
 	// by the app (Files › Ask AI); default: the prompt itself.
 	Title string `json:"title,omitempty"`
 	Ask   string `json:"ask,omitempty"`
+	// Interactive: you answer the agent's permission questions in the app
+	// (on by default in the Playground): Copilot asks before editing files
+	// outside the project or running commands, instead of refusing them.
+	Interactive bool `json:"interactive,omitempty"`
 }
 
 // RunPrompt sends a free-form prompt to the chosen agent in the workspace
@@ -838,7 +842,7 @@ func (h *Hub) RunPrompt(prompt string, o PromptOptions) (string, error) {
 	}
 	h.mu.RLock()
 	so := workflow.StartOptions{Agent: h.agentName, Model: firstNonEmpty(o.Model, h.model, h.wf.Model), Budget: h.wf.Budget, Prompt: prompt, NoTools: !o.Tools,
-		Title: firstNonEmpty(o.Title, firstLine(ask)), Ask: ask, Parents: o.Parents}
+		Title: firstNonEmpty(o.Title, firstLine(ask)), Ask: ask, Parents: o.Parents, Interactive: o.Interactive}
 	runner := h.runner
 	h.mu.RUnlock()
 	run, err := runner.Start(h.ctx, PlaygroundStep, PlaygroundStep, so)

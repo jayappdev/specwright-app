@@ -42,6 +42,11 @@ type Request struct {
 	// MCPConfig is a path to an MCP config JSON naming the agentbridge server.
 	MCPConfig  string
 	AllowTools []string
+	// Interactive: a person is watching (the Playground) and answers
+	// permission questions in the app. Copilot then lets the hook decide
+	// about paths outside the project too, instead of refusing them, and
+	// asks about edits outside it (see Copilot.argsWith).
+	Interactive bool
 	// Hints are used only by the mock driver to decide which extension to call.
 	Hints []ToolHint
 }

@@ -88,6 +88,7 @@ func TestCopilotTokenEnvAndWeb(t *testing.T) {
 // denied in -p) is hidden and the agent is told to run a changed extension
 // through the bridge.
 func TestCopilotReloadNote(t *testing.T) {
+	t.Setenv("COPILOT_HOME", t.TempDir()) // not the developer's own extensions
 	dir := t.TempDir()
 	if err := os.MkdirAll(filepath.Join(dir, ".github", "extensions", "greet"), 0o755); err != nil {
 		t.Fatal(err)
@@ -100,5 +101,47 @@ func TestCopilotReloadNote(t *testing.T) {
 	}
 	if a := c.argsWith(Request{Prompt: "fix it", Dir: dir}, ""); a[1] != "fix it" || slices.Contains(a, "--excluded-tools") {
 		t.Fatalf("no bridge: unchanged: %q", a)
+	}
+}
+
+// your own extensions (~/.copilot/extensions) load too, and the agent is told
+// which copy to change
+func TestCopilotUserExtensions(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("COPILOT_HOME", home)
+	mk := func(dir string) {
+		_ = os.MkdirAll(dir, 0o755)
+		_ = os.WriteFile(filepath.Join(dir, "extension.mjs"), []byte("x"), 0o644)
+	}
+	mk(filepath.Join(home, "extensions", "html-formatter"))
+	mk(filepath.Join(home, "extensions", "mine-only"))
+	proj := t.TempDir()
+	mk(filepath.Join(proj, ".github", "extensions", "html-formatter"))
+	c := NewCopilot()
+	a := c.argsWith(Request{Prompt: "improve it", Dir: proj}, "/plugin")
+	note := a[1]
+	if !slices.Contains(a, "--experimental") || !strings.Contains(note, "html-formatter also exist in the user's own Copilot folder") ||
+		!strings.Contains(note, "change the project's copy") || !strings.Contains(note, "mine-only exist only in the user's own Copilot folder") {
+		t.Fatalf("%q", note)
+	}
+	if env := c.env(Request{Dir: t.TempDir()}); !slices.Contains(env, "GITHUB_COPILOT_PROMPT_MODE_EXTENSIONS=true") {
+		t.Fatal("your own extensions load in -p runs too")
+	}
+}
+
+// interactive (the Playground): edits go to the hook, outside paths are not refused
+func TestCopilotInteractive(t *testing.T) {
+	t.Setenv("COPILOT_HOME", t.TempDir())
+	c := NewCopilot()
+	a := strings.Join(c.argsWith(Request{Prompt: "x", Interactive: true}, "/plugin"), " ")
+	if !strings.Contains(a, "--allow-all-paths") || strings.Contains(a, "--allow-tool write") || !strings.Contains(a, "--allow-tool agentbridge") {
+		t.Fatal(a)
+	}
+	b := strings.Join(c.argsWith(Request{Prompt: "x"}, "/plugin"), " ")
+	if strings.Contains(b, "--allow-all-paths") || !strings.Contains(b, "--allow-tool write") {
+		t.Fatal("not interactive: as before:", b)
+	}
+	if d := strings.Join(c.argsWith(Request{Prompt: "x", Interactive: true}, ""), " "); strings.Contains(d, "--allow-all-paths") {
+		t.Fatal("no hook to ask: no wider paths", d)
 	}
 }

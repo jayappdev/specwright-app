@@ -111,6 +111,7 @@ func TestParseCopilotModels(t *testing.T) {
 }
 
 func TestCopilotLoadsProjectExtensions(t *testing.T) {
+	t.Setenv("COPILOT_HOME", t.TempDir()) // not the developer's own extensions
 	dir := t.TempDir()
 	c := NewCopilot()
 	req := Request{Dir: dir, Prompt: "hi"}
