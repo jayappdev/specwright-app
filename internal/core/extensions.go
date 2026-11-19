@@ -309,6 +309,56 @@ type GenerateRequest struct {
 	Attachments []string `json:"attachments,omitempty"`
 	// Model writes the tool; empty: the session's model.
 	Model string `json:"model,omitempty"`
+	// History is what was tried before on this draft (oldest first), so a
+	// revision does not repeat a fix that did not work.
+	History []GenTurn `json:"history,omitempty"`
+}
+
+// GenTurn is one earlier attempt at a draft: what was asked, what the agent
+// said it changed, and how the test after it went.
+type GenTurn struct {
+	Revision int    `json:"revision"`
+	Ask      string `json:"ask,omitempty"`
+	Why      string `json:"why,omitempty"`
+	Test     string `json:"test,omitempty"` // "passed", or "failed: <checks and summary>"
+}
+
+// GenTrace is a generated draft with how it came about: the prompt the
+// agent got, its whole reply, and its own account of what it changed.
+type GenTrace struct {
+	Tool   extension.Extension `json:"tool"`
+	Prompt string              `json:"prompt"`
+	Reply  string              `json:"reply"`
+	Why    string              `json:"why,omitempty"`
+	Model  string              `json:"model,omitempty"`
+	Ms     int64               `json:"ms"`
+}
+
+// historyNote lists the earlier attempts for a revision prompt (the last
+// eight, each clipped, so it stays small).
+func historyNote(hs []GenTurn) string {
+	if len(hs) == 0 {
+		return ""
+	}
+	if len(hs) > 8 {
+		hs = hs[len(hs)-8:]
+	}
+	var b strings.Builder
+	b.WriteString("\n\n## What was tried before (oldest first). Do not repeat a change that did not make the test pass; try a different cause.\n")
+	for _, t := range hs {
+		fmt.Fprintf(&b, "- revision %d", t.Revision)
+		if t.Ask != "" {
+			fmt.Fprintf(&b, ", asked: %s", clipText(t.Ask, 300))
+		}
+		if t.Why != "" {
+			fmt.Fprintf(&b, "; the agent changed: %s", clipText(t.Why, 300))
+		}
+		if t.Test != "" {
+			fmt.Fprintf(&b, "; test after it: %s", clipText(t.Test, 400))
+		}
+		b.WriteString("\n")
+	}
+	return b.String()
 }
 
 const genInstructions = `You write small, safe developer tools that an AI coding agent can call.
@@ -416,7 +466,9 @@ func pickRuntime(runsIn string) (lang, note string) {
 // fixRequest describes a failed test so the agent can repair the draft.
 func fixRequest(r GenerateRequest) string {
 	var b strings.Builder
-	b.WriteString(strings.TrimSpace(r.Change))
+	if ch := strings.TrimSpace(r.Change); ch != "" {
+		b.WriteString("## The developer's instructions (the most important part: do what they say, even if it means rewriting the script)\n" + ch)
+	}
 	if f := r.Failure; f != nil {
 		if b.Len() == 0 {
 			b.WriteString("Fix the tool so the test passes.")
@@ -442,22 +494,33 @@ func fixRequest(r GenerateRequest) string {
 		b.WriteString("If the output shows a missing module or package, add it to deps with an exact version. If the dependency install failed, fix the package name or version (check the log). ")
 		b.WriteString("Keep the tool's purpose. Fix the script, command, parameters or description so the agent picks the tool and it exits 0 with a useful answer. A missing secret cannot be fixed in code: never hard-code one.")
 	}
+	b.WriteString(historyNote(r.History))
 	return b.String()
 }
 
 // GenerateExtension asks the agent for a draft (or a revised draft).
 func (h *Hub) GenerateExtension(r GenerateRequest) (extension.Extension, error) {
+	t, err := h.GenerateExtensionTrace(r)
+	return t.Tool, err
+}
+
+// whyAsk asks for the agent's own account of a revision.
+const whyAsk = "\n\nAlso give, in the same JSON object, \"why\": one to three sentences on what you changed and why (what you think the cause was)."
+
+// GenerateExtensionTrace is GenerateExtension with how the draft came
+// about, for the tool builder's "How it was decided".
+func (h *Hub) GenerateExtensionTrace(r GenerateRequest) (GenTrace, error) {
 	root, err := h.need()
 	if err != nil {
-		return extension.Extension{}, err
+		return GenTrace{}, err
 	}
 	var prompt string
 	if r.Draft != nil {
-		b, _ := json.MarshalIndent(r.Draft, "", "  ")
-		prompt = genInstructions + "\n\nRevise this tool. Runs in: " + firstNonEmpty(r.Draft.Lang, "Node.js") + "\nChange request: " + fixRequest(r) + "\n\nCurrent tool:\n" + string(b)
+		b, _ := json.MarshalIndent(toolForPrompt(*r.Draft), "", "  ")
+		prompt = genInstructions + "\n\nRevise this tool. Runs in: " + firstNonEmpty(r.Draft.Lang, "Node.js") + "\n\n" + fixRequest(r) + "\n\nCurrent tool:\n" + string(b) + whyAsk
 	} else {
 		if strings.TrimSpace(r.Prompt) == "" {
-			return extension.Extension{}, errors.New("describe what the tool should do")
+			return GenTrace{}, errors.New("describe what the tool should do")
 		}
 		lang, note := pickRuntime(r.RunsIn)
 		prompt = fmt.Sprintf("%s\n\nDescription: %s\nRuns in: %s%s\nConnects to: %s", genInstructions, r.Prompt, lang, note, strings.Join(r.Connects, ", "))
@@ -468,8 +531,9 @@ func (h *Hub) GenerateExtension(r GenerateRequest) (extension.Extension, error) 
 	h.mu.RUnlock()
 	drv, err := h.Agents.Get(name)
 	if err != nil {
-		return extension.Extension{}, err
+		return GenTrace{}, err
 	}
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(h.ctx, 4*time.Minute)
 	defer cancel()
 	var text strings.Builder
@@ -482,16 +546,71 @@ func (h *Hub) GenerateExtension(r GenerateRequest) (extension.Extension, error) 
 		h.Bus.Publish(bus.Event{Type: "gen." + ev.Type, Summary: ev.Summary})
 	})
 	if err != nil {
-		return extension.Extension{}, err
+		return GenTrace{}, err
 	}
 	out := res.Text
 	if out == "" {
 		out = text.String()
 	}
-	var d extension.Extension
-	if err := json.Unmarshal([]byte(firstJSON(out)), &d); err != nil {
-		return extension.Extension{}, fmt.Errorf("the agent did not return a tool definition: %v", err)
+	tr := GenTrace{Prompt: prompt, Reply: out, Model: model, Ms: time.Since(start).Milliseconds()}
+	d, why, err := toolFromText(out)
+	if err != nil {
+		return tr, err
 	}
+	tr.Why = why
+	tr.Tool = finishDraft(d, r.Prompt, r.Draft)
+	return tr, nil
+}
+
+// toolForPrompt is a draft without what the agent has no use for (its last
+// test, approval and hashes), so the prompt stays small.
+func toolForPrompt(e extension.Extension) extension.Extension {
+	e.LastTest, e.Hash, e.Approved, e.ApprovedAt, e.Tree = nil, "", false, time.Time{}, ""
+	return e
+}
+
+// toolFromText reads a tool definition (and its "why") from model text.
+func toolFromText(out string) (extension.Extension, string, error) {
+	js := firstJSON(out)
+	var d extension.Extension
+	if err := json.Unmarshal([]byte(js), &d); err != nil {
+		return d, "", fmt.Errorf("the agent did not return a tool definition: %v", err)
+	}
+	if strings.TrimSpace(d.Name) == "" && strings.TrimSpace(d.Script) == "" && strings.TrimSpace(d.Command) == "" {
+		return d, "", errors.New("the agent did not return a tool definition: the JSON has no name, script or command")
+	}
+	var w struct {
+		Why string `json:"why"`
+	}
+	_ = json.Unmarshal([]byte(js), &w)
+	return d, strings.TrimSpace(w.Why), nil
+}
+
+// ToolFromReply reads a revised tool from a Prompt Playground answer and
+// makes it the next revision of draft (keeping its name, scope and
+// description when the answer leaves them out).
+func (h *Hub) ToolFromReply(text string, draft extension.Extension) (GenTrace, error) {
+	d, why, err := toolFromText(text)
+	if err != nil {
+		return GenTrace{}, errors.New("no tool in this answer: ask the AI to end with the whole tool as one JSON object")
+	}
+	if d.Name == "" {
+		d.Name = draft.Name
+	}
+	if d.Desc == "" {
+		d.Desc = draft.Desc
+	}
+	if d.Lang == "" {
+		d.Lang = draft.Lang
+	}
+	if d.Script == "" && d.Command == "" {
+		d.Script, d.Command = draft.Script, draft.Command
+	}
+	return GenTrace{Tool: finishDraft(d, draft.Prompt, &draft), Reply: text, Why: why}, nil
+}
+
+// finishDraft fills a generated draft's defaults and its revision.
+func finishDraft(d extension.Extension, prompt string, from *extension.Extension) extension.Extension {
 	if d.Kind == "" {
 		d.Kind = "script"
 	}
@@ -501,18 +620,21 @@ func (h *Hub) GenerateExtension(r GenerateRequest) (extension.Extension, error) 
 	if d.Secrets == nil {
 		d.Secrets = []extension.Secret{}
 	}
-	d.Prompt = r.Prompt
+	d.Prompt = prompt
 	d.Status = "untested"
 	d.Revision = 1
-	if r.Draft != nil {
-		d.Revision = r.Draft.Revision + 1
-		d.Prompt = r.Draft.Prompt
-		d.Scope = r.Draft.Scope
+	if from != nil {
+		d.Revision = from.Revision + 1
+		d.Prompt = from.Prompt
+		d.Scope = from.Scope
+		if d.TestPrompt == "" {
+			d.TestPrompt = from.TestPrompt
+		}
 	}
 	if d.TestPrompt == "" {
 		d.TestPrompt = d.SampleTest
 	}
-	return d, nil
+	return d
 }
 
 var fenceRE = regexp.MustCompile("(?s)```(?:json)?\\s*(\\{.*?\\})\\s*```")

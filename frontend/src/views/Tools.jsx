@@ -1,5 +1,7 @@
 import { registerPlace } from "../navigation.js";
 import { ToolTester } from "./tools/ToolTester.jsx";
+import { DecisionLog, openToolInPlayground } from "./tools/DecisionLog.jsx";
+import { genTurns, testText } from "./tools/toolHistory.js";
 import { useEffect } from "react";
 import { ShareMenu, exportTools } from "./tools/Share.jsx";
 import { backend } from "../backend.js";
@@ -151,6 +153,7 @@ export function openTool(t) {
   if (S.cx) S.cx.sel = "";
   const admin = !!t.managed && !!S.admin?.unlocked;
   S.tb = {
+    history: S.toolHist?.[t.name] || [],
     ...tbDefaults(),
     editing: t.name,
     draft: clone(t),
@@ -208,6 +211,115 @@ export function newManagedTool(manual) {
   update();
 }
 
+// histOf: this tool's history (kept per tool name for the session, so
+// reopening the tool keeps it).
+function histOf(tb) {
+  tb.history ||= [];
+  const name = tb.draft?.name || tb.editing;
+  if (name) (S.toolHist ||= {})[name] = tb.history;
+  return tb.history;
+}
+
+// revise: ask the agent for a new draft (or revision) and record how it
+// came about in the history; the request carries the history so far.
+async function revise(req, kind, extra = {}) {
+  const tb = S.tb;
+  const before = tb.draft?.script || tb.draft?.command || "";
+  const tr = await backend.GenerateExtensionTrace({
+    ...req,
+    model: tb.genModel || "",
+    history: req.draft ? genTurns(histOf(tb)) : [],
+  });
+  const d = tr.tool;
+  d.scope = tb.scope;
+  tb.draft = d;
+  histOf(tb).push({
+    kind,
+    at: new Date().toISOString(),
+    revision: d.revision,
+    ask: extra.ask || "",
+    prompt: tr.prompt,
+    reply: tr.reply,
+    why: tr.why || "",
+    model: tr.model || "",
+    ms: tr.ms || 0,
+    before,
+    after: d.script || d.command || "",
+    attempt: extra.attempt || 0,
+  });
+  return d;
+}
+
+// noteTest: the test after the latest revision goes into the history.
+function noteTest(tb) {
+  const t = tb.test;
+  if (!t || t.running) return;
+  const h = histOf(tb),
+    last = h[h.length - 1];
+  const entry = { test: t, testText: testText(t), question: tb.testPrompt };
+  if (last && last.kind !== "test" && !last.test) Object.assign(last, entry);
+  else h.push({ kind: "test", at: new Date().toISOString(), revision: tb.draft?.revision || 0, ...entry });
+}
+
+// applyToolRevision: a revision the AI gave in the Prompt Playground
+// becomes the draft (of the tool that conversation is about), goes into
+// its history and is tested again.
+export async function applyToolRevision(tr, name, runId) {
+  let tb = S.tb;
+  if (!tb?.draft || (tb.draft.name !== name && tb.editing !== name)) {
+    const t = (S.ws?.extensions || []).find((x) => x.name === name);
+    if (!t) return toast(`Open the tool ${name} in Tools first.`, "error");
+    openTool(t);
+    tb = S.tb;
+  }
+  const before = tb.draft.script || tb.draft.command || "";
+  const d = tr.tool;
+  d.scope = tb.scope;
+  tb.draft = d;
+  histOf(tb).push({
+    kind: "playground",
+    at: new Date().toISOString(),
+    revision: d.revision,
+    ask: "",
+    reply: tr.reply,
+    why: tr.why || "",
+    before,
+    after: d.script || d.command || "",
+    run: runId,
+  });
+  tb.fix = null;
+  tb.direct = false;
+  tb.stage = "test";
+  tb.testTab = "ai";
+  S.view = "tools";
+  update();
+  if (tb.testPrompt.trim()) await runTest();
+}
+
+// reloadTool: read a saved tool again from its files (after the Playground
+// agent edited them), keeping this session's history.
+export async function reloadTool(name) {
+  await refreshExtensions();
+  const t = (S.ws?.extensions || []).find((x) => x.name === name);
+  if (!t) return toast(`${name} is not a saved tool of this project.`, "error");
+  const before = S.tb?.draft?.name === name ? S.tb.draft.script || S.tb.draft.command || "" : null;
+  openTool(t);
+  const tb = S.tb;
+  if (before !== null && before !== (t.script || t.command || ""))
+    histOf(tb).push({
+      kind: "playground",
+      at: new Date().toISOString(),
+      revision: t.revision,
+      why: "Reloaded from the tool's files after the Prompt Playground changed them.",
+      before,
+      after: t.script || t.command || "",
+    });
+  tb.stage = "test";
+  tb.testTab = "ai";
+  update();
+  toast(`Reloaded ${name} from its files.`);
+}
+
 async function generate(refining) {
   const tb = S.tb;
   if (!refining && !tb.prompt.trim()) return toast("Describe what the tool should do.");
@@ -215,21 +327,24 @@ async function generate(refining) {
   tb.gen = { lines: [refining ? "Reading your change request" : "Understanding the request"] };
   update();
   try {
-    const d = await backend.GenerateExtension(
+    if (!refining) {
+      tb.history = [];
+      tb.draft = null;
+    }
+    const d = await revise(
       refining
         ? {
             draft: tb.draft,
             change: tb.refine,
-            model: tb.genModel || "",
             // a failed test goes along, so the change can also fix it
             ...(tb.test && !tb.test.pass && !tb.test.running
               ? { failure: tb.test, question: tb.testPrompt, attachments: attPaths(tb) }
               : {}),
           }
-        : { prompt: tb.prompt, runsIn: tb.runsIn, connects: tb.connects, model: tb.genModel || "" },
+        : { prompt: tb.prompt, runsIn: tb.runsIn, connects: tb.connects },
+      refining ? "change" : "generate",
+      { ask: refining ? tb.refine : tb.prompt },
     );
-    d.scope = tb.scope;
-    tb.draft = d;
     tb.refine = "";
     tb.test = null;
     tb.direct = false;
@@ -260,6 +375,7 @@ async function runTest() {
       summary: errMsg(e),
     };
   }
+  noteTest(tb);
   update();
 }
 
@@ -281,18 +397,17 @@ async function autoFix() {
       `Attempt ${a} of ${MAX_FIX}: sending the failed test${ask ? " and your instructions" : ""} to the agent`,
     );
     try {
-      const d = await backend.GenerateExtension({
-        draft: tb.draft,
-        failure: tb.test,
-        question: tb.testPrompt,
-        attachments: attPaths(tb),
-        model: tb.genModel || "",
-        change: ask
-          ? `The developer says: ${ask}\nFix the tool so the test passes, doing what the developer asks.`
-          : "Fix the tool so the test passes.",
-      });
-      d.scope = tb.scope;
-      tb.draft = d;
+      await revise(
+        {
+          draft: tb.draft,
+          failure: tb.test,
+          question: tb.testPrompt,
+          attachments: attPaths(tb),
+          change: ask ? ask + "\nAnd fix the tool so the test passes." : "",
+        },
+        "fix",
+        { ask, attempt: a },
+      );
     } catch (e) {
       say("The agent could not fix it: " + errMsg(e));
       break;
@@ -327,9 +442,7 @@ async function refineAndTest() {
   };
   say("Sending your change to the agent");
   try {
-    const d = await backend.GenerateExtension({ draft: tb.draft, change: ask, model: tb.genModel || "" });
-    d.scope = tb.scope;
-    tb.draft = d;
+    await revise({ draft: tb.draft, change: ask }, "change", { ask });
     say(`Revision ${tb.draft.revision} written. Testing again…`);
     await runTest();
     say(tb.test.pass ? "Changed, and the test still passes." : "Changed, but the test fails now.");
@@ -886,6 +999,7 @@ export function Tools() {
             )}
           </div>
         </fieldset>
+        <DecisionLog tb={tb} />
       </>
     );
   } else if (tb.stage === "test" && d && (tb.testTab || "args") === "args") {
@@ -1099,6 +1213,13 @@ export function Tools() {
                         onChange={(v) => set("genModel", v)}
                         label="Model for changing the tool"
                       />
+                      <button
+                        className="btn secondary"
+                        onClick={() => openToolInPlayground()}
+                        title="Talk it through with the AI in the Prompt Playground: it gets this tool, what was tried and the last test, and can read the project and try commands"
+                      >
+                        <Icon.playground /> Discuss in Prompt Playground
+                      </button>
                     </div>
                   </>
                 )}
@@ -1141,6 +1262,7 @@ export function Tools() {
             )}
           </div>
         )}
+        <DecisionLog tb={tb} />
         <div className="row-actions">
           <button className="btn secondary" onClick={() => set("stage", "review")}>
             Back to review

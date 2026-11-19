@@ -21,6 +21,7 @@ import { EventIcon } from "../EventIcon.jsx";
 import { openFlowRunner } from "./FlowRun.jsx";
 import { ResultsLink } from "../RunResults.jsx";
 import { AiProgress } from "../AiProgress.jsx";
+import { applyToolRevision, reloadTool } from "./Tools.jsx";
 
 const EXAMPLES = [
   "Summarize what this project does and how it is organised",
@@ -31,6 +32,42 @@ const EXAMPLES = [
 
 const pg = () =>
   (S.pg ||= { prompt: "", tools: true, ask: true, model: "", runs: [], sel: "", loaded: false, parents: [] });
+
+// Which tool each conversation is about (run id → tool name), kept in this
+// browser so Apply works after a reload.
+const TOOL_KEY = "codegen.pg.tools.v1";
+function toolFor() {
+  const p = pg();
+  if (!p.toolFor)
+    try {
+      p.toolFor = JSON.parse(localStorage.getItem(TOOL_KEY) || "{}") || {};
+    } catch {
+      p.toolFor = {};
+    }
+  return p.toolFor;
+}
+function setToolFor(id, name) {
+  const m = toolFor();
+  m[id] = name;
+  try {
+    localStorage.setItem(TOOL_KEY, JSON.stringify(Object.fromEntries(Object.entries(m).slice(-200))));
+  } catch {
+    /* per-browser convenience only */
+  }
+}
+
+// openToolChat: a new conversation about a tool, its prompt (the tool, its
+// history and last test) ready to read and edit before sending.
+export function openToolChat(prompt, name) {
+  const p = pg();
+  p.parents = [];
+  p.sel = "";
+  p.prompt = prompt;
+  p.toolNext = name;
+  S.view = "playground";
+  update();
+  setTimeout(() => document.querySelector(".pg-composer textarea")?.focus(), 50);
+}
 
 // Start a new prompt in the playground that continues from earlier runs.
 export function continueInPlayground(ids) {
@@ -106,6 +143,7 @@ async function reply(runId, text) {
   p.prompt = text;
   p.parents = [runId];
   p.reply = "";
+  if (toolFor()[runId]) p.toolNext = toolFor()[runId];
   return run();
 }
 
@@ -141,6 +179,8 @@ async function run() {
     p.sel = id;
     p.parents = [];
     p.prompt = "";
+    if (p.toolNext) setToolFor(id, p.toolNext);
+    p.toolNext = "";
     update();
   } catch (e) {
     toast(errMsg(e), "error");
@@ -390,6 +430,62 @@ function Composer({ compact, box, r, running, anyRunning }) {
   );
 }
 
+// ToolApply: this conversation is about a tool: take the revision in the
+// answer into the tool builder and test it, or read the tool's files again
+// when the agent changed them.
+function ToolApply({ name, answer, runId }) {
+  const [busy, setBusy] = useState(false);
+  const has = /```json[\s\S]*?"(script|command)"\s*:/.test(answer);
+  const saved = (S.ws?.extensions || []).some((x) => x.name === name);
+  const apply = async () => {
+    const draft =
+      S.tb?.draft && (S.tb.draft.name === name || S.tb.editing === name)
+        ? S.tb.draft
+        : (S.ws?.extensions || []).find((x) => x.name === name);
+    if (!draft) return toast(`Open the tool ${name} in Tools first.`, "error");
+    setBusy(true);
+    try {
+      const tr = await backend.ToolFromReply(answer, draft);
+      await applyToolRevision(tr, name, runId);
+    } catch (e) {
+      toast(errMsg(e), "error");
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="pg-toolapply">
+      <span>
+        <Icon.tool /> About the tool <b>{name}</b>
+        {!has && (
+          <span className="muted"> · no revised tool in this answer yet: ask for the whole tool as JSON</span>
+        )}
+      </span>
+      <button className="btn primary" disabled={busy || !has} onClick={apply}>
+        {busy ? "Applying…" : "Apply to the tool and test"}
+      </button>
+      {saved && (
+        <button
+          className="btn secondary"
+          disabled={busy}
+          onClick={() => reloadTool(name)}
+          title="When the agent edited the tool's files in the project, read them again"
+        >
+          Reload from its files
+        </button>
+      )}
+      <button
+        className="btn secondary"
+        onClick={() => {
+          S.view = "tools";
+          update();
+        }}
+      >
+        Back to the tool
+      </button>
+    </div>
+  );
+}
+
 export function Playground() {
   const p = pg(),
     box = useRef(null);
@@ -615,6 +711,9 @@ export function Playground() {
                 <div className="pg-waiting">
                   <Icon.shield /> Waiting for your approval to use <b>{S.permAsks[0].tool}</b>.
                 </div>
+              )}
+              {!running && answer && toolFor()[r.id] && (
+                <ToolApply name={toolFor()[r.id]} answer={answer} runId={r.id} />
               )}
               {!running && answer && evs.some((e) => e.type === "run.end") && (
                 <div className={"pg-reply" + (asksUser(answer) ? " asks" : "")}>

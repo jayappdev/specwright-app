@@ -212,6 +212,17 @@ func (a *App) GenerateExtension(r core.GenerateRequest) (extension.Extension, er
 	return ok(a.hub.GenerateExtension(r))
 }
 
+// GenerateExtensionTrace writes or revises a tool and tells how: the
+// prompt, the agent's reply and what it says it changed.
+func (a *App) GenerateExtensionTrace(r core.GenerateRequest) (core.GenTrace, error) {
+	return ok(a.hub.GenerateExtensionTrace(r))
+}
+
+// ToolFromReply reads a revised tool from a Prompt Playground answer.
+func (a *App) ToolFromReply(text string, draft extension.Extension) (core.GenTrace, error) {
+	return ok(a.hub.ToolFromReply(text, draft))
+}
+
 // SaveManagedLibraryFile adds or changes a file of a corporate skill and re-signs it (admin).
 func (a *App) SaveManagedLibraryFile(name, file, content, oldFile string) ([]workflow.Library, error) {
 	return ok(a.hub.SaveManagedLibraryFile(name, file, content, oldFile))

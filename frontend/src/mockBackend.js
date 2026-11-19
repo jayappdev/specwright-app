@@ -5549,6 +5549,44 @@ export function createMockBackend(methods) {
       const q = prompt.trim(),
         req = (q.match(/\nRequest: (.*)/) || [])[1] || q,
         short = req.length > 80 ? req.slice(0, 80) + "…" : req;
+      if (/^Help me improve the SpecWright tool "/.test(q)) {
+        const js = (q.match(/```json\n([\s\S]*?)\n```/) || [])[1];
+        let d = {};
+        try {
+          d = JSON.parse(js);
+        } catch {
+          /* no tool in the prompt */
+        }
+        const c = d.lang === "Bash" ? "#" : "//";
+        const want = (q.split("## What I want\n")[1] || "").trim();
+        const rev = {
+          name: d.name,
+          desc: d.desc,
+          lang: d.lang,
+          command: d.command,
+          script: (d.script || "") + `\n${c} reads paths with spaces: arguments passed as an array`,
+          params: d.params,
+          secrets: d.secrets,
+          deps: d.deps,
+          why: "The path was split at a space; it is now passed as one argument.",
+        };
+        return startRunP({
+          id: "playground",
+          title: "Playground",
+          input: q,
+          rawPrompt: q,
+          gate: false,
+          status: "pending",
+          lastRun: "",
+          script: [
+            ["Read", d.scriptPath || "package.json"],
+            [
+              "say",
+              `I read the tool and its last test. You asked: “${want.split("\n")[0]}”.\n\nThe cause: the script splits the path argument at spaces. I pass it as one argument now.\n\n\`\`\`json\n${JSON.stringify(rev, null, 2)}\n\`\`\`\n\n(Browser preview: the desktop app runs the real agent.)`,
+            ],
+          ],
+        });
+      }
       if (
         /^You are helping in SpecWright's file browser/.test(q) &&
         /packages|dependenc|build errors|Compile the project/i.test(req)
@@ -6240,6 +6278,51 @@ export function createMockBackend(methods) {
           ". Run: .codegen/scripts/" +
           name +
           " --help",
+      };
+    },
+    async GenerateExtensionTrace(r) {
+      const t0 = Date.now();
+      const tool = await this.GenerateExtension(r);
+      const hist = (r.history || [])
+        .map(
+          (h) =>
+            `- revision ${h.revision}${h.ask ? ", asked: " + h.ask : ""}${h.test ? "; test: " + h.test : ""}`,
+        )
+        .join("\n");
+      return {
+        tool,
+        prompt:
+          (r.draft ? "Revise this tool.\n\n" : "Write a tool.\n\nDescription: " + (r.prompt || "") + "\n") +
+          (r.change ? "## The developer's instructions\n" + r.change + "\n" : "") +
+          (r.failure ? "\nThe test failed: " + (r.failure.summary || "") + "\n" : "") +
+          (hist ? "\n## What was tried before\n" + hist + "\n" : "") +
+          "\n(browser preview: the desktop app shows the whole prompt)",
+        reply: "```json\n" + JSON.stringify(tool, null, 2) + "\n```",
+        why: r.draft
+          ? r.failure
+            ? "Quoted the path argument and pinned the dependency."
+            : "Applied: " + (r.change || "")
+          : "",
+        model: r.model || "default",
+        ms: Date.now() - t0,
+      };
+    },
+    async ToolFromReply(text, draft) {
+      const m = text.match(/```json\s*(\{[\s\S]*?\})\s*```/);
+      if (!m)
+        throw new Error("no tool in this answer: ask the AI to end with the whole tool as one JSON object");
+      const d = JSON.parse(m[1]);
+      const { why, ...rest } = d;
+      return {
+        tool: {
+          ...clone(draft),
+          ...rest,
+          revision: (draft.revision || 1) + 1,
+          status: "untested",
+          lastTest: null,
+        },
+        reply: text,
+        why: why || "",
       };
     },
     async GenerateExtension(r) {
