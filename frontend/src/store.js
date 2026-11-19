@@ -81,6 +81,8 @@ export const S = {
   history: { runs: [], sel: "", pos: 0, playing: false },
   // tool reliability: name → latest calls' numbers (toolStats.js)
   toolStats: null,
+  // the flow lists' search and tag filters, per list (flowLists.jsx)
+  flowFilter: {},
   metrics: null,
   wizSection: "w-lang",
   toast: "",

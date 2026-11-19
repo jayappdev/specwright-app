@@ -2,6 +2,7 @@
 // each step type's settings, decisions, filters, aggregates, connections, the
 // data panel (what a step gets and gives) and variable chips.
 import { LessonsEditor } from "./Lessons.jsx";
+import { TagEditor, allTags, allGroups } from "../../flowLists.jsx";
 import { ContextInspector } from "./ContextStep.jsx";
 import { Reliability } from "../../ToolTile.jsx";
 import { TriggersEditor } from "./Triggers.jsx";
@@ -118,6 +119,38 @@ function FlowSettings() {
           value={flow.description || ""}
           onChange={(e) => {
             flow.description = e.target.value;
+            changed();
+          }}
+        />
+      </Field>
+      <Field
+        label="Group"
+        hint="Where the flow is listed, e.g. Releases or Billing / Refunds. Empty: not in a group."
+      >
+        <input
+          value={flow.group || ""}
+          list="fls-group-suggestions"
+          placeholder="e.g. Releases"
+          onChange={(e) => {
+            flow.group = e.target.value;
+            changed();
+          }}
+        />
+        <datalist id="fls-group-suggestions">
+          {allGroups(fl().list).map((g) => (
+            <option key={g} value={g} />
+          ))}
+        </datalist>
+      </Field>
+      <Field
+        label="Tags"
+        hint="Labels to find the flow by; the flow lists can be searched and filtered by them."
+      >
+        <TagEditor
+          tags={flow.tags || []}
+          suggestions={allTags(fl().list)}
+          onChange={(t) => {
+            flow.tags = t;
             changed();
           }}
         />

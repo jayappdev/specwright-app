@@ -4,6 +4,7 @@
 //   canvas    steps as cards; drag a card to move it, drag from its ● port to another card to connect
 //   inspector the selected step, or the flow (name, context, skills) when nothing is selected
 // Flows are saved to .codegen/flows/<id>.json (autosave). Running them comes with the executor.
+import { FlowFilterBar, FlowGroup, FlowTagChips, flowFilter, groupFlows } from "../flowLists.jsx";
 import { stepRef, toolRef, isBuiltin, loopInfo, uniqueTitle } from "../flowNames.js";
 import { useEffect, useRef } from "react";
 import { openFlowRunner } from "./FlowRun.jsx";
@@ -429,6 +430,9 @@ export async function save() {
     if (s) {
       s.name = f.flow.name;
       s.updated = st.flow.updated;
+      s.group = st.flow.group || ""; // as saved (tidied: flow/tags.go)
+      s.tags = st.flow.tags || [];
+      s.description = f.flow.description;
     }
   } catch (e) {
     if (/flow changed on disk/.test(errMsg(e))) {
@@ -1198,29 +1202,46 @@ export function Flows() {
             </button>
           )}
         </div>
-        {(f.list || []).map((x) => (
-          <button
-            key={x.id}
-            className={"run-item" + (x.id === f.flow?.id ? " active" : "")}
-            onClick={() => openFlow(x.id)}
-          >
-            <span className="run-item-top">
-              <b>{x.name}</b>
-              {x.revision > 1 && (
-                <span
-                  className="badge"
-                  title={"A version of " + ((f.list || []).find((y) => y.id === x.parent)?.name || x.parent)}
+        <FlowFilterBar area="designer" list={f.list} />
+        {(() => {
+          const groups = groupFlows(f.list, flowFilter("designer"));
+          if ((f.list || []).length && !groups.length)
+            return (
+              <p className="muted" style={{ padding: "4px 8px" }}>
+                No flow matches.
+              </p>
+            );
+          return groups.map(([g, items]) => (
+            <FlowGroup key={g || "-"} area="designer" name={g} count={items.length} groups={groups.length}>
+              {items.map((x) => (
+                <button
+                  key={x.id}
+                  className={"run-item" + (x.id === f.flow?.id ? " active" : "")}
+                  onClick={() => openFlow(x.id)}
                 >
-                  v{x.revision}
-                </span>
-              )}
-            </span>
-            <small>
-              {x.steps} step{x.steps === 1 ? "" : "s"} · {x.outputs} output{x.outputs === 1 ? "" : "s"}
-              {x.updated ? " · " + new Date(x.updated).toLocaleDateString() : ""}
-            </small>
-          </button>
-        ))}
+                  <span className="run-item-top">
+                    <b>{x.name}</b>
+                    {x.revision > 1 && (
+                      <span
+                        className="badge"
+                        title={
+                          "A version of " + ((f.list || []).find((y) => y.id === x.parent)?.name || x.parent)
+                        }
+                      >
+                        v{x.revision}
+                      </span>
+                    )}
+                  </span>
+                  <small>
+                    {x.steps} step{x.steps === 1 ? "" : "s"} · {x.outputs} output{x.outputs === 1 ? "" : "s"}
+                    {x.updated ? " · " + new Date(x.updated).toLocaleDateString() : ""}
+                  </small>
+                  <FlowTagChips tags={x.tags} area="designer" />
+                </button>
+              ))}
+            </FlowGroup>
+          ));
+        })()}
         {f.list && !f.list.length && (
           <p className="muted" style={{ padding: "4px 8px" }}>
             No flows yet. A flow strings tools together: inputs → tools, AI, merges and transforms → outputs.

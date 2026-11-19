@@ -3166,3 +3166,80 @@ select.fl-secret-pick {
 .fr-why {
   margin: 4px 0;
 }
+/* organising flows: search, tag chips, groups (flowLists.jsx) */
+.fls-bar {
+  display: grid;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+.fls-bar .hk-search {
+  width: 100%;
+}
+.fls-tags,
+.fls-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.fls-chips {
+  margin-top: 2px;
+}
+.fl-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.8em;
+  line-height: 1.7;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.fl-tag.small {
+  font-size: 0.75em;
+  padding: 0 6px;
+  line-height: 1.5;
+}
+.fl-tag.on,
+.fl-tag[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--info) 18%, transparent);
+  border-color: color-mix(in srgb, var(--info) 55%, transparent);
+  color: var(--fg);
+}
+.fls-group-head {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.fls-caret {
+  display: inline-block;
+  width: 1em;
+}
+.fls-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  border: 1px solid var(--input-border, var(--border));
+  border-radius: var(--radius);
+  padding: 4px;
+}
+.fls-editor input {
+  flex: 1;
+  min-width: 8em;
+  border: 0;
+  background: none;
+  outline: none;
+}
+.fls-x {
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 0 0 2px;
+}

@@ -32,15 +32,18 @@ import (
 
 // Flow is one designed flow.
 type Flow struct {
-	Version     int     `json:"version"`
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description,omitempty"`
-	Inputs      []Input `json:"inputs"`
-	Context     Context `json:"context"`
-	Skills      []Skill `json:"skills"`
-	Nodes       []Node  `json:"nodes"`
-	Edges       []Edge  `json:"edges"`
+	Version     int    `json:"version"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Group is where the flow is listed; Tags are labels to find it (tags.go)
+	Group   string   `json:"group,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
+	Inputs  []Input  `json:"inputs"`
+	Context Context  `json:"context"`
+	Skills  []Skill  `json:"skills"`
+	Nodes   []Node   `json:"nodes"`
+	Edges   []Edge   `json:"edges"`
 	// Triggers start the flow by themselves (a schedule…); see trigger.go
 	Triggers []Trigger `json:"triggers,omitempty"`
 	// MinutesSaved is the manual work one successful run replaces (for
@@ -990,6 +993,10 @@ type Summary struct {
 	Updated     time.Time `json:"updated"`
 	Parent      string    `json:"parent,omitempty"`
 	Revision    int       `json:"revision,omitempty"`
+	Group       string    `json:"group,omitempty"`
+	Tags        []string  `json:"tags,omitempty"`
+	// Keywords: the steps' names and tools, for searching the lists
+	Keywords []string `json:"keywords,omitempty"`
 }
 
 // List returns the workspace's flows, newest first.
@@ -1010,7 +1017,8 @@ func List(root string) ([]Summary, error) {
 		if err != nil {
 			continue
 		}
-		s := Summary{ID: f.ID, Name: f.Name, Description: f.Description, Updated: f.Updated, Parent: f.Parent, Revision: f.Revision}
+		s := Summary{ID: f.ID, Name: f.Name, Description: f.Description, Updated: f.Updated, Parent: f.Parent, Revision: f.Revision,
+			Group: NormGroup(f.Group), Tags: NormTags(f.Tags), Keywords: f.keywords()}
 		for _, n := range f.Nodes {
 			switch n.Type {
 			case "output":
@@ -1156,6 +1164,7 @@ func Save(root string, f *Flow) error {
 		return fmt.Errorf("flow id %q: use lowercase letters, digits and -", f.ID)
 	}
 	f.normalize()
+	f.Group, f.Tags = NormGroup(f.Group), NormTags(f.Tags)
 	f.Updated = time.Now().UTC().Truncate(time.Second)
 	f.Rev = ""
 	repairs := f.Repairs

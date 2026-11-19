@@ -2818,6 +2818,17 @@ export function createMockBackend(methods) {
     updated: f.updated,
     parent: f.parent,
     revision: f.revision,
+    group: f.group || "",
+    tags: f.tags || [],
+    // the steps' names and tools, for searching (flow/tags.go)
+    keywords: [
+      ...new Set(
+        f.nodes
+          .filter((n) => n.type !== "start")
+          .flatMap((n) => [n.title, (n.tool || "").replace(/^builtin:/, "")])
+          .filter(Boolean),
+      ),
+    ],
   });
   const slug = (n) =>
     (n || "flow")
@@ -6626,6 +6637,28 @@ export function createMockBackend(methods) {
       delete f.rev;
       delete f.repairs;
       f.updated = new Date().toISOString();
+      // tags and group tidied as the app does (flow/tags.go)
+      f.group = String(f.group || "")
+        .split("/")
+        .map((x) => x.trim().replace(/\s+/g, " "))
+        .filter(Boolean)
+        .join(" / ");
+      f.tags = [
+        ...new Set(
+          (f.tags || [])
+            .map((t) =>
+              String(t)
+                .toLowerCase()
+                .trim()
+                .replace(/^#/, "")
+                .replace(/[^\p{L}\p{N}_./]+/gu, "-")
+                .replace(/^-+|-+$/g, ""),
+            )
+            .filter(Boolean),
+        ),
+      ].sort();
+      if (!f.group) delete f.group;
+      if (!f.tags.length) delete f.tags;
       db.flows[f.id] = f;
       persist();
       return { flow: { ...clone(f), rev: flowRev(f) }, issues: validateFlow(f) };
