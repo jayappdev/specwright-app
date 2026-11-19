@@ -92,7 +92,13 @@ func TestFlowRunEndToEnd(t *testing.T) {
 	if len(runs) != 1 || runs[0].State != "done" {
 		t.Fatalf("%+v", runs)
 	}
-	m, _ := h.Metrics()
+	// the usage ledger is written just after the run record: wait for it too
+	var m Metrics
+	for dl := time.Now().Add(5 * time.Second); time.Now().Before(dl); time.Sleep(20 * time.Millisecond) {
+		if m, _ = h.Metrics(); m.Flows.Executed == 1 {
+			break
+		}
+	}
 	if m.Flows.Executed != 1 || m.Flows.Completed != 1 || m.Flows.ToolExecutions < 1 || m.Flows.HoursSaved <= 0 || len(m.Flows.Top) != 1 {
 		t.Fatalf("%+v", m.Flows)
 	}
