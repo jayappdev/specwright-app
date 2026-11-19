@@ -122,8 +122,15 @@ type triggerStore struct {
 	pend map[string]*filePend
 	// ext: watchers of folders outside the project (folder → stop), while
 	// the scheduler (ctx) runs
-	ext map[string]context.CancelFunc
-	ctx context.Context
+	ext   map[string]context.CancelFunc
+	extW  map[string]*watch.Watcher
+	projW *watch.Watcher // the project's own watcher (filesclosed.go)
+	ctx   context.Context
+	// snap: the folders whose last scan is kept, for files triggers that
+	// count changes made while the app was closed (filesclosed.go);
+	// snapDirty: files changed since the scans were saved
+	snap      map[string]bool
+	snapDirty bool
 	// kick wakes the scheduler to look at the triggers again (a flow saved)
 	kick chan struct{}
 	// qmu: one pass at a time starts queued runs (trigger_queue.go)
@@ -545,15 +552,19 @@ func (h *Hub) runScheduler(ctx context.Context, root string) {
 	ts.mu.Lock()
 	ts.ctx = ctx
 	ts.mu.Unlock()
-	defer func() { // the project closed: stop watching outside folders
+	defer func() { // the project closed: keep the last scans, stop watching outside folders
+		h.saveScansOf(ts, root, true)
 		ts.mu.Lock()
 		for d, stop := range ts.ext {
 			stop()
 			delete(ts.ext, d)
+			delete(ts.extW, d)
 		}
 		ts.ctx = nil
 		ts.mu.Unlock()
 	}()
+	h.syncExternalWatches(root)
+	h.catchUpFiles(root) // changes made while the app was closed (filesclosed.go)
 	h.checkTriggers(root)
 	t := time.NewTicker(triggerTick)
 	defer t.Stop()
@@ -654,6 +665,8 @@ func (h *Hub) checkTriggers(root string) {
 	}
 	h.processQueue(root)
 	h.syncExternalWatches(root)
+	h.saveScans(root, false)
+	_ = h.Store.BackupDaily() // a copy of the history database a day (store/backup.go)
 }
 
 var flowLive = []string{"running", "review", "scheduled"}
@@ -785,9 +798,19 @@ func (h *Hub) noteExternalChanges(root, dir string, chs []watch.Change) {
 	h.noteChanges(root, list)
 }
 
-func (h *Hub) noteChanges(root string, chs []fileChange) {
+func (h *Hub) noteChanges(root string, chs []fileChange) { h.noteChangesFor(root, chs, false) }
+
+// noteChangesFor: closed is true for the changes found when the project
+// opens (made while the app was closed): only triggers that ask for them.
+func (h *Hub) noteChangesFor(root string, chs []fileChange, closed bool) {
 	if len(chs) == 0 || !h.rootIs(root) {
 		return
+	}
+	if !closed {
+		ts := h.triggers(root)
+		ts.mu.Lock()
+		ts.snapDirty = true
+		ts.mu.Unlock()
 	}
 	list, err := flow.List(root)
 	if err != nil {
@@ -800,7 +823,7 @@ func (h *Hub) noteChanges(root string, chs []fileChange) {
 			continue
 		}
 		for _, t := range f.Triggers {
-			if t.Kind != "files" || !t.Enabled || t.Files == nil {
+			if t.Kind != "files" || !t.Enabled || t.Files == nil || (closed && !t.Files.WhileClosed) {
 				continue
 			}
 			var hit []string
@@ -889,6 +912,7 @@ func (h *Hub) syncExternalWatches(root string) {
 		return
 	}
 	want := map[string][]string{} // folder → trigger keys
+	snap := map[string]bool{}     // folders whose scan is kept (filesclosed.go)
 	problem := map[string]string{}
 	keys := map[string]flow.Trigger{}
 	for _, sum := range list {
@@ -907,6 +931,9 @@ func (h *Hub) syncExternalWatches(root string) {
 			}
 			for _, g := range t.Files.Paths {
 				if !flow.IsAbsPattern(g) {
+					if t.Files.WhileClosed {
+						snap[root] = true
+					}
 					continue
 				}
 				dir := filepath.FromSlash(flow.GlobBase(g))
@@ -919,6 +946,9 @@ func (h *Hub) syncExternalWatches(root string) {
 					dir = filepath.Dir(dir) // one file: watch its folder
 				}
 				if inside(root, dir) {
+					if t.Files.WhileClosed {
+						snap[root] = true
+					}
 					continue // the project's own watcher sees it
 				}
 				if p := tooBroad(dir); p != "" {
@@ -926,6 +956,9 @@ func (h *Hub) syncExternalWatches(root string) {
 					continue
 				}
 				want[dir] = append(want[dir], key)
+				if t.Files.WhileClosed {
+					snap[dir] = true
+				}
 			}
 		}
 	}
@@ -933,14 +966,21 @@ func (h *Hub) syncExternalWatches(root string) {
 	ts.mu.Lock()
 	ctx := ts.ctx
 	if ts.ext == nil {
-		ts.ext = map[string]context.CancelFunc{}
+		ts.ext, ts.extW = map[string]context.CancelFunc{}, map[string]*watch.Watcher{}
 	}
 	for d, stop := range ts.ext {
 		if _, ok := want[d]; !ok {
 			stop()
 			delete(ts.ext, d)
+			delete(ts.extW, d)
 		}
 	}
+	for d := range snap {
+		if !ts.snap[d] {
+			ts.snapDirty = true // a folder newly kept: save its scan
+		}
+	}
+	ts.snap = snap
 	var start []string
 	for d := range want {
 		if ts.ext[d] == nil {
@@ -969,7 +1009,7 @@ func (h *Hub) syncExternalWatches(root string) {
 			stop()
 			continue
 		}
-		ts.ext[d] = stop
+		ts.ext[d], ts.extW[d] = stop, w
 		ts.mu.Unlock()
 		dir := d
 		go w.Run(c, func(chs []watch.Change) { h.noteExternalChanges(root, dir, chs) })

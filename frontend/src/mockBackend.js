@@ -5554,6 +5554,38 @@ export function createMockBackend(methods) {
     async Runs(limit) {
       return clone(db.runs.filter((r) => r.workspace === db.root).slice(0, limit || 50));
     },
+    // the history database (store/backup.go) and the trigger queue (core/trigger_queue.go)
+    async HistoryDBInfo() {
+      return {
+        open: true,
+        path: "~/Library/Application Support/codegen/history.db",
+        bytes: 3485696,
+        runs: db.runs.length,
+        lessons: (db.lessons || []).length,
+        toolCalls: 42,
+        queued: (db.trigQueue || []).length,
+        backups: clone(db.backups || []),
+        folder: "~/Library/Application Support/codegen/backups",
+      };
+    },
+    async BackupHistoryNow() {
+      await wait(300);
+      const name = "history-" + new Date().toISOString().slice(0, 10) + ".db";
+      db.backups = [
+        { name, path: "~/Library/Application Support/codegen/backups/" + name, bytes: 3407872, at: now() },
+        ...(db.backups || []).filter((b) => b.name !== name),
+      ].slice(0, 7);
+      persist();
+      return clone(db.backups[0]);
+    },
+    async TriggerQueue() {
+      return clone(db.trigQueue || []);
+    },
+    async CancelQueued(id) {
+      db.trigQueue = (db.trigQueue || []).filter((q) => q.id !== id);
+      persist();
+      setTimeout(() => emit({ type: "trigger.queued", summary: "A waiting run was cancelled" }), 20);
+    },
     // lessons from reviews (core/lessons.go)
     async FlowLessons(flowID) {
       return clone((db.lessons || []).filter((l) => l.flow === flowID && l.workspace === db.root));

@@ -160,3 +160,49 @@ func (h *Hub) retryLater(root string, run FlowRunState) {
 		}
 	}
 }
+
+// QueueView is a waiting run, for Run flows.
+type QueueView struct {
+	store.QueuedRun
+	FlowName    string `json:"flowName"`
+	TriggerName string `json:"triggerName"`
+}
+
+// TriggerQueue lists the open project's waiting runs, oldest first.
+func (h *Hub) TriggerQueue() ([]QueueView, error) {
+	root, err := h.need()
+	if err != nil {
+		return nil, err
+	}
+	q, err := h.Store.Queue(root)
+	if err != nil {
+		return nil, err
+	}
+	out := []QueueView{}
+	for _, x := range q {
+		v := QueueView{QueuedRun: x, FlowName: x.Flow, TriggerName: x.Trigger}
+		v.Vars = nil // what started it can be long (a flow's output); not needed in the list
+		if f, err := flow.Load(root, x.Flow); err == nil {
+			v.FlowName = f.Name
+			for _, t := range f.Triggers {
+				if t.ID == x.Trigger {
+					v.TriggerName = firstNonEmpty(t.Name, t.ID)
+				}
+			}
+		}
+		out = append(out, v)
+	}
+	return out, nil
+}
+
+// CancelQueued drops a waiting run.
+func (h *Hub) CancelQueued(id int64) error {
+	if _, err := h.need(); err != nil {
+		return err
+	}
+	if err := h.Store.Dequeue(id); err != nil {
+		return err
+	}
+	h.Bus.Publish(bus.Event{Type: "trigger.queued", Summary: "A waiting run was cancelled", Data: map[string]any{"cancelled": id}})
+	return nil
+}

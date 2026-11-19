@@ -3,6 +3,7 @@ package store
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -177,5 +178,44 @@ func TestMigrateFromSchema1(t *testing.T) {
 	_ = s2.db.QueryRow(`SELECT v FROM meta WHERE k='schema'`).Scan(&v)
 	if v != "2" {
 		t.Fatal(v)
+	}
+}
+
+func TestBackups(t *testing.T) {
+	dir := t.TempDir()
+	s, _ := Open(dir)
+	defer s.Close()
+	_ = s.SaveRun(Run{ID: "r", Workspace: "/w", State: "done", Started: time.Now()})
+	if err := s.BackupDaily(); err != nil {
+		t.Fatal(err)
+	}
+	in := s.Info()
+	if !in.Open || in.Runs != 1 || len(in.Backups) != 1 || in.Backups[0].Bytes == 0 || in.Bytes == 0 {
+		t.Fatalf("%+v", in)
+	}
+	fi, _ := os.Stat(in.Backups[0].Path)
+	if fi.Mode().Perm()&0o077 != 0 {
+		t.Fatal("copies are private")
+	}
+	// the copy is a working database with the history in it
+	c, err := sql.Open("sqlite", in.Backups[0].Path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	n := 0
+	_ = c.QueryRow(`SELECT count(*) FROM runs`).Scan(&n)
+	c.Close()
+	if n != 1 {
+		t.Fatalf("runs in the copy: %d", n)
+	}
+	// older copies beyond the newest 7 go
+	for i := 1; i <= 9; i++ {
+		_ = os.WriteFile(filepath.Join(dir, "backups", fmt.Sprintf("history-2026-01-%02d.db", i)), []byte("x"), 0o600)
+	}
+	if _, err := s.Backup(); err != nil {
+		t.Fatal(err)
+	}
+	if b := s.Info().Backups; len(b) != KeepBackups || b[0].Name != "history-"+time.Now().Format("2006-01-02")+".db" {
+		t.Fatalf("%d kept, newest %s", len(b), b[0].Name)
 	}
 }

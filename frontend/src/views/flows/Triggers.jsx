@@ -698,6 +698,17 @@ function FilesFields({ t }) {
           })}
         </div>
       </div>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!w.whileClosed}
+          onChange={(e) => {
+            w.whileClosed = e.target.checked || undefined;
+            changed();
+          }}
+        />{" "}
+        Also count changes made while SpecWright was closed (they start a run when the project opens again)
+      </label>
       <label className="field">
         <span className="muted">Wait for quiet (seconds), so a burst of saves runs it once</span>
         <input

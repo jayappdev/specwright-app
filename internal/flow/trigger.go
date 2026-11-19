@@ -81,6 +81,9 @@ type FileWatch struct {
 	Ignore []string `json:"ignore,omitempty"`
 	Ops    []string `json:"ops,omitempty"`  // created | modified | deleted (default all)
 	Wait   int      `json:"wait,omitempty"` // seconds of quiet before it runs (default DefaultFileWait)
+	// WhileClosed: changes made while the app was closed count too, when
+	// it opens the project again (the last scan is kept for this)
+	WhileClosed bool `json:"whileClosed,omitempty"`
 }
 
 // FileOps are the kinds of file change; DefaultFileWait the default quiet.

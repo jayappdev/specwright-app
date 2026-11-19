@@ -222,3 +222,26 @@ type QueuedRunView struct {
 	attempt   int
 	notBefore time.Time
 }
+
+// Run flows lists the waiting runs; one can be cancelled
+func TestTriggerQueueView(t *testing.T) {
+	stubKeychain(t)
+	h, ws := flowHub(t)
+	saveTool(t, h, "slow-tool", "sleep 1; echo slow")
+	toolFlow(t, h, "slow", "slow-tool", flow.Trigger{ID: "go", Kind: "flow", Name: "Go", Enabled: true, After: &flow.AfterFlow{Flow: "notes"}})
+	f, _ := flow.Load(ws, "slow")
+	busy, _ := h.RunFlow("slow", FlowRunOptions{Review: "none"})
+	h.startTriggered(ws, f, f.Triggers[0], "test", map[string]string{"output": strings.Repeat("x", 5000)}, nil, 0)
+	q, err := h.TriggerQueue()
+	if err != nil || len(q) != 1 || q[0].FlowName != "slow" || q[0].TriggerName != "Go" || q[0].Vars != nil {
+		t.Fatalf("%v %+v", err, q)
+	}
+	if err := h.CancelQueued(q[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	waitFlow(t, h, busy.ID, func(s FlowRunState) bool { return s.Status == "done" })
+	time.Sleep(300 * time.Millisecond)
+	if v, _ := h.FlowTriggers("slow"); v[0].State.Runs != 0 {
+		t.Fatal("a cancelled run does not start")
+	}
+}

@@ -431,6 +431,16 @@ export function onHubEvent(e) {
           at: Date.now(),
         });
       break;
+    case "trigger.queued": // a run waits for its turn (or was cancelled): Run flows shows it
+      if (S.frun)
+        backend
+          .TriggerQueue()
+          .then((q) => {
+            S.frun.queue = q || [];
+            update();
+          })
+          .catch(() => {});
+      break;
     case "trigger.fired": // a trigger started a run: Run flows and History list it
       if (S.frun)
         backend
@@ -441,6 +451,10 @@ export function onHubEvent(e) {
           })
           .then((t) => {
             S.frun.triggers = t || [];
+            return backend.TriggerQueue();
+          })
+          .then((q) => {
+            S.frun.queue = q || [];
             update();
           })
           .catch(() => {});

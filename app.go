@@ -188,6 +188,12 @@ func (a *App) UpdateLesson(id int64, text string, off bool) error {
 }
 func (a *App) DeleteLesson(id int64) error                   { return a.hub.DeleteLesson(id) }
 func (a *App) ToolStats() (map[string]store.ToolStat, error) { return ok(a.hub.ToolStats()) }
+
+// the history database's size and copies; the trigger queue
+func (a *App) HistoryDBInfo() store.DBInfo                 { return a.hub.Store.Info() }
+func (a *App) BackupHistoryNow() (store.BackupFile, error) { return ok(a.hub.Store.Backup()) }
+func (a *App) TriggerQueue() ([]core.QueueView, error)     { return ok(a.hub.TriggerQueue()) }
+func (a *App) CancelQueued(id int64) error                 { return a.hub.CancelQueued(id) }
 func (a *App) ToolArgExamples(tool string) ([]map[string]any, error) {
 	return ok(a.hub.ToolArgExamples(tool))
 }

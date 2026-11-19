@@ -357,6 +357,10 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	h.mu.Unlock()
 	w.Poll() // take the baseline snapshot now
 	go w.Run(wctx, h.onFiles)
+	ts := h.triggers(abs)
+	ts.mu.Lock()
+	ts.projW = w // its scan is kept for files triggers that count changes made while closed
+	ts.mu.Unlock()
 	h.sched.Add(1)
 	go func() { // the project's triggers (schedules, files, after flows); triggers.go
 		defer h.sched.Done()

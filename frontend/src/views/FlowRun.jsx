@@ -76,6 +76,7 @@ async function loadAll() {
   r.flows = await backend.Flows().catch(() => []);
   r.runs = await backend.FlowRuns(100).catch(() => []);
   r.triggers = (await backend.FlowTriggers("").catch(() => [])) || [];
+  r.queue = (await backend.TriggerQueue().catch(() => [])) || [];
   r.keychain = await backend.KeychainAvailable().catch(() => false);
   if (!r.flowId && r.flows.length) await loadFlow(r.flows[0].id);
   update();
@@ -430,6 +431,30 @@ export function FlowRun() {
                   </small>
                 ) : null;
               })()}
+              {(r.queue || [])
+                .filter((q) => q.flow === f.id)
+                .map((q) => (
+                  <small key={q.id} className="fr-queued">
+                    <span className="badge">waiting</span>{" "}
+                    <span title={q.why}>
+                      {q.triggerName}
+                      {q.attempt ? ` · retry ${q.attempt}` : ""}
+                      {q.notBefore && new Date(q.notBefore) > new Date()
+                        ? ` · at ${new Date(q.notBefore).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                        : " · when the flow is free"}
+                    </span>{" "}
+                    <button
+                      className="link"
+                      onClick={async (e) => {
+                        e.stopPropagation();
+                        await backend.CancelQueued(q.id).catch((x) => toast(errMsg(x), "error"));
+                        loadAll();
+                      }}
+                    >
+                      Cancel
+                    </button>
+                  </small>
+                ))}
             </button>
             {runsOf(f.id).map((x) => {
               const live = S.flowRuns[x.id]?.status || x.state;
