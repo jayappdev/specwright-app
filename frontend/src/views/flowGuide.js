@@ -1133,11 +1133,12 @@ export const GUIDE = [
       "The end of a path: formats the result as Markdown, text, HTML, CSV or JSON, then saves it, passes it to a tool, copies it or shows it.",
     when: [
       "Save a report into the project (out/report-{{date}}.md).",
-      "Turn JSON rows into a CSV file.",
+      "Turn JSON rows into a CSV file, or an HTML or Markdown table.",
       "Show the result in Run flows, or copy it to the clipboard.",
     ],
     how: [
       "Choose the format. Content is converted: a JSON array becomes a CSV table, Markdown becomes HTML, and so on.",
+      'A list of records (a JSON array of objects, or an object holding one, like a Gather\'s {"rows": [...]}) becomes a table in HTML and Markdown, its columns in the order the JSON has them; other JSON stays a code block. To choose or rename the columns, put a Transform › JSON array → HTML table (or → Markdown table) before it.',
       "Content (optional) is a template; empty uses the output of the steps connected into it.",
       "Actions: Save (a project path; variables allowed), Call a tool with the content ({{output}}), Copy to the clipboard, Show in the run.",
       "Each Output appears in Run flows with its saved files; a flow can have several outputs.",
@@ -1180,6 +1181,26 @@ export const GUIDE = [
         ],
         edges: chain("start", "rows", "csv"),
         focus: "csv",
+      },
+      {
+        title: "Gathered rows as an HTML table",
+        text: 'The rows a Gather collects ({"rows": [...]}) are saved as an HTML page with a table: one row per record, the columns in the order the JSON has them, nested values as compact JSON. The run view shows the same table.',
+        nodes: [
+          sample(
+            "gather-rows",
+            "Gathered rows",
+            '{"rows": [\n  {"id": "A-1001", "customer": "Ana", "status": "open", "total": 120.5},\n  {"id": "A-1002", "customer": "Bob", "status": "closed", "total": 80},\n  {"id": "A-1005", "customer": "Dee", "status": "open", "total": 310, "items": [{"sku": "HD-12", "qty": 2}]}\n]}',
+          ),
+          {
+            id: "table",
+            type: "output",
+            title: "Orders (html)",
+            format: "html",
+            actions: [{ type: "save", path: "out/orders-{{date}}.html" }, { type: "show" }],
+          },
+        ],
+        edges: chain("start", "gather-rows", "table"),
+        focus: "table",
       },
       {
         title: "Markdown shown as HTML",
