@@ -103,7 +103,8 @@ func hookRequest(raw []byte) (string, map[string]any) {
 // agentbridge tools ("agentbridge/read_file" in hooks, "agentbridge-…" in
 // events).
 func ownTool(tool string) bool {
-	return strings.HasPrefix(tool, "agentbridge/") || strings.HasPrefix(tool, "agentbridge-")
+	return strings.HasPrefix(tool, "agentbridge/") || strings.HasPrefix(tool, "agentbridge-") ||
+		strings.HasPrefix(tool, "specwright_") // the same tools, as SpecWright's Copilot extension (copilotself.go)
 }
 
 // describeCopilotTool says in words what Copilot's own extension tools

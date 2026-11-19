@@ -200,7 +200,7 @@ func (rn *Runner) execute(ctx context.Context, run *Run, drv agent.Driver, wfID,
 	}
 	finish := func(state session.State, reason string) {
 		if offered && rn.ToolsReached != nil && !rn.ToolsReached(run.started) && ctx.Err() == nil {
-			rn.publish(run, "tools.unreachable", "SpecWright's tools did not reach "+drv.Name()+" in this run: its MCP server (agentbridge) was not loaded. A company policy for MCP servers, or the CLI, may block it. The agent can still run them with its shell (\"$CODEGEN_TOOL\" tool list), as the prompt tells it.", map[string]any{"agent": drv.Name()})
+			rn.publish(run, "tools.unreachable", "SpecWright's tools did not reach "+drv.Name()+" in this run: neither its MCP server (agentbridge) nor its Copilot extension (~/.copilot/extensions/specwright) was loaded. A company policy, or the CLI, may block them. The agent can still run them with its shell (\"$CODEGEN_TOOL\" tool list), as the prompt tells it.", map[string]any{"agent": drv.Name()})
 		}
 		_ = sess.To(state, reason)
 		u := run.Usage()
@@ -449,6 +449,8 @@ func appOwned(p string) bool {
 
 // ToolCommandNote tells the agent how to reach SpecWright's tools when its
 // CLI did not load the agentbridge MCP server (extension/toolcli.go).
-const ToolCommandNote = "\n\n(SpecWright: its tools are on the agentbridge MCP server — agentbridge-<name> in GitHub Copilot, mcp__agentbridge__<name> in Claude Code. " +
-	"If they are not in your tool list, run them with your shell instead: \"$CODEGEN_TOOL\" tool list shows them, " +
-	"\"$CODEGEN_TOOL\" tool <name> --schema shows a tool's arguments, and \"$CODEGEN_TOOL\" tool <name> '<arguments as one JSON object>' runs it. Use exactly that form, nothing chained to it.)"
+const ToolCommandNote = "\n\n(SpecWright's tools — save_flow, schedule_flow, run_flow, history_search, save_tool and its built-ins such as read_file or text_search — reach you in one of three ways; use the first one you have: " +
+	"1) as agentbridge-<name> (Claude Code: mcp__agentbridge__<name>), from its MCP server; " +
+	"2) as specwright_<name> and specwright_tool, from SpecWright's Copilot extension; " +
+	"3) with your shell: \"$CODEGEN_TOOL\" tool list shows them, \"$CODEGEN_TOOL\" tool <name> --schema a tool's arguments, and \"$CODEGEN_TOOL\" tool <name> '<arguments as one JSON object>' runs it (exactly that form, nothing chained to it). " +
+	"Search your tools for them if they are deferred. Never say a SpecWright tool is unavailable before trying 2 and 3.)"

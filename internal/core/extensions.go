@@ -172,6 +172,7 @@ func (h *Hub) Env() []string {
 }
 
 func (h *Hub) mcpConfig(extensions bool) (string, func(), error) {
+	h.ensureCopilotTools()
 	p, err := h.Bridge.WriteMCPConfig(filepath.Join(h.Store.Dir(), "tmp"), extensions)
 	if err != nil {
 		return "", nil, err
@@ -945,4 +946,19 @@ func trunc(s string, n int) string {
 		return s
 	}
 	return s[:n] + "…"
+}
+
+// ensureCopilotTools keeps SpecWright's own Copilot extension in the
+// user's Copilot folder up to date when the agent is Copilot, so its
+// tools reach Copilot even where its MCP server is not loaded.
+func (h *Hub) ensureCopilotTools() {
+	h.mu.RLock()
+	name := h.agentName
+	h.mu.RUnlock()
+	if name != "copilot" {
+		return
+	}
+	if _, err := extension.EnsureCopilotSelfExt(); err != nil {
+		h.Bus.Publish(bus.Event{Type: "warn", Summary: "Could not write SpecWright's Copilot extension (its tools without MCP): " + err.Error()})
+	}
 }

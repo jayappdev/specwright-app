@@ -171,6 +171,9 @@ func (c *Copilot) argsWith(req Request, pluginDir string) []string {
 		args = append(args, "--additional-mcp-config", "@"+req.MCPConfig)
 	}
 	project, user := copilotExtNames(req.Dir)
+	if len(project)+len(user) == 0 && hasSelfExt() {
+		args = append(args, "--experimental") // SpecWright's own extension: its tools without MCP
+	}
 	if len(project)+len(user) > 0 {
 		args = append(args, "--experimental") // Copilot extensions are experimental
 		if pluginDir != "" {
@@ -254,7 +257,19 @@ func copilotExtNames(dir string) (project, user []string) {
 	if dir != "" {
 		project = extNames(filepath.Join(dir, ".github", "extensions"))
 	}
-	return project, extNames(filepath.Join(copilotHome(), "extensions"))
+	for _, n := range extNames(filepath.Join(copilotHome(), "extensions")) {
+		if n != "specwright" { // SpecWright's own tools, not the user's (extension.SelfCopilotExt)
+			user = append(user, n)
+		}
+	}
+	return project, user
+}
+
+// hasSelfExt: SpecWright's own Copilot extension is installed (its tools
+// need --experimental, as every extension does).
+func hasSelfExt() bool {
+	_, err := os.Stat(filepath.Join(copilotHome(), "extensions", "specwright", "extension.mjs"))
+	return err == nil
 }
 
 // hasProjectExtensions reports whether dir has Copilot extensions in

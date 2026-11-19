@@ -53,8 +53,10 @@ func TestToolCommandWithoutMCP(t *testing.T) {
 // noMCP is an agent whose CLI never loads SpecWright's MCP server.
 type noMCP struct{}
 
-func (noMCP) Name() string                         { return "nomcp" }
-func (noMCP) Status(context.Context) agent.Status { return agent.Status{Name: "nomcp", Available: true} }
+func (noMCP) Name() string { return "nomcp" }
+func (noMCP) Status(context.Context) agent.Status {
+	return agent.Status{Name: "nomcp", Available: true}
+}
 func (noMCP) Run(_ context.Context, req agent.Request, emit func(agent.Event)) (agent.Result, error) {
 	emit(agent.Event{Type: "model.text", Data: map[string]any{"text": "done"}})
 	return agent.Result{Text: "done"}, nil
