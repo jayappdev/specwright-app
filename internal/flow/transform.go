@@ -847,6 +847,11 @@ func Convert(content, format string) (string, error) {
 		case isHTML:
 			return content, nil
 		case isJSON:
+			if isJSONList(t) { // a list of records: a table, as the run view shows it
+				if tbl, err := jsonToHTMLTable(t, Node{}, Data{}); err == nil {
+					return htmlDoc(tbl), nil
+				}
+			}
 			return htmlDoc("<pre><code>" + html.EscapeString(t) + "</code></pre>"), nil
 		default:
 			return htmlDoc(MarkdownToHTML(content)), nil
@@ -880,32 +885,43 @@ func looksCSV(t string) bool {
 	return err == nil && len(rows) > 1 && len(rows[0]) > 1
 }
 
+// jsonToMarkdownTable is a list of records as a Markdown table (columns in
+// the JSON's order), or "" when t is not one.
 func jsonToMarkdownTable(t string) string {
-	c, err := Convert(t, "csv")
+	if !isJSONList(t) {
+		return ""
+	}
+	tbl, err := jsonToMDTable(t, Node{}, Data{})
 	if err != nil {
 		return ""
 	}
-	rows, err := csv.NewReader(strings.NewReader(c)).ReadAll()
-	if err != nil || len(rows) < 2 || len(rows) > 500 {
-		return ""
+	return tbl
+}
+
+// isJSONList: t is a list of records (objects), or an object holding one
+// ({"rows": [...]}): what Output writes as a table.
+func isJSONList(t string) bool {
+	v, err := decodeOrdered(t)
+	if err != nil {
+		return false
 	}
-	var b strings.Builder
-	cell := func(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
-	for i, r := range rows {
-		cs := make([]string, len(r))
-		for j, x := range r {
-			cs[j] = cell(x)
-		}
-		b.WriteString("| " + strings.Join(cs, " | ") + " |\n")
-		if i == 0 {
-			b.WriteString("|" + strings.Repeat(" --- |", len(r)) + "\n")
+	rows, err := tableRowsOf(v)
+	if err != nil || len(rows) == 0 {
+		return false
+	}
+	if o, single := v.(*Obj); single && len(rows) == 1 && rows[0] == any(o) {
+		return false // one object: not a list
+	}
+	for _, r := range rows {
+		if _, ok := r.(*Obj); !ok {
+			return false
 		}
 	}
-	return b.String()
+	return true
 }
 
 func htmlDoc(body string) string {
-	return "<!doctype html>\n<html><head><meta charset=\"utf-8\"><style>body{font:15px/1.55 -apple-system,Segoe UI,sans-serif;max-width:860px;margin:2rem auto;padding:0 1rem}pre{background:#f6f8fa;padding:12px;overflow:auto}code{font-family:ui-monospace,Menlo,monospace}table{border-collapse:collapse}td,th{border:1px solid #d0d7de;padding:4px 8px}</style></head><body>\n" + body + "\n</body></html>\n"
+	return "<!doctype html>\n<html><head><meta charset=\"utf-8\"><style>body{font:15px/1.55 -apple-system,Segoe UI,sans-serif;max-width:860px;margin:2rem auto;padding:0 1rem}pre{background:#f6f8fa;padding:12px;overflow:auto}code{font-family:ui-monospace,Menlo,monospace}table{border-collapse:collapse}td,th{border:1px solid #d0d7de;padding:4px 8px;vertical-align:top}th{background:#f6f8fa;text-align:left}</style></head><body>\n" + body + "\n</body></html>\n"
 }
 
 // MarkdownToHTML renders the common Markdown subset: headings, paragraphs,

@@ -3495,9 +3495,15 @@ export function createMockBackend(methods) {
     }
     if (fmt === "json") return js ? JSON.stringify(js, null, 2) : JSON.stringify({ content: c }, null, 2);
     if (fmt === "csv") return js ? toCsv(js) : "line\n" + t.split("\n").join("\n") + "\n";
+    // a list of records (or an object holding one) is a table, as in the app
+    const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
+    const lists = isObj(js) ? Object.keys(js).filter((k) => Array.isArray(js[k]) && isObj(js[k][0])) : [];
+    const list = Array.isArray(js) ? js : lists.length === 1 ? js[lists[0]] : null;
+    const isList = !!list && list.length > 0 && list.every(isObj);
     if (fmt === "html")
-      return `<!doctype html><html><body style="font:15px/1.5 sans-serif;margin:1.5rem">${js ? `<pre>${t.replace(/</g, "&lt;")}</pre>` : /^\s*</.test(t) ? t : mdHtml(t)}</body></html>`;
-    if (fmt === "md" && js) return "```json\n" + t + "\n```\n";
+      return `<!doctype html><html><head><style>table{border-collapse:collapse}td,th{border:1px solid #d0d7de;padding:4px 8px;vertical-align:top}th{background:#f6f8fa;text-align:left}</style></head><body style="font:15px/1.5 sans-serif;margin:1.5rem">${js ? (isList ? transform({ op: "json-html-table", expr: "" }, t) : `<pre>${t.replace(/</g, "&lt;")}</pre>`) : /^\s*</.test(t) ? t : mdHtml(t)}</body></html>`;
+    if (fmt === "md" && js)
+      return isList ? transform({ op: "json-md-table", expr: "" }, t) : "```json\n" + t + "\n```\n";
     return c;
   };
   const transform = (n, input, d) => {

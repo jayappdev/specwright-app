@@ -48,3 +48,26 @@ func TestJSONToTables(t *testing.T) {
 		}
 	}
 }
+
+// Output's HTML and Markdown formats write a list of records as a table.
+func TestConvertListsAsTables(t *testing.T) {
+	list := `[{"zeta":"z1","alpha":"a1"},{"zeta":"z2","alpha":"a2"}]`
+	h, _ := Convert(list, "html")
+	if !strings.Contains(h, "<table>") || !strings.Contains(h, "<th>zeta</th><th>alpha</th>") || strings.Contains(h, "<pre>") || !strings.Contains(h, "<!doctype html>") {
+		t.Fatalf("html of a list:\n%s", h)
+	}
+	if h, _ := Convert(`{"rows":[{"a":1},{"a":2}],"count":2}`, "html"); !strings.Contains(h, "<td>2</td>") || strings.Contains(h, "count") {
+		t.Fatalf("html of an object holding a list:\n%s", h)
+	}
+	for _, notList := range []string{`{"a":1,"b":2}`, `["x","y"]`, `[]`} {
+		if h, _ := Convert(notList, "html"); !strings.Contains(h, "<pre><code>") || strings.Contains(h, "<table>") {
+			t.Fatalf("%s should stay JSON:\n%s", notList, h)
+		}
+	}
+	if m, _ := Convert(list, "md"); !strings.HasPrefix(m, "| zeta | alpha |\n") {
+		t.Fatalf("markdown keeps the JSON's column order:\n%s", m)
+	}
+	if m, _ := Convert(`{"a":1}`, "md"); !strings.HasPrefix(m, "```json") {
+		t.Fatalf("one object stays JSON in Markdown:\n%s", m)
+	}
+}
