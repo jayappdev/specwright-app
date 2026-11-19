@@ -136,6 +136,9 @@ export const S = {
 
 let version = 0;
 const subs = new Set();
+// afterUpdate: called after every update, before the screen redraws (the
+// Back / Forward history records where you are: navigation.js)
+export const afterUpdate = new Set();
 export const savePrefsNow = () => savePrefs();
 // update() after changing S. Several calls in one task (an event handler, a
 // burst of streamed events) share one notification, sent in a microtask: it
@@ -167,6 +170,7 @@ export function update() {
   queueMicrotask(() => {
     pending = false;
     savePrefs();
+    afterUpdate.forEach((f) => f());
     subs.forEach((f) => f());
   });
 }

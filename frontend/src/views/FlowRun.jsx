@@ -5,6 +5,7 @@
 //            edit, change settings and retry), outputs and activity
 //   sidebar  progress and metrics: steps, elapsed time, tokens, credits, tools
 import { TAG } from "./flows/Triggers.jsx";
+import { registerPlace } from "../navigation.js";
 import { FlowFilterBar, FlowGroup, FlowTagChips, flowFilter, groupFlows } from "../flowLists.jsx";
 import { dateDefault } from "../dates.js";
 import { useEffect, useState } from "react";
@@ -551,3 +552,14 @@ export function FlowRun() {
     </div>
   );
 }
+
+// Back / Forward: the run open in Run flows, or the flow chosen there (navigation.js)
+registerPlace("flowrun", {
+  key: () => (S.frun?.runId ? "run:" + S.frun.runId : S.frun?.flowId ? "flow:" + S.frun.flowId : ""),
+  restore: (k) => {
+    const [kind, id] = [k.slice(0, k.indexOf(":")), k.slice(k.indexOf(":") + 1)];
+    if (kind === "run") return openRun(id);
+    frs().runId = "";
+    return loadFlow(id);
+  },
+});

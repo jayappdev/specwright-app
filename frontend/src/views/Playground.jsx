@@ -1,6 +1,7 @@
 // Prompt playground: send any prompt to the chosen agent in the workspace
 // and see its answer, every tool call with arguments and result, and the
 // tokens, cost or premium requests, model calls and timing of the run.
+import { registerPlace } from "../navigation.js";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { PROMPT_STATUS_LABEL, RUN_KIND_LONG } from "../labels.js";
 import { CopyButton } from "../CopyButton.jsx";
@@ -925,3 +926,6 @@ export function RunPicker() {
     </div>
   );
 }
+
+// Back / Forward: the run open in the Playground (navigation.js)
+registerPlace("playground", { key: () => S.pg?.sel || "", restore: (id) => select(id) });

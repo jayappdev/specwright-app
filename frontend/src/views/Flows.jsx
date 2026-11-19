@@ -4,6 +4,7 @@
 //   canvas    steps as cards; drag a card to move it, drag from its ● port to another card to connect
 //   inspector the selected step, or the flow (name, context, skills) when nothing is selected
 // Flows are saved to .codegen/flows/<id>.json (autosave). Running them comes with the executor.
+import { registerPlace } from "../navigation.js";
 import { FlowFilterBar, FlowGroup, FlowTagChips, flowFilter, groupFlows } from "../flowLists.jsx";
 import { stepRef, toolRef, isBuiltin, loopInfo, uniqueTitle } from "../flowNames.js";
 import { useEffect, useRef } from "react";
@@ -1485,3 +1486,6 @@ export function Flows() {
 }
 
 // --- the AI designer ---------------------------------------------------------------
+
+// Back / Forward: the flow open in the designer (navigation.js)
+registerPlace("flows", { key: () => S.fl?.flow?.id || "", restore: (id) => openFlow(id) });

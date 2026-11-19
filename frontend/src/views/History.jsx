@@ -10,6 +10,7 @@ import { continueInPlayground } from "./Playground.jsx";
 import { ago } from "../time.js";
 import { register } from "../shortcuts.js";
 import { CopyButton } from "../CopyButton.jsx";
+import { registerPlace } from "../navigation.js";
 import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns, hk } from "../RunHousekeeping.jsx";
 
 let timer;
@@ -398,3 +399,6 @@ export function History() {
     </div>
   );
 }
+
+// Back / Forward: the run being replayed (navigation.js)
+registerPlace("history", { key: () => S.history?.sel || "", restore: (id) => select(id) });

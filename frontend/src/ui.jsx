@@ -116,6 +116,8 @@ export const Icon = {
     </>,
     14,
   ),
+  back: mk(<path d="M10 3.5L5.5 8l4.5 4.5" />, 16),
+  forward: mk(<path d="M6 3.5L10.5 8 6 12.5" />, 16),
   refresh: mk(
     <>
       <path d="M13 8a5 5 0 11-1.5-3.6" />

@@ -19,6 +19,8 @@ import {
 import { applyAppearance, onSystemThemeChange, resolveTheme } from "./theme.js";
 import { Icon, Pill } from "./ui.jsx";
 import { Logo } from "./Logo.jsx";
+import { go as navGo, canBack, canForward, peek } from "./navigation.js";
+import { register } from "./shortcuts.js";
 import { SecretPrompt } from "./SecretPrompt.jsx";
 import { PermissionPrompt } from "./PermissionPrompt.jsx";
 import { RulesEditors } from "./views/RulesEditors.jsx";
@@ -136,6 +138,34 @@ export function App() {
   const isWide = useSyncExternalStore(onWide, wide);
   S.railOpen = S.rail ? S.rail === "open" : isWide;
   useCommandPalette(NAV, toggleRail);
+  // Back / Forward (navigation.js): ⌘[ ⌘], Alt+← Alt+→, and the mouse's side buttons
+  useEffect(() => {
+    const off = [
+      register({
+        id: "nav-back",
+        keys: ["mod+[", "alt+arrowleft"],
+        help: [["mod+[", "Back"]],
+        run: () => void navGo(-1),
+      }),
+      register({
+        id: "nav-forward",
+        keys: ["mod+]", "alt+arrowright"],
+        help: [["mod+]", "Forward"]],
+        run: () => void navGo(1),
+      }),
+    ];
+    const mouse = (e) => {
+      if (e.button === 3 || e.button === 4) {
+        e.preventDefault();
+        navGo(e.button === 3 ? -1 : 1);
+      }
+    };
+    window.addEventListener("mouseup", mouse);
+    return () => {
+      off.forEach((f) => f());
+      window.removeEventListener("mouseup", mouse);
+    };
+  }, []);
   useEffect(() => {
     installFileLinks();
     installModalFocus();
@@ -194,6 +224,7 @@ export function App() {
           >
             <Logo size={42} />
           </button>
+          <NavArrows />
           {GROUPS.map((g) => (
             <div
               key={g.id}
@@ -441,5 +472,40 @@ export function App() {
         )}
       </div>
     </>
+  );
+}
+
+// Back and Forward, under the logo: their tooltips name where they lead
+const placeName = (e) => {
+  if (!e) return "";
+  const v = VIEWS.find((x) => x.id === e.view);
+  const key = String(e.key || "").replace(/^(run|flow):/, "");
+  return (v?.label || e.view) + (key ? " · " + (key.length > 28 ? key.slice(0, 27) + "…" : key) : "");
+};
+function NavArrows() {
+  const mac = typeof navigator !== "undefined" && /Mac/.test(navigator.platform || navigator.userAgent);
+  const b = peek(-1),
+    f = peek(1);
+  return (
+    <div className="nav-arrows" role="group" aria-label="Back and forward">
+      <button
+        className="icon-btn"
+        disabled={!canBack()}
+        aria-label={b ? "Back to " + placeName(b) : "Back"}
+        title={b ? `Back to ${placeName(b)} (${mac ? "⌘[" : "Alt+←"})` : "Back"}
+        onClick={() => navGo(-1)}
+      >
+        <Icon.back />
+      </button>
+      <button
+        className="icon-btn"
+        disabled={!canForward()}
+        aria-label={f ? "Forward to " + placeName(f) : "Forward"}
+        title={f ? `Forward to ${placeName(f)} (${mac ? "⌘]" : "Alt+→"})` : "Forward"}
+        onClick={() => navGo(1)}
+      >
+        <Icon.forward />
+      </button>
+    </div>
   );
 }

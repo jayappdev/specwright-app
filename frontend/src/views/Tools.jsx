@@ -1,3 +1,4 @@
+import { registerPlace } from "../navigation.js";
 import { ToolTester } from "./tools/ToolTester.jsx";
 import { useEffect } from "react";
 import { ShareMenu, exportTools } from "./tools/Share.jsx";
@@ -1338,3 +1339,12 @@ export function Tools() {
     </div>
   );
 }
+
+// Back / Forward: the tool open on the Tools screen (navigation.js)
+registerPlace("tools", {
+  key: () => S.tb?.editing || "",
+  restore: (name) => {
+    const t = (S.ws?.extensions || []).find((x) => x.name === name);
+    if (t) openTool(t);
+  },
+});

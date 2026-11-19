@@ -591,3 +591,17 @@ pre .file-link,
     animation: none;
   }
 }
+/* Back and Forward, under the logo (App.jsx NavArrows) */
+.nav-arrows {
+  display: flex;
+  justify-content: center;
+  gap: 2px;
+  margin: -2px 0 6px;
+}
+.nav-arrows .icon-btn {
+  padding: 3px 5px;
+}
+.nav-arrows .icon-btn:disabled {
+  opacity: 0.35;
+  cursor: default;
+}
