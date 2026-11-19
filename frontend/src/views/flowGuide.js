@@ -249,9 +249,8 @@ export const GUIDE = [
     ],
     examples: [
       {
-        title: "Decide a refund with the policy and the ticket",
-        text: "The ticket and the refund policy go into one context; only the parts about refunds are kept. The AI step after it gets the pack.",
-        flowInputs: [{ name: "topic", label: "Topic", type: "text", default: "refund" }],
+        title: "A whole flow: handle a refund request",
+        text: "The ticket, the refund policy, the support docs, past runs and lessons go into one context; only what is about the refund is kept, within 4,000 tokens. The AI decides between approving and escalating (asking you when it is less than 70% sure), and the AI step on the path taken writes the reply or the note. Both get the context by themselves, because it comes before them. In your own flow, replace the sample ticket with a Jira tool or an input. Try it in the designer to see the whole flow.",
         nodes: [
           sample(
             "ticket",
@@ -262,21 +261,69 @@ export const GUIDE = [
             id: "ctx",
             type: "context",
             title: "Refund context",
-            goal: "decide the refund",
-            budget: 2000,
+            goal: "decide the refund for this ticket, and who may approve it",
+            budget: 4000,
             sources: [
               {
                 kind: "text",
                 label: "Refund policy",
                 priority: "high",
-                text: "Refunds up to 500 EUR are approved by support.\n\nRefunds over 500 EUR need a manager's approval.\n\nInvoices are sent on the 1st of each month.",
+                text: "Refunds up to 500 EUR are approved by support.\n\nRefunds over 500 EUR need a manager's approval.\n\nDouble charges are always refunded in full.\n\nInvoices are sent on the 1st of each month.",
               },
-              { kind: "inputs" },
+              {
+                kind: "files",
+                label: "Support docs",
+                paths: ["docs/support/**/*.md"],
+                query: "refund approval",
+              },
+              { kind: "history", label: "Past refund runs", query: "refund", priority: "low" },
+              { kind: "lessons", priority: "low" },
             ],
           },
-          out("pack", "Context pack"),
+          {
+            id: "decide",
+            type: "decision",
+            title: "Approve or escalate",
+            decide: "ai",
+            prompt: "Can support approve this refund, or does a manager need to?",
+            confidence: 70,
+            branches: [
+              {
+                id: "approve",
+                label: "Approve",
+                hint: "the policy allows it and the amount is within what support may approve",
+              },
+              {
+                id: "escalate",
+                label: "Escalate to a manager",
+                hint: "the amount is over the limit, or the policy is unclear",
+              },
+            ],
+          },
+          {
+            id: "reply",
+            type: "ai",
+            title: "Reply to the customer",
+            prompt:
+              "Write a short, friendly reply to the customer confirming the refund in {{steps.ticket}}: the amount, when it arrives, and that we are sorry. Follow the refund policy in the context.",
+          },
+          {
+            id: "note",
+            type: "ai",
+            title: "Note for the manager",
+            prompt:
+              "Write a short note asking the finance manager to approve the refund in {{steps.ticket}}: the amount, the reason, and the policy that needs their approval (cite the context's [S] labels).",
+          },
+          out("customer", "Reply"),
+          out("manager", "Approval request"),
         ],
-        edges: chain("start", "ticket", "ctx", "pack"),
+        edges: [
+          ...chain("start", "ticket", "ctx", "decide"),
+          { from: "decide", to: "reply", branch: "approve" },
+          { from: "decide", to: "note", branch: "escalate" },
+          { from: "reply", to: "customer" },
+          { from: "note", to: "manager" },
+        ],
         focus: "ctx",
       },
     ],
