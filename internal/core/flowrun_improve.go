@@ -496,7 +496,7 @@ When not done, give the arguments to change for the next run (only the ones that
 	}
 	b.WriteString(h.contextPacks(f, n, d, n.Prompt+n.Goal)) // Context steps before it (flowrun_context.go)
 	b.WriteString(h.lessonsNote(f.ID, n.ID))
-	b.WriteString(h.aiSuffix(f, d))
+	b.WriteString(h.aiSuffix(f, n, d))
 	return b.String()
 }
 

@@ -44,12 +44,15 @@ export const GUIDE = [
       "Write the prompt. Use the Insert buttons to add variables: {{inputs.<name>}} for an input, {{<step id>.buffer_output}} for an earlier step's result, {{context}} and {{skills}}.",
       "Whatever is connected into the step is added to the prompt automatically when the prompt does not mention it, under “Input from the previous step”.",
       "The flow's custom context and skills are always added, and files given as inputs (images, PDFs) are opened by the agent.",
+      "Guidance for this step: instructions written for this step alone (tone, format, what to include or avoid; variables work) and skill files only it follows, on top of the flow's. Untick “Also follow the flow's skills” to leave the flow's skills out of this step. Improve, AI decisions and AI transforms have the same section.",
       "The step's result is the agent's answer. Ask for “only JSON” when a later step should read it as data.",
       "AI steps pause for your review when the run asks for it: accept, edit, refine with AI or stop.",
     ],
     settings: [
       ["Prompt", "What to ask; variables are filled in when the step runs."],
       ["Model", "A model for this step only; empty uses the one chosen for the run."],
+      ["Instructions", "Guidance for this step: how to answer (tone, format, limits)."],
+      ["Skills for this step", "Skill files this step follows, with or without the flow's."],
       ["Pause for review", "Stop after this step so you can check or refine the answer."],
     ],
     examples: [

@@ -5,6 +5,7 @@ import { LessonsEditor } from "./Lessons.jsx";
 import { TagEditor, allTags, allGroups } from "../../flowLists.jsx";
 import { HeadingPicker } from "../../listLayout.jsx";
 import { ContextInspector } from "./ContextStep.jsx";
+import { StepGuidance, aiStep } from "./StepGuidance.jsx";
 import { Reliability } from "../../ToolTile.jsx";
 import { TriggersEditor } from "./Triggers.jsx";
 import { ModelPicker } from "../../ModelPicker.jsx";
@@ -940,7 +941,10 @@ function StepInspector({ n }) {
           )}
           {n.type === "ai" && (
             <>
-              <Field label="Prompt" hint="The flow's context and skills are added automatically.">
+              <Field
+                label="Prompt"
+                hint="The flow's context and skills are added automatically, with this step's guidance (below)."
+              >
                 <textarea
                   rows={8}
                   value={n.prompt || ""}
@@ -967,6 +971,7 @@ function StepInspector({ n }) {
               <LessonsEditor n={n} />
             </>
           )}
+          {aiStep(n) && <StepGuidance n={n} set={set} />}
           <DataPanel n={n} />
           {n.type === "decision" && <DecisionInspector n={n} set={set} />}
           {n.type === "filter" && <FilterInspector n={n} set={set} />}

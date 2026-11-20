@@ -362,6 +362,9 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	ts := h.triggers(abs)
 	ts.mu.Lock()
 	ts.projW = w // its scan is kept for files triggers that count changes made while closed
+	// this opening's scheduler is the current one from now, not from when
+	// its goroutine happens to run: a slower, older one must not take over
+	ts.ctx = wctx
 	ts.mu.Unlock()
 	h.sched.Add(1)
 	go func() { // the project's triggers (schedules, files, after flows); triggers.go

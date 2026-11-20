@@ -214,6 +214,14 @@ type Node struct {
 	// ai
 	Prompt string `json:"prompt,omitempty"`
 	Model  string `json:"model,omitempty"`
+	// Instructions and Skills shape what this AI step answers (ai, improve,
+	// an AI decision or transform, a tool step whose arguments the AI
+	// fills): its own guidance (variables allowed) and skill files, added
+	// to the flow's context and skills. FlowSkillsOff leaves the flow's
+	// skills out for this step.
+	Instructions  string  `json:"instructions,omitempty"`
+	Skills        []Skill `json:"skills,omitempty"`
+	FlowSkillsOff bool    `json:"flowSkillsOff,omitempty"`
 	// OutputSchema is the JSON an AI step is expected to reply with: the
 	// designer shows it to the steps after it, and the agent is asked to
 	// reply in that shape (the only shape metadata the AI is sent).
@@ -1252,6 +1260,11 @@ func (f *Flow) referencedFiles() []string {
 	for _, s := range f.Skills {
 		add(s.Path)
 	}
+	for _, n := range f.Nodes {
+		for _, s := range n.Skills {
+			add(s.Path)
+		}
+	}
 	for _, p := range f.Context.Files {
 		add(p)
 	}
@@ -1317,6 +1330,11 @@ func Import(root string, data []byte) (*Flow, []string, error) {
 	}
 	for i := range f.Skills {
 		f.Skills[i].Path = re(f.Skills[i].Path)
+	}
+	for i := range f.Nodes {
+		for j := range f.Nodes[i].Skills {
+			f.Nodes[i].Skills[j].Path = re(f.Nodes[i].Skills[j].Path)
+		}
 	}
 	for i := range f.Context.Files {
 		f.Context.Files[i] = re(f.Context.Files[i])

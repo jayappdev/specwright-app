@@ -114,7 +114,7 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 		switch n.Op {
 		case "ai":
 			instr := flow.Render(n.Template, d)
-			prompt := instr + "\n\nData:\n```\n" + in + "\n```\n\nReturn only the transformed data, with no explanation and no code fences." + h.aiSuffix(f, d)
+			prompt := instr + "\n\nData:\n```\n" + in + "\n```\n\nReturn only the transformed data, with no explanation and no code fences." + h.aiSuffix(f, n, d)
 			return h.flowAgent(ctx, root, fr, n.ID, prompt, fr.st.Options.Model)
 		case "command":
 			out, err := h.flowCommand(ctx, root, fr, n.ID, flow.Render(n.Expr, d), in)
@@ -286,17 +286,39 @@ func (h *Hub) flowSkills(f *flow.Flow) string {
 	return strings.Join(parts, "\n")
 }
 
-// aiSuffix adds the flow's context and skills to an AI prompt.
-func (h *Hub) aiSuffix(f *flow.Flow, d flow.Data) string {
+// aiSuffix adds the flow's context and skills to an AI prompt, and the
+// step's own instructions and skills (n may be nil).
+func (h *Hub) aiSuffix(f *flow.Flow, n *flow.Node, d flow.Data) string {
 	var b strings.Builder
 	b.WriteString(inputFilesNote(inputFiles(h.Root(), f, d.Inputs)))
 	if d.Context != "" {
 		b.WriteString("\n\n## Context\n" + d.Context)
 	}
-	if len(f.Skills) > 0 {
+	var skills []flow.Skill
+	seen := map[string]bool{}
+	addSkills := func(ss []flow.Skill) {
+		for _, s := range ss {
+			if p := strings.TrimSpace(s.Path); p != "" && !seen[p] {
+				seen[p] = true
+				skills = append(skills, s)
+			}
+		}
+	}
+	if n == nil || !n.FlowSkillsOff {
+		addSkills(f.Skills)
+	}
+	if n != nil {
+		addSkills(n.Skills)
+	}
+	if len(skills) > 0 {
 		b.WriteString("\n\n## Skills (read these files and follow them)\n")
-		for _, s := range f.Skills {
+		for _, s := range skills {
 			fmt.Fprintf(&b, "- %s\n", s.Path)
+		}
+	}
+	if n != nil {
+		if ins := strings.TrimSpace(flow.Render(n.Instructions, d)); ins != "" {
+			b.WriteString("\n\n## Instructions for this step (follow them; they come before the general guidance above)\n" + ins)
 		}
 	}
 	return b.String()
@@ -441,5 +463,5 @@ func (h *Hub) aiStepPrompt(f *flow.Flow, n *flow.Node, d flow.Data, parents int)
 	if n.OutputSchema != nil && n.OutputSchema.Known() {
 		prompt += "\n\nReply with only JSON in this shape, with no explanation and no code fences:\n" + n.OutputSchema.Compact()
 	}
-	return prompt + h.contextPacks(f, n, d, n.Prompt) + h.lessonsNote(f.ID, n.ID) + h.aiSuffix(f, d)
+	return prompt + h.contextPacks(f, n, d, n.Prompt) + h.lessonsNote(f.ID, n.ID) + h.aiSuffix(f, n, d)
 }

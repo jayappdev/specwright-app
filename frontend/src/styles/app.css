@@ -1546,3 +1546,20 @@
   margin: 4px 6px 0;
   font-size: 12px;
 }
+
+/* an AI step's own guidance (StepGuidance.jsx) */
+.fl-guidance {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px 8px;
+  margin: 8px 0;
+}
+.fl-guidance-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.fl-guidance textarea {
+  width: 100%;
+}

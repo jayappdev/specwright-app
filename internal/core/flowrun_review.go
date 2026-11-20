@@ -59,9 +59,9 @@ func (h *Hub) reviewStep(ctx context.Context, root string, fr *flowRun, n *flow.
 			h.flowPublish(fr, "gate.changes", "Refining with AI: "+fb, map[string]any{"_step": n.ID, "feedback": fb})
 			var prompt string
 			if n.Type == "ai" {
-				prompt = flow.Render(n.Prompt, d) + "\n\nYour previous answer:\n" + out + "\n\nRevise it: " + fb + h.aiSuffix(fr.flow, d)
+				prompt = flow.Render(n.Prompt, d) + "\n\nYour previous answer:\n" + out + "\n\nRevise it: " + fb + h.aiSuffix(fr.flow, n, d)
 			} else {
-				prompt = fb + "\n\nData:\n```\n" + out + "\n```\n\nReturn only the revised data, with no explanation and no code fences." + h.aiSuffix(fr.flow, d)
+				prompt = fb + "\n\nData:\n```\n" + out + "\n```\n\nReturn only the revised data, with no explanation and no code fences." + h.aiSuffix(fr.flow, n, d)
 			}
 			got, u, err := h.flowAgent(withFlowStep(ctx, fr.st.ID, n.ID), root, fr, n.ID, prompt, fr.st.Options.Model)
 			fr.update(func(st *FlowRunState) { st.Usage.Add(u); fr.step(n.ID).Usage.Add(u) })

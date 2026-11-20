@@ -1,6 +1,7 @@
 package core
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 	"testing"
@@ -86,6 +87,17 @@ func TestReopenKeepsOutsideWatch(t *testing.T) {
 	}
 	if len(v[0].State.Watching) != 1 {
 		t.Fatalf("still watching after reopening: %+v", v[0].State)
+	}
+	// an older opening's scheduler that only gets to run now (a busy
+	// machine) must not take over: it returns, and the watcher stays
+	stale, cancel := context.WithCancel(context.Background())
+	cancel()
+	h.runScheduler(stale, ws)
+	if v, _ = h.FlowTriggers("inbox"); len(v[0].State.Watching) != 1 {
+		t.Fatalf("a late, older scheduler removed the watcher: %+v", v[0].State)
+	}
+	if ts := h.triggers(ws); ts.ctx == nil || ts.ctx == stale {
+		t.Fatal("a late, older scheduler took the project over")
 	}
 	// the watcher reports itself before its first look at the folder: a
 	// file written at once may be part of that look, so write until it fires

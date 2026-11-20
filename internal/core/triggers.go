@@ -553,8 +553,14 @@ func (h *Hub) fireTrigger(root string, f *flow.Flow, t flow.Trigger, why string,
 func (h *Hub) runScheduler(ctx context.Context, root string) {
 	ts := h.triggers(root)
 	ts.mu.Lock()
-	ts.ctx = ctx
+	if ts.ctx == nil && ctx.Err() == nil { // started without OpenWorkspace (tests)
+		ts.ctx = ctx
+	}
+	current := ts.ctx == ctx
 	ts.mu.Unlock()
+	if !current { // the project was opened again before this one ran: the newer scheduler owns it
+		return
+	}
 	defer func() { // the project closed: keep the last scans, stop watching outside folders
 		ts.mu.Lock()
 		mine := ts.ctx == ctx // not when the project was opened again meanwhile: the new scheduler owns it

@@ -46,7 +46,7 @@ func (h *Hub) aiDecision(ctx context.Context, root string, fr *flowRun, n *flow.
 	prompt := "You decide which path a flow takes next.\n\n## Question\n" + question +
 		"\n\n## Paths (choose exactly one)\n" + paths.String() +
 		"\n## The data that reached this step\n```\n" + data + "\n```" +
-		h.contextPacks(f, n, d, n.Prompt) + h.lessonsNote(f.ID, n.ID) + h.aiSuffix(f, d) +
+		h.contextPacks(f, n, d, n.Prompt) + h.lessonsNote(f.ID, n.ID) + h.aiSuffix(f, n, d) +
 		"\n\n## Your reply\nReply with ONLY a JSON object, no explanation and no code fences:\n" +
 		`{"path": "<the id of one path above, or else>", "reason": "<one or two sentences; cite the context's [S1] labels when it has them>", "confidence": <0-100: how sure you are>}`
 	var dec flow.AIDecision
