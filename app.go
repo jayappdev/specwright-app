@@ -220,6 +220,11 @@ func (a *App) SaveListLayout(l core.ListLayout) (core.ListLayout, error) {
 	return ok(a.hub.SaveLayout(l))
 }
 
+// SetFlowTags replaces a flow's tags.
+func (a *App) SetFlowTags(id string, tags []string) ([]string, error) {
+	return ok(a.hub.SetFlowTags(id, tags))
+}
+
 // RenameFlow renames a flow; its id (file) follows the name.
 func (a *App) RenameFlow(id, name string) (core.FlowState, error) {
 	return ok(a.hub.RenameFlow(id, name))

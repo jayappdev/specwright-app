@@ -1481,3 +1481,16 @@
 [draggable="true"] {
   cursor: grab;
 }
+
+/* a flow's tags, under its name (designer and Run flows) */
+.fl-tagrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 12px 6px;
+  font-size: 13px;
+}
+.fl-tagrow > .muted {
+  font-size: 12px;
+}

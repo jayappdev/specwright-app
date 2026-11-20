@@ -106,6 +106,27 @@ type FlowState struct {
 	Notes  []string     `json:"notes,omitempty"`
 }
 
+// SetFlowTags replaces a flow's tags (tidied as saving does) without
+// touching the rest of it, and returns them.
+func (h *Hub) SetFlowTags(id string, tags []string) ([]string, error) {
+	root, err := h.need()
+	if err != nil {
+		return nil, err
+	}
+	f, err := flow.Load(root, id)
+	if err != nil {
+		return nil, err
+	}
+	f.Tags = tags
+	if err := flow.Save(root, f); err != nil {
+		return nil, err
+	}
+	if f.Tags == nil {
+		f.Tags = []string{}
+	}
+	return f.Tags, nil
+}
+
 // DeleteFlow removes a flow.
 func (h *Hub) DeleteFlow(id string) error {
 	root, err := h.need()

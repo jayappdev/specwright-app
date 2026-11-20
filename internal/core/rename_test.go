@@ -133,3 +133,21 @@ func TestListLayoutHeadings(t *testing.T) {
 		t.Fatalf("after the rename: %+v", got.Flows)
 	}
 }
+
+func TestSetFlowTags(t *testing.T) {
+	h, ws := flowHub(t)
+	tags, err := h.SetFlowTags("notes", []string{"Nightly Build", "jira", "jira", " "})
+	if err != nil || strings.Join(tags, ",") != "jira,nightly-build" {
+		t.Fatalf("%v %v", tags, err)
+	}
+	f, _ := flow.Load(ws, "notes")
+	if strings.Join(f.Tags, ",") != "jira,nightly-build" || len(f.Nodes) == 0 {
+		t.Fatalf("saved: %v", f.Tags)
+	}
+	if tags, _ := h.SetFlowTags("notes", nil); len(tags) != 0 {
+		t.Fatalf("cleared: %v", tags)
+	}
+	if _, err := h.SetFlowTags("nope", []string{"x"}); err == nil {
+		t.Fatal("an unknown flow should fail")
+	}
+}

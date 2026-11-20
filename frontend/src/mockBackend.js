@@ -6882,6 +6882,18 @@ export function createMockBackend(methods) {
       persist();
       return clone(db.lists[db.root]);
     },
+    async SetFlowTags(id, tags) {
+      const f = db.flows[id];
+      if (!f) throw new Error(`no flow "${id}"`);
+      f.tags = [
+        ...new Set(
+          (tags || []).map((t) => String(t).trim().toLowerCase().split(/\s+/).join("-")).filter(Boolean),
+        ),
+      ].sort();
+      f.updated = new Date().toISOString();
+      persist();
+      return clone(f.tags);
+    },
     async RenameFlow(id, name) {
       const f = db.flows[id];
       if (!f) throw new Error(`no flow "${id}"`);

@@ -5,7 +5,15 @@
 //   inspector the selected step, or the flow (name, context, skills) when nothing is selected
 // Flows are saved to .codegen/flows/<id>.json (autosave). Running them comes with the executor.
 import { registerPlace } from "../navigation.js";
-import { FlowFilterBar, FlowGroup, FlowTagChips, flowFilter, groupFlows } from "../flowLists.jsx";
+import {
+  FlowFilterBar,
+  FlowGroup,
+  FlowTagChips,
+  TagEditor,
+  allTags,
+  flowFilter,
+  groupFlows,
+} from "../flowLists.jsx";
 import { dragProps, loadLayout } from "../listLayout.jsx";
 import { stepRef, toolRef, isBuiltin, loopInfo, uniqueTitle } from "../flowNames.js";
 import { useEffect, useRef } from "react";
@@ -1399,6 +1407,17 @@ export function Flows() {
               ]}
             />
           </header>
+          <div className="fl-tagrow">
+            <span className="muted">Tags</span>
+            <TagEditor
+              tags={f.flow.tags || []}
+              suggestions={allTags(f.list)}
+              onChange={(t) => {
+                f.flow.tags = t;
+                changed();
+              }}
+            />
+          </div>
           {f.repairs && (
             <div className="banner fl-conflict" role="status">
               <span>

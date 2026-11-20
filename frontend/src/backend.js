@@ -54,6 +54,7 @@ const METHODS = [
   "GenerateExtensionTrace",
   "AgentTools",
   "RenameFlow",
+  "SetFlowTags",
   "ListLayout",
   "SaveListLayout",
   "RenameTool",
