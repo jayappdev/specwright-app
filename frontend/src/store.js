@@ -75,6 +75,7 @@ export const S = {
   secretInfo: {}, // name -> { source, env, envSet, via: session|env|ask|missing }
   permAsks: [], // pending "permission.request" events (the AI asks to use a tool)
   secretAsks: [], // pending "secret.request" events (a tool waits for the user)
+  questionAsks: [], // pending "question.request" events (ask_user waits for the user)
   flowRuns: {}, // flow run id → latest state (from "flow.state" events)
   results: {}, // run id → its results folder (RunResults), loaded on demand
   threads: {}, // run id → the conversation it continues (RunThread)
@@ -429,6 +430,21 @@ export function onHubEvent(e) {
       break;
     case "flow.state":
       if (e.state) S.flowRuns[e.run_id] = e.state;
+      break;
+    case "question.request":
+      if (!S.questionAsks.some((r) => r.id === e.id))
+        S.questionAsks.push({
+          id: e.id,
+          title: e.title || "",
+          intro: e.intro || "",
+          questions: e.questions || [],
+          deadline: e.deadline,
+          step: e.step || "",
+          run: e.run_id || "",
+        });
+      break;
+    case "question.resolved":
+      S.questionAsks = S.questionAsks.filter((r) => r.id !== e.id);
       break;
     case "secret.request":
       if (!S.secretAsks.some((r) => r.id === e.id))

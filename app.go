@@ -1,6 +1,7 @@
 package main
 
 import (
+	"codegen/internal/builtin"
 	"context"
 	"os"
 	"time"
@@ -218,6 +219,14 @@ func (a *App) ListLayout() (core.ListLayout, error) { return ok(a.hub.Layout()) 
 // SaveListLayout stores the headings of the Tools and Flows lists.
 func (a *App) SaveListLayout(l core.ListLayout) (core.ListLayout, error) {
 	return ok(a.hub.SaveLayout(l))
+}
+
+// PendingQuestions are the ask_user questions waiting for you.
+func (a *App) PendingQuestions() []core.QuestionRequest { return val(a.hub.PendingQuestions()) }
+
+// AnswerQuestions sends your answers to waiting ask_user questions.
+func (a *App) AnswerQuestions(id string, answers []builtin.Answer, recommended bool) error {
+	return a.hub.AnswerQuestions(id, answers, recommended)
 }
 
 // SetFlowTags replaces a flow's tags.

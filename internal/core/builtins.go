@@ -44,6 +44,7 @@ func (h *Hub) newToolbox() *builtin.Box {
 		},
 		Secret: h.secretByName, // http_request, notify (desktop.go)
 		Notify: h.desktopNotify,
+		Ask:    h.askQuestions, // ask_user (questions.go)
 		Problems: func(ctx context.Context) (string, string, error) {
 			res, err := h.Compile()
 			if err != nil {

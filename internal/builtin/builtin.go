@@ -55,6 +55,7 @@ type Box struct {
 	cwd      func() string     // run_command's folder when none is given (workspace-relative)
 	secret   func(ctx context.Context, name string) (string, error)
 	notify   func(title, message, link string) error
+	ask      func(ctx context.Context, r AskRequest) (AskReply, error)
 }
 
 // Config wires a Box to the app.
@@ -71,11 +72,14 @@ type Config struct {
 	Secret func(ctx context.Context, name string) (string, error)
 	// Notify shows a desktop notification (and the app's own message).
 	Notify func(title, message, link string) error
+	// Ask shows multiple-choice questions to a person and waits for the
+	// answers (ask_user); ErrNoAnswer when nobody answers in time.
+	Ask func(ctx context.Context, r AskRequest) (AskReply, error)
 }
 
 // New returns a Box.
 func New(c Config) *Box {
-	return &Box{env: c.Env, trash: c.Trash, problems: c.Problems, cwd: c.DefaultCwd, secret: c.Secret, notify: c.Notify, procs: map[string]*proc{}, todos: map[string][]Todo{}}
+	return &Box{env: c.Env, trash: c.Trash, problems: c.Problems, cwd: c.DefaultCwd, secret: c.Secret, notify: c.Notify, ask: c.Ask, procs: map[string]*proc{}, todos: map[string][]Todo{}}
 }
 
 // SetRoot points the tools at a workspace.

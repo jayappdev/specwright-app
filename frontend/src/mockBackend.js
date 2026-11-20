@@ -3656,6 +3656,8 @@ export function createMockBackend(methods) {
     throw new Error(`unknown transformation "${n.op}"`);
   };
 
+  const pendingQs = {}; // ask_user questions waiting (browser preview)
+
   // --- flow runs (browser preview: simulated executor with the same events and decisions) ---
   const kcStore = {};
   const kcOther = {}; // other services' items, by "kind service/account"
@@ -5639,6 +5641,41 @@ export function createMockBackend(methods) {
       const q = prompt.trim(),
         req = (q.match(/\nRequest: (.*)/) || [])[1] || q,
         short = req.length > 80 ? req.slice(0, 80) + "…" : req;
+      if (/ask_user|ask me/i.test(q)) {
+        // the agent asks you multiple-choice questions (ask_user)
+        const id = "q" + Date.now();
+        const questions = [
+          {
+            id: "scope",
+            question: "What should the refactor cover?",
+            options: ["Only the billing module", "Billing and invoices", "The whole order service"],
+            recommended: ["Only the billing module"],
+            why: "Smallest change that fixes the bug; the rest can follow.",
+          },
+          {
+            id: "tests",
+            question: "Which tests should I run afterwards?",
+            options: ["Unit tests", "Integration tests", "Contract tests"],
+            multiple: true,
+            recommended: ["Unit tests", "Integration tests"],
+          },
+          {
+            id: "branch",
+            question: "Branch name?",
+            options: ["fix/billing-rounding", "refactor/billing"],
+            recommended: ["fix/billing-rounding"],
+            allowOther: true,
+          },
+        ];
+        pendingQs[id] = {
+          id,
+          title: "Before I refactor billing",
+          intro: "Three quick decisions; the recommendations are chosen already.",
+          questions,
+          deadline: new Date(Date.now() + 900000).toISOString(),
+        };
+        setTimeout(() => emit({ type: "question.request", ...pendingQs[id] }), 300);
+      }
       if (/^Help me improve the SpecWright tool "/.test(q)) {
         const js = (q.match(/```json\n([\s\S]*?)\n```/) || [])[1];
         let d = {};
@@ -6881,6 +6918,26 @@ export function createMockBackend(methods) {
       (db.lists ||= {})[db.root] = { tools: tidy(l.tools), flows: tidy(l.flows) };
       persist();
       return clone(db.lists[db.root]);
+    },
+    // ask_user (core/questions.go): questions waiting for the person
+    async PendingQuestions() {
+      return clone(Object.values(pendingQs));
+    },
+    async AnswerQuestions(id, answers, recommended) {
+      const q = pendingQs[id];
+      if (!q) throw new Error("these questions are no longer waiting (answered, timed out or stopped)");
+      delete pendingQs[id];
+      emit({
+        type: "question.resolved",
+        run_id: q.run_id,
+        id,
+        by: recommended ? "person (the recommendations)" : "person",
+      });
+      const lines = q.questions.map((x) => {
+        const a = (answers || []).find((y) => y.id === x.id) || {};
+        return `- ${x.question} → ${[...(a.selected || []), a.other ? "Other: " + a.other : ""].filter(Boolean).join(", ") || "(none)"}`;
+      });
+      emit({ type: "notify", title: "Your answers were sent", message: lines.join("\n") });
     },
     async SetFlowTags(id, tags) {
       const f = db.flows[id];

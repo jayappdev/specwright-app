@@ -933,6 +933,91 @@ export const BUILTINS = [
     "enabled": true
   },
   {
+    "name": "ask_user",
+    "title": "Ask the user",
+    "group": "plan",
+    "description": "Ask a person multiple-choice questions and wait for their answers: give questions, each with options and the recommended answer (and why). SpecWright shows them in a dialog with the recommendations chosen; the person changes what they want (or writes their own answer, when allowOther) and sends. The answers come back as JSON (answers[].selected, other, followed_recommended) and are recorded with the run. When nobody answers within timeout_seconds the recommended answers are taken (if_no_answer: recommended) or the call fails (fail). Use it when a decision is the person's: which option, which scope, whether to go ahead.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "if_no_answer": {
+          "description": "When nobody answers in time: take the recommended answers (default) or fail",
+          "enum": [
+            "recommended",
+            "fail"
+          ],
+          "type": "string"
+        },
+        "intro": {
+          "description": "A sentence or two of context shown above the questions",
+          "type": "string"
+        },
+        "questions": {
+          "description": "The questions (1 to 25)",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "allowOther": {
+                "description": "The person may write their own answer",
+                "type": "boolean"
+              },
+              "id": {
+                "description": "A short id for the answer (default q1, q2, …)",
+                "type": "string"
+              },
+              "multiple": {
+                "description": "More than one option may be chosen",
+                "type": "boolean"
+              },
+              "options": {
+                "description": "The choices (2 to 20)",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "question": {
+                "description": "The question",
+                "type": "string"
+              },
+              "recommended": {
+                "description": "The recommended choice(s), from options",
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "why": {
+                "description": "Why that is recommended (shown with it)",
+                "type": "string"
+              }
+            },
+            "required": [
+              "question",
+              "options"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "timeout_seconds": {
+          "description": "How long to wait for an answer (default 600; an agent waits at most about 10 minutes, a flow step up to a day)",
+          "type": "integer"
+        },
+        "title": {
+          "description": "A title for the dialog, e.g. Before I refactor the billing module",
+          "type": "string"
+        }
+      },
+      "required": [
+        "questions"
+      ],
+      "type": "object"
+    },
+    "readOnly": true,
+    "enabled": true
+  },
+  {
     "name": "todo_list",
     "title": "Todo list",
     "group": "plan",

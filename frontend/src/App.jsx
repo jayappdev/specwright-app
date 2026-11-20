@@ -22,6 +22,7 @@ import { Logo } from "./Logo.jsx";
 import { go as navGo, canBack, canForward, peek } from "./navigation.js";
 import { register } from "./shortcuts.js";
 import { SecretPrompt } from "./SecretPrompt.jsx";
+import { QuestionPrompt, loadPendingQuestions } from "./QuestionPrompt.jsx";
 import { PermissionPrompt } from "./PermissionPrompt.jsx";
 import { RulesEditors } from "./views/RulesEditors.jsx";
 import { Setup, agentLabel } from "./views/Setup.jsx";
@@ -117,6 +118,7 @@ async function boot() {
   if (booted) return;
   booted = true;
   backend.on(onHubEvent);
+  loadPendingQuestions(); // questions asked before this window opened
   S.info = await backend.Info().catch(() => null);
   refreshAdmin();
   if (S.setup.done && S.setup.provider && S.setup.provider !== "skipped") {
@@ -430,6 +432,7 @@ export function App() {
       </ErrorBoundary>
       <ErrorBoundary floating name="The secret prompt">
         <SecretPrompt />
+        <QuestionPrompt />
       </ErrorBoundary>
       <ErrorBoundary floating name="The permission prompt">
         <PermissionPrompt />

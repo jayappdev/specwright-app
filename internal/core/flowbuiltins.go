@@ -189,6 +189,9 @@ func (h *Hub) runFlowBuiltin(ctx context.Context, e *extension.Extension, args m
 	if err != nil {
 		return extension.RunResult{Error: err.Error(), ExitCode: 1, DurationMS: time.Since(start).Milliseconds()}
 	}
+	if e.Name == BuiltinPrefix+"ask_user" {
+		timeout = 0 // waits for a person, up to its own timeout_seconds
+	}
 	if timeout > 0 {
 		var cancel context.CancelFunc
 		ctx, cancel = context.WithTimeout(ctx, timeout)

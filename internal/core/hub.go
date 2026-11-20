@@ -55,6 +55,7 @@ type Hub struct {
 	model     string
 	token     string              // session-only credential, never persisted
 	sec       secretsState        // session secrets, pending prompts, resolved values (secrets.go)
+	qs        questionsState      // ask_user questions waiting for a person (questions.go)
 	flowRuns  map[string]*flowRun // live flow runs
 	resultsWG sync.WaitGroup      // results folders being written
 	closing   bool                // Close has started: no new results writes

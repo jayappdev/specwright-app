@@ -1494,3 +1494,55 @@
 .fl-tagrow > .muted {
   font-size: 12px;
 }
+
+/* ask_user: questions for you (QuestionPrompt.jsx) */
+.question-modal {
+  width: min(680px, calc(100vw - 32px));
+  max-height: 86vh;
+  overflow: auto;
+}
+.qp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 8px 0;
+}
+.qp-q {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px 10px;
+  margin: 0;
+}
+.qp-q legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+.qp-n {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--border);
+  font-size: 11px;
+  margin-right: 4px;
+}
+.qp-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.qp-opt.on {
+  background: color-mix(in srgb, var(--accent, #c96a3b) 10%, transparent);
+}
+.qp-opt input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+.qp-why {
+  margin: 4px 6px 0;
+  font-size: 12px;
+}

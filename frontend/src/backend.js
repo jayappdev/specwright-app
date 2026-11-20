@@ -55,6 +55,8 @@ const METHODS = [
   "AgentTools",
   "RenameFlow",
   "SetFlowTags",
+  "PendingQuestions",
+  "AnswerQuestions",
   "ListLayout",
   "SaveListLayout",
   "RenameTool",

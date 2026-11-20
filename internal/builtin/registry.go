@@ -197,6 +197,27 @@ var registry = []Tool{
 			"webhook_secret": p("string", "The name of the secret holding the webhook address (default by channel)"),
 		})},
 	// --- plan -------------------------------------------------------------
+	{Name: "ask_user", Title: "Ask the user", Group: "plan", ReadOnly: true, run: askUser,
+		Desc: "Ask a person multiple-choice questions and wait for their answers: give questions, each with options and the recommended answer (and why). " +
+			"SpecWright shows them in a dialog with the recommendations chosen; the person changes what they want (or writes their own answer, when allowOther) and sends. " +
+			"The answers come back as JSON (answers[].selected, other, followed_recommended) and are recorded with the run. " +
+			"When nobody answers within timeout_seconds the recommended answers are taken (if_no_answer: recommended) or the call fails (fail). " +
+			"Use it when a decision is the person's: which option, which scope, whether to go ahead.",
+		Schema: obj(map[string]any{
+			"questions": arr(obj(map[string]any{
+				"id":          p("string", "A short id for the answer (default q1, q2, …)"),
+				"question":    p("string", "The question"),
+				"options":     arr(map[string]any{"type": "string"}, "The choices (2 to 20)"),
+				"recommended": arr(map[string]any{"type": "string"}, "The recommended choice(s), from options"),
+				"why":         p("string", "Why that is recommended (shown with it)"),
+				"multiple":    p("boolean", "More than one option may be chosen"),
+				"allowOther":  p("boolean", "The person may write their own answer"),
+			}, "question", "options"), "The questions (1 to 25)"),
+			"title":           p("string", "A title for the dialog, e.g. Before I refactor the billing module"),
+			"intro":           p("string", "A sentence or two of context shown above the questions"),
+			"timeout_seconds": p("integer", "How long to wait for an answer (default 600; an agent waits at most about 10 minutes, a flow step up to a day)"),
+			"if_no_answer":    map[string]any{"type": "string", "enum": []string{"recommended", "fail"}, "description": "When nobody answers in time: take the recommended answers (default) or fail"},
+		}, "questions")},
 	{Name: "todo_list", Title: "Todo list", Group: "plan", ReadOnly: true, run: todoList,
 		Desc: "Keep a short todo list for multi-step work: pass items to replace the list (each {title, status: pending|in_progress|done}), or call without items to read it. Mark items done as you finish them.",
 		Schema: obj(map[string]any{
