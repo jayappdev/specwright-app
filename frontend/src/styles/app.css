@@ -1431,3 +1431,53 @@
 .pg-agenttools-list li {
   padding: 2px 0;
 }
+
+/* Headings in the Tools and Flows lists (listLayout.jsx) */
+.drop-zone.drop-on {
+  outline: 2px dashed var(--accent, #c96a3b);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.lh-actions {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 6px;
+  opacity: 0.55;
+}
+.tree-folder:hover .lh-actions,
+.fls-group-row:hover .lh-actions,
+.lh-actions:focus-within {
+  opacity: 1;
+}
+.lh-actions .icon-btn {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  font-size: 12px;
+}
+.fls-group-row {
+  display: flex;
+  align-items: center;
+}
+.fls-group-row .fls-group-head {
+  flex: 1;
+  min-width: 0;
+}
+.fls-empty {
+  margin: 2px 14px 8px;
+  font-size: 12px;
+}
+.fls-addhead {
+  font-size: 12px;
+}
+.lh-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lh-picker select {
+  max-width: 200px;
+}
+[draggable="true"] {
+  cursor: grab;
+}

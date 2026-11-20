@@ -212,6 +212,24 @@ func (a *App) GenerateExtension(r core.GenerateRequest) (extension.Extension, er
 	return ok(a.hub.GenerateExtension(r))
 }
 
+// ListLayout returns the headings of the Tools and Flows lists.
+func (a *App) ListLayout() (core.ListLayout, error) { return ok(a.hub.Layout()) }
+
+// SaveListLayout stores the headings of the Tools and Flows lists.
+func (a *App) SaveListLayout(l core.ListLayout) (core.ListLayout, error) {
+	return ok(a.hub.SaveLayout(l))
+}
+
+// RenameFlow renames a flow; its id (file) follows the name.
+func (a *App) RenameFlow(id, name string) (core.FlowState, error) {
+	return ok(a.hub.RenameFlow(id, name))
+}
+
+// RenameTool renames a project tool written in SpecWright.
+func (a *App) RenameTool(old, name string) (extension.Extension, error) {
+	return ok(a.hub.RenameTool(old, name))
+}
+
 // GenerateExtensionTrace writes or revises a tool and tells how: the
 // prompt, the agent's reply and what it says it changed.
 func (a *App) GenerateExtensionTrace(r core.GenerateRequest) (core.GenTrace, error) {

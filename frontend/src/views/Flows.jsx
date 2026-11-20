@@ -6,6 +6,7 @@
 // Flows are saved to .codegen/flows/<id>.json (autosave). Running them comes with the executor.
 import { registerPlace } from "../navigation.js";
 import { FlowFilterBar, FlowGroup, FlowTagChips, flowFilter, groupFlows } from "../flowLists.jsx";
+import { dragProps, loadLayout } from "../listLayout.jsx";
 import { stepRef, toolRef, isBuiltin, loopInfo, uniqueTitle } from "../flowNames.js";
 import { useEffect, useRef } from "react";
 import { openFlowRunner } from "./FlowRun.jsx";
@@ -588,6 +589,31 @@ async function deleteFlow() {
   }
 }
 
+// renameFlow: a new name, and with it a new id: the flow's file and what
+// refers to it follow (core/rename.go).
+async function renameFlow() {
+  const f = fl();
+  if (f.dirty) await save();
+  const old = f.flow;
+  const name = (
+    await askText(`Rename ${old.name}`, {
+      value: old.name,
+      ok: "Rename",
+      message: `Its file (.codegen/flows/${old.id}.json) is renamed to match, and the flows that refer to it (after-flow triggers, versions, run_flow steps) are updated; past runs keep the old name.`,
+    })
+  )?.trim();
+  if (!name || name === old.name) return;
+  try {
+    const st = await backend.RenameFlow(old.id, name);
+    await loadList();
+    await loadLayout(true);
+    await openFlow(st.flow.id);
+    toast((st.notes || [])[0] || `Renamed to ${st.flow.name}.`);
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+}
+
 async function duplicateFlow() {
   const f = fl();
   if (f.dirty) await save();
@@ -1140,6 +1166,7 @@ export function Flows() {
       loadList();
       refreshExtensions();
       loadBuiltins();
+      loadLayout();
     }
   }, [S.ws?.root]);
   useEffect(() => {
@@ -1212,11 +1239,19 @@ export function Flows() {
                 No flow matches.
               </p>
             );
-          return groups.map(([g, items]) => (
-            <FlowGroup key={g || "-"} area="designer" name={g} count={items.length} groups={groups.length}>
-              {items.map((x) => (
+          return groups.map((g) => (
+            <FlowGroup
+              key={g.key}
+              area="designer"
+              name={g.name}
+              heading={g.heading}
+              count={g.items.length}
+              groups={groups.length}
+            >
+              {g.items.map((x) => (
                 <button
                   key={x.id}
+                  {...dragProps("flows", x.id)}
                   className={"run-item" + (x.id === f.flow?.id ? " active" : "")}
                   onClick={() => openFlow(x.id)}
                 >
@@ -1357,6 +1392,7 @@ export function Flows() {
               label="More flow actions"
               items={[
                 ["Export…", exportFlow],
+                ["Rename…", renameFlow],
                 ["Duplicate", duplicateFlow],
                 ["Import a flow…", () => imp.current?.click()],
                 ["Delete flow…", deleteFlow, { danger: true }],

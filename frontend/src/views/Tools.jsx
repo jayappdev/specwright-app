@@ -8,7 +8,8 @@ import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { ContentView } from "../ContentView.jsx";
-import { confirmDialog } from "../Dialog.jsx";
+import { confirmDialog, askText } from "../Dialog.jsx";
+import { HeadingPicker, loadLayout } from "../listLayout.jsx";
 import { S, update, toast, errMsg, refreshExtensions, refreshSecrets, refreshAdmin } from "../store.js";
 import { Icon, Chip, Pill } from "../ui.jsx";
 import { NeedWorkspace, StatusBadge } from "./Wizard.jsx";
@@ -320,6 +321,30 @@ export async function reloadTool(name) {
   toast(`Reloaded ${name} from its files.`);
 }
 
+// renameTool: a new name for a saved project tool; its script, the flows
+// that call it, its tags and its heading follow (core/rename.go).
+async function renameTool(old) {
+  const name = (
+    await askText(`Rename ${old}`, {
+      value: old,
+      ok: "Rename",
+      message:
+        "Lowercase letters, digits, - and _. Its script file is renamed and the flows that call it are updated; past runs keep the old name.",
+    })
+  )?.trim();
+  if (!name || name === old) return;
+  try {
+    const t = await backend.RenameTool(old, name);
+    await refreshExtensions();
+    await loadLayout(true);
+    if (S.toolTags) S.toolTags = null;
+    openTool(t);
+    toast(`Renamed ${old} to ${t.name}.`);
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+}
+
 async function generate(refining) {
   const tb = S.tb;
   if (!refining && !tb.prompt.trim()) return toast("Describe what the tool should do.");
@@ -553,7 +578,10 @@ function TestTabs({ tb }) {
 export function Tools() {
   useEffect(() => {
     loadToolTags();
-  }, []);
+  }, [S.toolTags === null]);
+  useEffect(() => {
+    loadLayout();
+  }, [S.ws?.root]);
   if (!S.ws) return <NeedWorkspace what="tools" />;
   if (!S.tb) S.tb = tbDefaults();
   const tb = S.tb,
@@ -998,6 +1026,12 @@ export function Tools() {
             {tb.editing && !tb.ro && !tb.admin && (
               <>
                 <span className="status-spacer" />
+                <HeadingPicker list="tools" id={tb.editing} />
+                {d?.kind === "script" && d?.scope === "project" && d?.approved && (
+                  <button className="btn secondary" onClick={() => renameTool(tb.editing)}>
+                    Rename…
+                  </button>
+                )}
                 {d?.kind !== "npm" && d?.scope !== "global" && (
                   <button className="btn danger" onClick={() => archiveTool(d)}>
                     <Icon.x /> Delete tool

@@ -274,9 +274,10 @@ export function Reliability({ name, long }) {
   );
 }
 
-export function ToolTile({ t, active, onOpen, action, compact }) {
+export function ToolTile({ t, active, onOpen, action, compact, drag }) {
   return (
     <div
+      {...(drag || {})}
       className={
         "tool-tile" + (compact ? " compact" : "") + (active ? " active" : "") + (t.managed ? " managed" : "")
       }
@@ -321,12 +322,17 @@ export function ToolTile({ t, active, onOpen, action, compact }) {
 }
 
 // A titled grid of tiles; shows `empty` when there are none.
-export function ToolGrid({ title, tools, compact, empty = "None yet", render }) {
+// zone: props making the group a drop target; actions: shown after the title
+export function ToolGrid({ title, tools, compact, empty = "None yet", render, zone, actions }) {
   return (
-    <section className={"tool-group" + (compact ? " compact" : "")}>
+    <section
+      className={"tool-group" + (compact ? " compact" : "") + (zone ? " drop-zone" : "")}
+      {...(zone || {})}
+    >
       {title && (
         <div className="tree-folder">
           {title} · {tools.length}
+          {actions}
         </div>
       )}
       {tools.length ? (

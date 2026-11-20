@@ -575,6 +575,9 @@ func (h *Hub) runScheduler(ctx context.Context, root string) {
 			ts.ctx = nil
 		}
 		ts.mu.Unlock()
+		if !mine { // the new scheduler may have counted on a watcher just removed: it looks again
+			h.kickTriggers(root)
+		}
 	}()
 	h.syncExternalWatches(root)
 	h.catchUpFiles(root) // changes made while the app was closed (filesclosed.go)
@@ -1018,10 +1021,18 @@ func (h *Hub) syncExternalWatches(root string) {
 		w.Poll() // the baseline: files already there do not count
 		c, stop := context.WithCancel(ctx)
 		ts.mu.Lock()
-		if ts.ext[d] != nil {
+		if ts.ctx != ctx { // the project was opened again meanwhile: its scheduler starts its own
 			ts.mu.Unlock()
 			stop()
 			continue
+		}
+		if old := ts.ext[d]; old != nil {
+			if ts.extCtx[d] == ctx { // started already
+				ts.mu.Unlock()
+				stop()
+				continue
+			}
+			old() // an older scheduler's, about to be cleaned up: replace it
 		}
 		ts.ext[d], ts.extW[d], ts.extCtx[d] = stop, w, ctx
 		ts.mu.Unlock()

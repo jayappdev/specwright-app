@@ -7,6 +7,7 @@
 import { TAG } from "./flows/Triggers.jsx";
 import { registerPlace } from "../navigation.js";
 import { FlowFilterBar, FlowGroup, FlowTagChips, flowFilter, groupFlows } from "../flowLists.jsx";
+import { dragProps, loadLayout } from "../listLayout.jsx";
 import { dateDefault } from "../dates.js";
 import { useEffect, useState } from "react";
 import { FLOW_STATUS_LABEL as STATUS_LABEL } from "../labels.js";
@@ -392,6 +393,7 @@ export function FlowRun() {
     if (S.ws) {
       loadAll();
       refreshExtensions();
+      loadLayout();
     }
   }, [S.ws?.root]);
   usePoll(() => S.ws && loadAll(), FLOWRUN_POLL * 1000, [S.ws?.root]);
@@ -430,10 +432,17 @@ export function FlowRun() {
                 No flow matches.
               </p>
             );
-          return groups.map(([g, items]) => (
-            <FlowGroup key={g || "-"} area="runner" name={g} count={items.length} groups={groups.length}>
-              {items.map((f) => (
-                <div key={f.id} className="fr-flow">
+          return groups.map((g) => (
+            <FlowGroup
+              key={g.key}
+              area="runner"
+              name={g.name}
+              heading={g.heading}
+              count={g.items.length}
+              groups={groups.length}
+            >
+              {g.items.map((f) => (
+                <div key={f.id} className="fr-flow" {...dragProps("flows", f.id)}>
                   <button
                     className={"run-item" + (r.flowId === f.id && !r.runId ? " active" : "")}
                     onClick={() => {

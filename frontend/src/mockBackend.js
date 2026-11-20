@@ -6859,6 +6859,88 @@ export function createMockBackend(methods) {
       delete db.flows[id];
       persist();
     },
+    // list headings (core/layout.go): kept per project, nothing in the flows or tools
+    async ListLayout() {
+      const l = ((db.lists ||= {})[db.root] ||= {
+        tools: { headings: [], items: {} },
+        flows: { headings: [], items: {} },
+      });
+      return clone(l);
+    },
+    async SaveListLayout(l) {
+      const tidy = (s) => {
+        const headings = [];
+        for (const h of s?.headings || []) {
+          const x = String(h).split(/\s+/).filter(Boolean).join(" ").slice(0, 60);
+          if (x && !headings.some((y) => y.toLowerCase() === x.toLowerCase())) headings.push(x);
+        }
+        const items = {};
+        for (const [k, v] of Object.entries(s?.items || {})) if (headings.includes(v)) items[k] = v;
+        return { headings, items };
+      };
+      (db.lists ||= {})[db.root] = { tools: tidy(l.tools), flows: tidy(l.flows) };
+      persist();
+      return clone(db.lists[db.root]);
+    },
+    async RenameFlow(id, name) {
+      const f = db.flows[id];
+      if (!f) throw new Error(`no flow "${id}"`);
+      name = String(name || "").trim();
+      if (!name) throw new Error("give the flow a name");
+      let nid = slug(name);
+      f.name = name;
+      if (nid !== id) {
+        nid = uniqueFlowId(nid);
+        delete db.flows[id];
+        f.id = nid;
+        db.flows[nid] = f;
+        for (const g of Object.values(db.flows)) {
+          for (const t of g.triggers || []) if (t.after?.flow === id) t.after.flow = nid;
+          if (g.parent === id) g.parent = nid;
+          for (const n of g.nodes || [])
+            if (/run_flow$/.test(n.tool || "") && n.args?.flow_id === id) n.args.flow_id = nid;
+        }
+        const l = (db.lists ||= {})[db.root];
+        if (l?.flows?.items?.[id]) {
+          l.flows.items[nid] = l.flows.items[id];
+          delete l.flows.items[id];
+        }
+      }
+      f.updated = new Date().toISOString();
+      persist();
+      return {
+        flow: clone(f),
+        issues: validateFlow(f),
+        notes: nid !== id ? [`Renamed: its file is now .codegen/flows/${nid}.json (was ${id}.json).`] : [],
+      };
+    },
+    async RenameTool(old, name) {
+      const e = db.exts.find((x) => x.name === old);
+      if (!e) throw new Error(`no extension named "${old}"`);
+      if (e.kind !== "script" || e.scope !== "project") throw new Error(`${old} cannot be renamed here`);
+      if (!/^[a-z][a-z0-9_-]{0,39}$/.test(name))
+        throw new Error("a tool name starts with a letter and uses lowercase letters, digits, - and _");
+      if (db.exts.some((x) => x.name === name)) throw new Error(`there is already a tool named ${name}`);
+      e.command = (e.command || "").split(old).join(name);
+      if (e.scriptPath) e.scriptPath = e.scriptPath.split(old).join(name);
+      e.name = name;
+      for (const g of Object.values(db.flows))
+        for (const n of g.nodes || []) {
+          if (n.tool === old) n.tool = name;
+          for (const a of n.actions || []) if (a.tool === old) a.tool = name;
+        }
+      if (db.toolTags?.[old]) {
+        db.toolTags[name] = db.toolTags[old];
+        delete db.toolTags[old];
+      }
+      const l = (db.lists ||= {})[db.root];
+      if (l?.tools?.items?.[old]) {
+        l.tools.items[name] = l.tools.items[old];
+        delete l.tools.items[old];
+      }
+      persist();
+      return clone(e);
+    },
     async ValidateFlow(f) {
       return validateFlow(f);
     },

@@ -395,3 +395,17 @@ func (s *Store) PruneLessons(workspace, flow, step, source string, keep int) err
 		workspace, flow, step, source, workspace, flow, step, source, keep)
 	return err
 }
+
+// RenameFlow moves what is kept by flow id (lessons, queued trigger runs)
+// to the flow's new id. Past runs and tool calls keep the id they ran with.
+func (s *Store) RenameFlow(workspace, from, to string) error {
+	if s.db == nil {
+		return nil
+	}
+	for _, q := range []string{`UPDATE lessons SET flow=? WHERE workspace=? AND flow=?`, `UPDATE trigger_queue SET flow=? WHERE workspace=? AND flow=?`} {
+		if _, err := s.db.Exec(q, to, workspace, from); err != nil {
+			return err
+		}
+	}
+	return nil
+}

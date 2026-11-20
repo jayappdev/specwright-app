@@ -5,6 +5,7 @@
 // (groups fold away), and a tag editor for the flow's settings.
 import { useState } from "react";
 import { S, update } from "./store.js";
+import { HeadingActions, addHeading, dropProps, headingOf, headingsOf } from "./listLayout.jsx";
 
 // filter state per list ("designer", "runner"), kept for the session
 export const flowFilter = (area) => ((S.flowFilter ||= {})[area] ||= { q: "", tags: [], closed: {} });
@@ -28,16 +29,32 @@ export function flowMatches(x, ff) {
   return words.every((w) => hay.includes(w.replace(/^#/, "")));
 }
 
-// groupFlows: the flows that match, by group (named groups A–Z, then the ungrouped)
+// groupFlows: the flows that match, under your headings first (in their
+// order; listLayout.jsx), then by group (named groups A–Z, then the
+// ungrouped). Each: { key, name, items, heading }.
 export function groupFlows(list, ff) {
+  const heads = new Map(headingsOf("flows").map((h) => [h, []]));
   const by = new Map();
   for (const x of list || []) {
     if (!flowMatches(x, ff)) continue;
+    const h = headingOf("flows", x.id);
+    if (h && heads.has(h)) {
+      heads.get(h).push(x);
+      continue;
+    }
     const g = x.group || "";
     if (!by.has(g)) by.set(g, []);
     by.get(g).push(x);
   }
-  return [...by.entries()].sort(([a], [b]) => (!a ? 1 : !b ? -1 : a.localeCompare(b)));
+  const filtering = !!(ff.q || ff.tags.length);
+  return [
+    ...[...heads.entries()]
+      .filter(([, items]) => items.length || !filtering) // an empty heading: a place to drop flows on
+      .map(([h, items]) => ({ key: "h:" + h, name: h, items, heading: true })),
+    ...[...by.entries()]
+      .sort(([a], [b]) => (!a ? 1 : !b ? -1 : a.localeCompare(b)))
+      .map(([g, items]) => ({ key: "g:" + g, name: g, items, heading: false })),
+  ];
 }
 
 export const allTags = (list) => [...new Set((list || []).flatMap((x) => x.tags || []))].sort();
@@ -83,6 +100,14 @@ export function FlowFilterBar({ area, list }) {
           })}
         </div>
       )}
+      <button
+        type="button"
+        className="link fls-addhead"
+        title="A heading to arrange flows under (drag flows onto it); nothing about the flows changes"
+        onClick={() => addHeading("flows")}
+      >
+        + Heading
+      </button>
       {(ff.q || ff.tags.length > 0) && (
         <small className="muted">
           {shown} of {list.length} flow{list.length === 1 ? "" : "s"}{" "}
@@ -104,24 +129,32 @@ export function FlowFilterBar({ area, list }) {
 
 // a group's heading (it folds the group away), or nothing for the ungrouped
 // when there are no groups at all
-export function FlowGroup({ area, name, count, children, groups }) {
+// heading: one of your headings (rename, move, remove; flows dropped on it
+// go under it); a group's section takes a dropped flow out of its heading.
+export function FlowGroup({ area, name, count, children, groups, heading }) {
   const ff = flowFilter(area),
-    key = name || "\u0000",
+    key = (heading ? "h:" : "") + (name || "\u0000"),
     closed = !!ff.closed[key] && !ff.q && !ff.tags.length; // a search shows everything it found
-  if (!name && groups === 1) return children;
+  if (!name && groups === 1 && !heading) return <div {...dropProps("flows", "")}>{children}</div>;
   return (
-    <div className="fls-group">
-      <button
-        className="tree-folder fls-group-head"
-        aria-expanded={!closed}
-        onClick={() => {
-          ff.closed[key] = !closed;
-          update();
-        }}
-      >
-        <span className="fls-caret">{closed ? "▸" : "▾"}</span> {name || "Not in a group"} · {count}
-      </button>
-      {!closed && children}
+    <div
+      className={"fls-group drop-zone" + (heading ? " fls-heading" : "")}
+      {...dropProps("flows", heading ? name : "")}
+    >
+      <div className="fls-group-row">
+        <button
+          className="tree-folder fls-group-head"
+          aria-expanded={!closed}
+          onClick={() => {
+            ff.closed[key] = !closed;
+            update();
+          }}
+        >
+          <span className="fls-caret">{closed ? "▸" : "▾"}</span> {name || "Not in a group"} · {count}
+        </button>
+        {heading && <HeadingActions list="flows" name={name} />}
+      </div>
+      {!closed && (count ? children : <p className="muted fls-empty">Drag flows here</p>)}
     </div>
   );
 }

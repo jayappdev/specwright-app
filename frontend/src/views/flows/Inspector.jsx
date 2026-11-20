@@ -3,6 +3,7 @@
 // data panel (what a step gets and gives) and variable chips.
 import { LessonsEditor } from "./Lessons.jsx";
 import { TagEditor, allTags, allGroups } from "../../flowLists.jsx";
+import { HeadingPicker } from "../../listLayout.jsx";
 import { ContextInspector } from "./ContextStep.jsx";
 import { Reliability } from "../../ToolTile.jsx";
 import { TriggersEditor } from "./Triggers.jsx";
@@ -142,6 +143,14 @@ function FlowSettings() {
           ))}
         </datalist>
       </Field>
+      {flow.id && (
+        <Field
+          label="Heading"
+          hint="Your own arrangement of the flow lists (you can also drag a flow onto a heading). Kept in SpecWright, not in the flow."
+        >
+          <HeadingPicker list="flows" id={flow.id} label="" />
+        </Field>
+      )}
       <Field
         label="Tags"
         hint="Labels to find the flow by; the flow lists can be searched and filtered by them."
