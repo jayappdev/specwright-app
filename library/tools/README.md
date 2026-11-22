@@ -26,7 +26,26 @@ attached read-only: Postgres, MySQL, SQLite, SQL Server, Oracle, DuckDB.
 - Oracle needs Oracle Instant Client on the machine (19c, 21c or 23ai).
 - With DuckDB 2.0.0, the iceberg extension does not load (upstream), and the
   odbc and gsheets community extensions are not published yet.
-- Its tool file carries a usage guide with five worked examples (Tools › the
+- Folders: a source ending in `/` (`"s3://bucket/events/"`, `"data/exports/"`)
+  reads every Parquet, CSV and JSON file under it, sub-folders too, as one
+  table: columns matched by name, a `filename` column, and hive folders
+  (`year=2026/`) as columns. Marker and hidden files (`_SUCCESS`, `.crc`) are
+  skipped. `{"path": ..., "format": "parquet", "filename": false, "hive": false}`
+  narrows it.
+- Accumulating: `save_to` (local or `s3://`, .csv/.json/.jsonl/.parquet) with
+  `save_mode: "append"` adds each run's rows to the file (columns matched by
+  name; a new column leaves earlier rows null), so a scheduled flow builds a
+  history.
+- S3: `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (/ `AWS_SESSION_TOKEN`)
+  when set, otherwise the AWS chain (profiles, SSO); `AWS_REGION`;
+  `AWS_ENDPOINT_URL` for S3-compatible storage (MinIO, Cloudflare R2, Ceph),
+  addressed path-style.
+- Tests against a local S3-compatible server (folders, globs, hive
+  partitions, append, overwrite, a wrong key):
+  `DUCKDB_TOOL_DIR=<a folder with @duckdb/node-api installed> node --test library/tools/duckdb_data_query/test/`
+  (a project's `.codegen/tools/project/duckdb_data_query` has it once the
+  tool has run there).
+- Its tool file carries a usage guide with seven worked examples (Tools › the
   tool › Test › Guide & examples, and the Flow step guide under Your tools):
   run them there, or open one as a flow with Try it in the designer.
 

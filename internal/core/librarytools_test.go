@@ -79,7 +79,7 @@ func TestLibraryToolFiles(t *testing.T) {
 	}
 	// duckdb_data_query reads its arguments in this order
 	src, _ := os.ReadFile(filepath.Join(root, "duckdb_data_query", "index.js"))
-	if !strings.Contains(string(src), `const ARGS = ["sql", "sources", "connections", "extensions", "input", "format", "save_to", "max_rows"];`) {
+	if !strings.Contains(string(src), `const ARGS = ["sql", "sources", "connections", "extensions", "input", "format", "save_to", "max_rows", "save_mode"];`) {
 		t.Fatal("duckdb_data_query's arguments changed: update the tool file's parameters to match")
 	}
 	if _, err := h.ReadToolFile(`{"format":"specwright-tools","version":1,"tools":[]}`); err == nil {

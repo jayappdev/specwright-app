@@ -1143,19 +1143,19 @@ export const GUIDE = [
     ],
     how: [
       "Add a Tool step and choose duckdb_data_query (an admin publishes it to every project from library/tools; Admin › Import a tool file to publish).",
-      'sql is the query. Name the inputs: sources ({"orders": "data/orders.csv"}, globs and s3:// paths too), connections ([{"name": "pg", "type": "postgres", "dsn": "…"}], read-only unless "read_only": false), and input: {{input_file}} makes the previous step\'s output the table input.',
-      "Passwords never go in the flow: PGPASSWORD and MYSQL_PWD are read by the drivers, and ${ORACLE_PASSWORD} or ${MSSQL_PASSWORD} in a dsn is filled from Tools › Secrets, the keychain or the environment. S3 uses your AWS profile or SSO.",
-      "format: json (default; numbers stay numbers), csv or markdown. save_to also writes the whole result to .csv, .json or .parquet; max_rows (default 1000) caps what the next step gets.",
+      'sql is the query. Name the inputs: sources ({"orders": "data/orders.csv"}; globs, s3:// paths, and folders ending in / — every data file under it, sub-folders too, as one table with a filename column, year=2026/ folders as columns), connections ([{"name": "pg", "type": "postgres", "dsn": "…"}], read-only unless "read_only": false), and input: {{input_file}} makes the previous step\'s output the table input.',
+      "Passwords never go in the flow: PGPASSWORD and MYSQL_PWD are read by the drivers, and ${ORACLE_PASSWORD} or ${MSSQL_PASSWORD} in a dsn is filled from Tools › Secrets, the keychain or the environment. S3 uses AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY when set, otherwise your AWS profile or SSO; AWS_REGION, and AWS_ENDPOINT_URL for S3-compatible storage (MinIO, R2, Ceph).",
+      "format: json (default; numbers stay numbers), csv or markdown. save_to also writes the whole result to .csv, .json, .jsonl or .parquet, locally or on s3://; save_mode append adds the rows to what the file already holds, so a scheduled flow builds up a history; max_rows (default 1000) caps what the next step gets.",
       "Extensions (S3, Postgres, Excel, Oracle…) install the first time they are needed. Where the network blocks them, set DUCKDB_EXTENSION_REPOSITORY (a mirror) or DUCKDB_HTTP_PROXY.",
     ],
     settings: [
       ["sql", "The DuckDB SQL; several statements run in turn, the last one's rows are the result."],
-      ["sources", "Tables from files, globs, URLs or cloud paths."],
+      ["sources", "Tables from files, globs, folders (path/), URLs or cloud paths."],
       ["connections", "Databases to attach: postgres, mysql, sqlite, sqlserver, oracle, duckdb."],
       ["input", "{{input_file}}: the previous step's output as the table input."],
       [
-        "format, save_to, max_rows",
-        "How the rows come back, where to save all of them, how many to pass on.",
+        "format, save_to, save_mode, max_rows",
+        "How the rows come back, where to save all of them (overwrite, or append to accumulate), how many to pass on.",
       ],
       ["extensions", "Extra DuckDB extensions (most load by themselves)."],
     ],
@@ -1271,6 +1271,57 @@ export const GUIDE = [
         focus: "errors",
         result:
           '[\n  {"service": "billing", "day": "2026-11-01T00:00:00.000Z", "errors": 214},\n  {"service": "orders", "day": "2026-11-01T00:00:00.000Z", "errors": 97}\n]',
+      },
+      {
+        title: "A whole S3 folder as one table",
+        text: "A source ending in / reads every Parquet, CSV and JSON file under the prefix (sub-folders too) as one table: columns are matched by name, filename says which file a row came from, and hive folders such as region=eu/ become columns.",
+        nodes: [
+          {
+            id: "lake",
+            type: "tool",
+            title: "Events by region",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT region, count(*) AS events, count(DISTINCT filename) AS files\nFROM events\nGROUP BY region ORDER BY events DESC",
+              sources: '{"events": "s3://acme-lake/events/"}',
+            },
+          },
+        ],
+        edges: chain("start", "lake"),
+        focus: "lake",
+        result:
+          '[\n  {"region": "eu", "events": 182344, "files": 31},\n  {"region": "us", "events": 97012, "files": 31}\n]',
+      },
+      {
+        title: "Accumulate results across runs",
+        text: "Each run adds today's totals to one Parquet file on S3 (save_mode append), then a second query reads the whole history. Schedule the flow to build it up day by day; a new column in a later run is added, earlier rows get null.",
+        nodes: [
+          {
+            id: "today",
+            type: "tool",
+            title: "Add today's totals",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT current_date AS day, service, count(*) AS errors\nFROM events\nWHERE level = 'ERROR'\nGROUP BY ALL",
+              sources: '{"events": "s3://acme-logs/today/"}',
+              save_to: "s3://acme-reports/errors-history.parquet",
+              save_mode: "append",
+            },
+          },
+          {
+            id: "history",
+            type: "tool",
+            title: "The last 7 days",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT day, sum(errors) AS errors\nFROM read_parquet('s3://acme-reports/errors-history.parquet')\nWHERE day > current_date - 7\nGROUP BY day ORDER BY day",
+            },
+          },
+        ],
+        edges: chain("start", "today", "history"),
+        focus: "history",
+        result:
+          '[\n  {"day": "2026-11-20", "errors": 311},\n  {"day": "2026-11-21", "errors": 287},\n  {"day": "2026-11-22", "errors": 254}\n]',
       },
       {
         title: "Query, then a chart",

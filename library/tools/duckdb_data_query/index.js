@@ -10,8 +10,14 @@
 // positional in this order when run by hand:
 //   sql          the query; several statements run in turn, the last one's
 //                rows are the result
-//   sources      JSON object: table name -> file, glob, URL or s3:// path,
-//                e.g. {"orders": "data/orders.csv", "events": "s3://bkt/*.parquet"}
+//   sources      JSON object: table name -> file, glob, folder, URL or
+//                s3:// path, e.g. {"orders": "data/orders.csv",
+//                "events": "s3://bkt/events/"} (a folder: every data file
+//                under it, in sub-folders too, read as one table with the
+//                columns of all of them and a "filename" column; hive
+//                folders such as year=2026/ become columns). A source can
+//                also be {"path": ..., "format": "parquet|csv|json",
+//                "filename": false, "hive": false}.
 //   connections  JSON array: [{"name": "pg", "type": "postgres",
 //                "dsn": "host=db port=5432 dbname=sales user=me", "read_only": true}]
 //                ${NAME} in a dsn is replaced from the environment (secrets
@@ -20,10 +26,15 @@
 //   input        a file with the previous step's output (a flow passes
 //                {{input_file}}): the table "input"
 //   format       json (default) | csv | markdown
-//   save_to      also write the result to this file (.csv, .json, .parquet)
+//   save_to      also write the result to this file (.csv, .json, .jsonl,
+//                .parquet), local or s3://
 //   max_rows     at most this many rows in the answer (default 1000)
+//   save_mode    overwrite (default) | append: add the rows to what save_to
+//                already holds (accumulate results across runs)
 //
-// Credentials: AWS from its usual chain (environment, ~/.aws profiles, SSO);
+// Credentials: AWS keys from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
+// (/ AWS_SESSION_TOKEN), else its usual chain (~/.aws profiles, SSO);
+// AWS_REGION; AWS_ENDPOINT_URL for S3-compatible storage (MinIO, R2, Ceph);
 // Postgres PGPASSWORD, MySQL MYSQL_PWD; ${NAME} placeholders in a dsn.
 // Settings from the environment: DUCKDB_EXTENSION_DIRECTORY,
 // DUCKDB_EXTENSION_REPOSITORY (a mirror, for networks that block
@@ -32,7 +43,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 
-const ARGS = ["sql", "sources", "connections", "extensions", "input", "format", "save_to", "max_rows"];
+const ARGS = ["sql", "sources", "connections", "extensions", "input", "format", "save_to", "max_rows", "save_mode"];
 function readArgs() {
   let named = null;
   try {
@@ -49,7 +60,7 @@ function readArgs() {
     return pos[i] || "";
   });
 }
-const [sqlArg, sourcesArg, connsArg, extsArg, inputArg, formatArg, saveTo, maxRowsArg] = readArgs();
+const [sqlArg, sourcesArg, connsArg, extsArg, inputArg, formatArg, saveTo, maxRowsArg, saveModeArg] = readArgs();
 
 function fail(msg) {
   process.stderr.write("duckdb_data_query: " + msg + "\n");
@@ -76,12 +87,51 @@ const expandEnv = (s) =>
     return process.env[n];
   });
 
-// a reader for a file, glob or URL (DuckDB guesses CSV, JSON and Parquet)
-function scanOf(loc) {
-  const l = String(loc).trim();
-  if (/\.xlsx?$/i.test(l)) return `read_xlsx(${q(l)})`;
-  if (/\.(json|jsonl|ndjson)$/i.test(l)) return `read_json_auto(${q(l)})`;
-  return q(l);
+// the data format of a file name
+const FORMATS = { parquet: "parquet", csv: "csv", tsv: "csv", txt: "csv", json: "json", jsonl: "json", ndjson: "json", xlsx: "xlsx", xls: "xlsx" };
+const formatOf = (f) => FORMATS[(String(f).toLowerCase().match(/\.([a-z0-9]+)(?:\.(?:gz|zst))?$/) || [])[1]];
+const isGlob = (l) => /[*?[]/.test(l);
+const isFolder = (l) => /\/$/.test(l);
+
+// a reader for one or more files of one format: a list of files (or one
+// glob) read as one table, columns matched by name, with the file each row
+// came from and hive partition columns (year=2026/) when asked
+function reader(fmt, files, many, o) {
+  const list = Array.isArray(files) ? "[" + files.map(q).join(", ") + "]" : q(files);
+  if (fmt === "xlsx") {
+    if (Array.isArray(files) && files.length > 1) fail("Excel files are read one at a time; name each file as its own source");
+    return `read_xlsx(${Array.isArray(files) ? q(files[0]) : list})`;
+  }
+  const opts = many ? [`union_by_name = true`, `filename = ${o.filename === false ? "false" : "true"}`, `hive_partitioning = ${o.hive === false ? "false" : "true"}`] : [];
+  const fn = fmt === "parquet" ? "read_parquet" : fmt === "json" ? "read_json_auto" : "read_csv_auto";
+  return `${fn}(${[list, ...opts].join(", ")})`;
+}
+
+// the SQL that reads a source: a file, URL, glob, or folder (every data file
+// under it, in all formats found, as one table)
+async function scanOf(run, all, src) {
+  const o = typeof src === "object" && src !== null ? src : { path: src };
+  const l = String(o.path || "").trim();
+  if (!l) fail("a source has no path");
+  const fmt = o.format ? String(o.format).toLowerCase() : "";
+  if (fmt && !["parquet", "csv", "json", "xlsx"].includes(fmt)) fail(`format ${fmt}: parquet, csv, json or xlsx`);
+  if (isFolder(l)) {
+    // list the folder (S3 and Azure list by prefix), skip markers and hidden files
+    const rows = await all(`SELECT file FROM glob(${q(l + "**")})`).catch((e) => fail(`could not list ${l}: ${e.message}`));
+    const groups = {};
+    for (const { file } of rows) {
+      const base = String(file).split("/").pop();
+      if (!base || base.startsWith(".") || base.startsWith("_")) continue;
+      const f = fmt || formatOf(base);
+      if (f && (!fmt || formatOf(base) === fmt || !formatOf(base))) (groups[f] ||= []).push(file);
+    }
+    const kinds = Object.keys(groups);
+    if (kinds.length === 0) fail(`no data files (parquet, csv, json, xlsx) under ${l}`);
+    return kinds.map((f) => `SELECT * FROM ${reader(f, groups[f], true, o)}`).join(" UNION ALL BY NAME ");
+  }
+  const f = fmt || formatOf(l);
+  if (!f) return `SELECT * FROM ${q(l)}`; // DuckDB guesses
+  return `SELECT * FROM ${reader(f, l, isGlob(l), o)}`;
 }
 
 const CONN_TYPES = { postgres: "postgres", postgresql: "postgres", mysql: "mysql", sqlite: "sqlite", duckdb: "duckdb", sqlserver: "mssql", mssql: "mssql", oracle: "oracle" };
@@ -130,11 +180,12 @@ async function main() {
   const instance = await duckdb.DuckDBInstance.create(":memory:", config);
   const conn = await instance.connect();
   const run = (s) => conn.run(s);
+  const all = async (s) => (await conn.runAndReadAll(s)).getRowObjectsJS().map(plain);
 
   // extensions: the ones asked for, and those the sources and connections need
   const want = new Set();
   for (const e of String(extsArg || "").split(",").map((x) => x.trim().toLowerCase()).filter(Boolean)) want.add(e);
-  const everything = sql + " " + JSON.stringify(sources);
+  const everything = sql + " " + JSON.stringify(sources) + " " + saveTo;
   if (/s3:\/\/|s3a:\/\/|gcs:\/\/|gs:\/\//i.test(everything)) want.add("httpfs").add("aws");
   if (/https?:\/\//i.test(everything)) want.add("httpfs");
   if (/az:\/\/|abfss?:\/\//i.test(everything)) want.add("azure");
@@ -154,10 +205,7 @@ async function main() {
       fail(`the DuckDB extension ${name} could not be installed or loaded: ${e.message}`);
     }
   }
-  if (want.has("aws")) {
-    // S3 credentials from the usual AWS chain (environment, profiles, SSO)
-    await run("CREATE SECRET IF NOT EXISTS sw_s3 (TYPE s3, PROVIDER credential_chain)").catch(() => {});
-  }
+  if (want.has("aws")) await s3Secret(run);
 
   // connections: attached (read-only unless read_only is false)
   for (const c of conns) {
@@ -178,7 +226,8 @@ async function main() {
   // sources: one view per name
   for (const [name, loc] of Object.entries(sources)) {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) fail(`source name ${name}: letters, digits and _`);
-    await run(`CREATE VIEW ${ident(name)} AS SELECT * FROM ${scanOf(loc)}`).catch((e) => fail(`source ${name} (${loc}): ${e.message}`));
+    const shown = typeof loc === "object" && loc ? loc.path : loc;
+    await run(`CREATE VIEW ${ident(name)} AS ${await scanOf(run, all, loc)}`).catch((e) => fail(`source ${name} (${shown}): ${e.message}`));
   }
   // the previous step's output: the table "input"
   if (inputArg && fs.existsSync(inputArg)) {
@@ -190,29 +239,37 @@ async function main() {
   }
 
   // the SQL: every statement in turn; the last one's rows are the result
+  // (kept as a table when it is saved, so it runs once)
+  const dest = saveTo.trim();
+  const mode = (saveModeArg || "overwrite").trim().toLowerCase();
+  if (!["overwrite", "append"].includes(mode)) fail(`save_mode ${mode}: overwrite or append`);
   const stmts = await conn.extractStatements(sql).catch((e) => fail(e.message));
-  let reader = null;
+  let res = null,
+    kept = false;
   for (let i = 0; i < stmts.count; i++) {
+    if (dest && i === stmts.count - 1) {
+      kept = await run(`CREATE TEMP TABLE __sw_result AS ${sqlLast(sql)}`).then(
+        () => true,
+        () => false,
+      );
+      if (kept) {
+        res = await conn.runAndReadAll("SELECT * FROM __sw_result");
+        break;
+      }
+    }
     const p = await stmts.prepare(i).catch((e) => fail(e.message));
-    reader = await p.runAndReadAll().catch((e) => fail(e.message));
+    res = await p.runAndReadAll().catch((e) => fail(e.message));
   }
-  const cols = reader ? reader.columnNames() : [];
-  let rows = reader ? reader.getRowObjectsJS().map(plain) : [];
+  const cols = res ? res.columnNames() : [];
+  let rows = res ? res.getRowObjectsJS().map(plain) : [];
+  // DATE columns as 2026-11-22 (not a timestamp at midnight)
+  const dates = res ? cols.filter((c, i) => String(res.columnType(i)) === "DATE") : [];
+  if (dates.length) for (const r of rows) for (const c of dates) if (typeof r[c] === "string") r[c] = r[c].slice(0, 10);
   const total = rows.length;
 
-  if (saveTo.trim()) {
-    const dest = saveTo.trim();
-    const ext = path.extname(dest).toLowerCase();
-    fs.mkdirSync(path.dirname(path.resolve(dest)), { recursive: true });
-    if (ext === ".parquet") {
-      // the last statement again, written by DuckDB
-      await run(`COPY (${sqlLast(sql)}) TO ${q(dest)} (FORMAT parquet)`).catch((e) => fail("save_to (parquet): " + e.message));
-    } else if (ext === ".json") {
-      fs.writeFileSync(dest, JSON.stringify(rows, null, 2) + "\n");
-    } else {
-      fs.writeFileSync(dest, toCSV(cols, rows));
-    }
-    process.stderr.write(`saved ${total} rows to ${dest}\n`);
+  if (dest) {
+    if (!kept) fail("save_to needs the last statement to be a query (SELECT …)");
+    await save(run, all, dest, mode, total);
   }
 
   if (rows.length > maxRows) {
@@ -244,7 +301,62 @@ function plain(v) {
   return v;
 }
 
-// the last statement of the SQL (for writing Parquet)
+// S3 access: keys from the environment (secrets) or the AWS credential
+// chain (profiles, SSO); AWS_REGION; AWS_ENDPOINT_URL for S3-compatible
+// storage (MinIO, Cloudflare R2, Ceph), addressed by path
+async function s3Secret(run) {
+  const env = process.env;
+  const opts = ["TYPE s3"];
+  if (env.AWS_ACCESS_KEY_ID && env.AWS_SECRET_ACCESS_KEY) {
+    opts.push(`KEY_ID ${q(env.AWS_ACCESS_KEY_ID)}`, `SECRET ${q(env.AWS_SECRET_ACCESS_KEY)}`);
+    if (env.AWS_SESSION_TOKEN) opts.push(`SESSION_TOKEN ${q(env.AWS_SESSION_TOKEN)}`);
+  } else {
+    opts.push("PROVIDER credential_chain");
+  }
+  const region = env.AWS_REGION || env.AWS_DEFAULT_REGION;
+  if (region) opts.push(`REGION ${q(region)}`);
+  const ep = (env.AWS_ENDPOINT_URL_S3 || env.AWS_ENDPOINT_URL || "").trim();
+  if (ep) {
+    const u = ep.match(/^(https?):\/\/([^/]+)/i);
+    if (!u) fail(`AWS_ENDPOINT_URL ${ep}: give it as http(s)://host[:port]`);
+    opts.push(`ENDPOINT ${q(u[2])}`, `URL_STYLE ${q(env.AWS_S3_URL_STYLE || "path")}`, `USE_SSL ${u[1].toLowerCase() === "https"}`);
+  }
+  try {
+    await run(`CREATE OR REPLACE SECRET sw_s3 (${opts.join(", ")})`);
+  } catch (e) {
+    // no credentials found: public buckets still work
+    if (opts.includes("PROVIDER credential_chain")) return;
+    fail("S3 credentials: " + e.message);
+  }
+}
+
+// write the result (the table __sw_result) to dest; append adds it to the
+// rows dest already holds (matched by column name)
+async function save(run, all, dest, mode, n) {
+  const fmt = formatOf(dest);
+  if (!fmt || fmt === "xlsx") fail(`save_to ${dest}: end it with .csv, .json, .jsonl or .parquet`);
+  const remote = /^[a-z0-9]+:\/\//i.test(dest);
+  if (!remote) fs.mkdirSync(path.dirname(path.resolve(dest)), { recursive: true });
+  let before = 0;
+  let table = "__sw_result";
+  if (mode === "append") {
+    // (glob lists the prefix; a name without a wildcard would come back as is)
+    const exists = remote
+      ? await all(`SELECT file FROM glob(${q(dest + "*")})`).then((r) => r.some((x) => x.file === dest), () => false)
+      : fs.existsSync(dest);
+    if (exists) {
+      await run(`CREATE TEMP TABLE __sw_before AS SELECT * FROM ${reader(fmt, dest, false, {})}`).catch((e) => fail(`could not read ${dest} to add to it: ${e.message}`));
+      before = Number((await all("SELECT count(*) AS n FROM __sw_before"))[0].n);
+      await run("CREATE TEMP TABLE __sw_all AS SELECT * FROM __sw_before UNION ALL BY NAME SELECT * FROM __sw_result").catch((e) => fail(`the rows do not fit ${dest}: ${e.message}`));
+      table = "__sw_all";
+    }
+  }
+  const as = fmt === "parquet" ? "FORMAT parquet" : fmt === "csv" ? "FORMAT csv, HEADER true" : /\.json$/i.test(dest) ? "FORMAT json, ARRAY true" : "FORMAT json";
+  await run(`COPY ${table} TO ${q(dest)} (${as})`).catch((e) => fail(`save_to ${dest}: ${e.message}`));
+  process.stderr.write(mode === "append" ? `added ${n} rows to ${dest} (${before + n} in all)\n` : `saved ${n} rows to ${dest}\n`);
+}
+
+// the last statement of the SQL (kept as a table when the result is saved)
 function sqlLast(sql) {
   const parts = sql.split(/;\s*(?=(?:[^']*'[^']*')*[^']*$)/).map((s) => s.trim()).filter(Boolean);
   return parts[parts.length - 1];
