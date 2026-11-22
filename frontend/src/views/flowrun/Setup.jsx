@@ -313,6 +313,7 @@ const VIA = {
     </span>
   ),
   session: () => <span className="badge badge-ok">entered this session</span>,
+  optional: () => <span className="badge">optional · not set</span>,
   ask: () => <span className="badge">will ask when needed</span>,
   missing: (c) => (
     <span className="badge badge-warn">{c.source === "env" ? "$" + c.env + " not set" : "no value"}</span>
@@ -336,55 +337,66 @@ function Credentials() {
       toast(errMsg(e), "error");
     }
   };
+  const row = (c) => (
+    <div key={c.name} className="fr-cred">
+      <div>
+        <code className="inline-code" data-nofile>
+          {c.name}
+        </code>{" "}
+        {(VIA[c.via] || VIA.ask)(c)}{" "}
+        <small className="muted">
+          {c.desc}
+          {c.tools?.length ? " · " + c.tools.join(", ") : ""}
+        </small>
+      </div>
+      <div className="fr-cred-row">
+        <input
+          type="password"
+          autoComplete="off"
+          placeholder={c.via === "ask" || c.via === "missing" ? "Enter a value" : "Replace the value"}
+          value={r.secretVals[c.name] || ""}
+          onChange={(e) => {
+            r.secretVals[c.name] = e.target.value;
+            update();
+          }}
+        />
+        <button className="btn secondary" onClick={() => save(c, "session")}>
+          Use this session
+        </button>
+        {r.keychain && (
+          <button
+            className="btn secondary"
+            title="Kept by the operating system; found next time without asking"
+            onClick={() => save(c, "keychain")}
+          >
+            <Icon.lock /> Save in keychain
+          </button>
+        )}
+      </div>
+    </div>
+  );
   return (
     <div className="card">
       <div className="card-head">
         <Icon.lock />
         <h3>Credentials</h3>
-        <span className="badge">{r.creds.length}</span>
+        <span className="badge">{r.creds.filter((c) => !c.optional).length}</span>
       </div>
       <p className="wf-desc">
         The flow's tools need these. Each is read from the session, the environment variable or the system
-        keychain; if none has it, the run pauses and asks you.
+        keychain; if none has it, the run pauses and asks you. Optional ones are used when set and never asked
+        for.
       </p>
-      {r.creds.map((c) => (
-        <div key={c.name} className="fr-cred">
-          <div>
-            <code className="inline-code" data-nofile>
-              {c.name}
-            </code>{" "}
-            {(VIA[c.via] || VIA.ask)(c)}{" "}
-            <small className="muted">
-              {c.desc}
-              {c.tools?.length ? " · " + c.tools.join(", ") : ""}
-            </small>
-          </div>
-          <div className="fr-cred-row">
-            <input
-              type="password"
-              autoComplete="off"
-              placeholder={c.via === "ask" || c.via === "missing" ? "Enter a value" : "Replace the value"}
-              value={r.secretVals[c.name] || ""}
-              onChange={(e) => {
-                r.secretVals[c.name] = e.target.value;
-                update();
-              }}
-            />
-            <button className="btn secondary" onClick={() => save(c, "session")}>
-              Use this session
-            </button>
-            {r.keychain && (
-              <button
-                className="btn secondary"
-                title="Kept by the operating system; found next time without asking"
-                onClick={() => save(c, "keychain")}
-              >
-                <Icon.lock /> Save in keychain
-              </button>
-            )}
-          </div>
-        </div>
-      ))}
+      {r.creds.filter((c) => !c.optional).map(row)}
+      {r.creds.some((c) => c.optional) && (
+        <details className="fr-cred-optional">
+          <summary>
+            Optional · {r.creds.filter((c) => c.optional).length}{" "}
+            <span className="muted">only for the sources that need them; nothing is asked for</span>
+          </summary>
+          {r.creds.filter((c) => c.optional).map(row)}
+        </details>
+      )}
     </div>
   );
 }

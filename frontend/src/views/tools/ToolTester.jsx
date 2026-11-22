@@ -262,37 +262,75 @@ export function ToolTester({ tb, d }) {
         {(d.secrets || []).length > 0 && (
           <div className="tt-secrets">
             <h4>Secrets</h4>
-            {(d.secrets || []).map((s) => {
-              const via = S.secretInfo?.[s.name]?.via;
-              return (
-                <label key={s.name} className="field tt-field">
-                  <span>
-                    <code className="inline-code" data-nofile>
-                      {s.name}
-                    </code>{" "}
-                    <span className="muted">
-                      {via === "missing"
-                        ? "no value found: enter one for this run"
-                        : via === "ask"
-                          ? "you are asked when it runs, or enter it here"
-                          : "found (" +
-                            (via || "session or environment") +
-                            "); enter one to use another for this run"}
+            {(d.secrets || [])
+              .filter((s) => !s.optional)
+              .map((s) => {
+                const via = S.secretInfo?.[s.name]?.via;
+                return (
+                  <label key={s.name} className="field tt-field">
+                    <span>
+                      <code className="inline-code" data-nofile>
+                        {s.name}
+                      </code>{" "}
+                      <span className="muted">
+                        {via === "missing"
+                          ? "no value found: enter one for this run"
+                          : via === "ask"
+                            ? "you are asked when it runs, or enter it here"
+                            : "found (" +
+                              (via || "session or environment") +
+                              "); enter one to use another for this run"}
+                      </span>
                     </span>
-                  </span>
-                  <input
-                    type="password"
-                    autoComplete="off"
-                    value={t.secrets[s.name] || ""}
-                    aria-label={s.name}
-                    onChange={(e) => {
-                      t.secrets[s.name] = e.target.value;
-                      update();
-                    }}
-                  />
-                </label>
-              );
-            })}
+                    <input
+                      type="password"
+                      autoComplete="off"
+                      value={t.secrets[s.name] || ""}
+                      aria-label={s.name}
+                      onChange={(e) => {
+                        t.secrets[s.name] = e.target.value;
+                        update();
+                      }}
+                    />
+                  </label>
+                );
+              })}
+            {(d.secrets || []).some((s) => s.optional) && (
+              <details className="tt-optional">
+                <summary>
+                  Optional secrets · {(d.secrets || []).filter((s) => s.optional).length}{" "}
+                  <span className="muted">only for the sources that need them; nothing is asked for</span>
+                </summary>
+                {(d.secrets || [])
+                  .filter((s) => s.optional)
+                  .map((s) => {
+                    const via = S.secretInfo?.[s.name]?.via;
+                    return (
+                      <label key={s.name} className="field tt-field">
+                        <span>
+                          <code className="inline-code" data-nofile>
+                            {s.name}
+                          </code>{" "}
+                          <span className="muted">
+                            {via && via !== "optional" ? "found (" + via + ")" : "not set"}
+                            {s.desc ? " · " + s.desc : ""}
+                          </span>
+                        </span>
+                        <input
+                          type="password"
+                          autoComplete="off"
+                          value={t.secrets[s.name] || ""}
+                          aria-label={s.name}
+                          onChange={(e) => {
+                            t.secrets[s.name] = e.target.value;
+                            update();
+                          }}
+                        />
+                      </label>
+                    );
+                  })}
+              </details>
+            )}
             <small className="muted">Values typed here are used for this run only and never saved.</small>
           </div>
         )}

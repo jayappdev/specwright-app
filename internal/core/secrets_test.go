@@ -117,3 +117,17 @@ func TestOptionalSecret(t *testing.T) {
 		t.Fatal("an optional secret's value must be redacted too")
 	}
 }
+
+// the screens see an optional secret as optional: never missing, never asked
+func TestOptionalSecretInfo(t *testing.T) {
+	h, _ := newHub(t)
+	stubKeychain(t)
+	st := h.SecretInfo([]extension.Secret{{Name: "MYSQL_PWD", Env: "SPECWRIGHT_TEST_MY", Optional: true}, {Name: "TOKEN", Env: "SPECWRIGHT_TEST_TOK", Source: "env"}})
+	if st[0].Via != "optional" || !st[0].Optional || st[1].Via != "missing" {
+		t.Fatalf("%+v", st)
+	}
+	t.Setenv("SPECWRIGHT_TEST_MY", "x")
+	if st := h.SecretInfo([]extension.Secret{{Name: "MYSQL_PWD", Env: "SPECWRIGHT_TEST_MY", Optional: true}}); st[0].Via != "env" {
+		t.Fatalf("set: %+v", st)
+	}
+}

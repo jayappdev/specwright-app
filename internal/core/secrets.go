@@ -36,7 +36,9 @@ type SecretState struct {
 	Source string `json:"source"`
 	Env    string `json:"env"`    // variable that is read
 	EnvSet bool   `json:"envSet"` // that variable is set
-	Via    string `json:"via"`    // session | env | keychain | ask | missing
+	Via    string `json:"via"`    // session | env | keychain | ask | missing | optional (not set, not needed)
+	// Optional: passed when it has a value, never asked for or missing
+	Optional bool `json:"optional,omitempty"`
 }
 
 // SecretRequest is published as a "secret.request" event when a tool
@@ -185,6 +187,12 @@ func (h *Hub) SecretInfo(secrets []extension.Secret) []SecretState {
 				st.Via = "keychain"
 			default:
 				st.Via = "ask"
+			}
+		}
+		if s.Optional {
+			st.Optional = true
+			if st.Via == "ask" || st.Via == "missing" {
+				st.Via = "optional" // not set, and not needed: never asked for
 			}
 		}
 		out = append(out, st)

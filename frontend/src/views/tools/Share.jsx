@@ -290,7 +290,12 @@ function ImportBody({ close }) {
                   <small className="muted">
                     {(t.params || []).length} parameter(s)
                     {t.secrets?.length
-                      ? ` · needs secret(s) ${t.secrets.map((x) => x.name).join(", ")} (no values included)`
+                      ? t.secrets.some((x) => !x.optional)
+                        ? ` · needs secret(s) ${t.secrets
+                            .filter((x) => !x.optional)
+                            .map((x) => x.name)
+                            .join(", ")} (no values included)`
+                        : ` · ${t.secrets.length} optional secret(s), never asked for`
                       : ""}
                     {t.deps?.length
                       ? ` · ${t.deps.length} dependenc${t.deps.length === 1 ? "y" : "ies"}`

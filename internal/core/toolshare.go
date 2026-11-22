@@ -283,12 +283,22 @@ func (h *Hub) importTool(t extension.BundledTool, action string) (string, string
 		_, _ = h.SetToolTags(t.Name, t.Tags) // tags are a convenience: an error does not stop the import
 	}
 	note := ""
-	if len(t.Secrets) > 0 {
-		var names []string
-		for _, s := range t.Secrets {
-			names = append(names, s.Name)
+	var needed, optional []string
+	for _, s := range t.Secrets {
+		if s.Optional {
+			optional = append(optional, s.Name)
+		} else {
+			needed = append(needed, s.Name)
 		}
-		note = fmt.Sprintf("%s needs secret(s) %s: no values come with the file", t.Name, strings.Join(names, ", "))
+	}
+	switch {
+	case len(needed) > 0:
+		note = fmt.Sprintf("%s needs secret(s) %s: no values come with the file", t.Name, strings.Join(needed, ", "))
+		if len(optional) > 0 {
+			note += fmt.Sprintf(" (and can use %s, only where needed)", strings.Join(optional, ", "))
+		}
+	case len(optional) > 0:
+		note = fmt.Sprintf("%s can use the optional secrets %s, only for the sources that need them; nothing is asked for", t.Name, strings.Join(optional, ", "))
 	}
 	return t.Name, note, nil
 }

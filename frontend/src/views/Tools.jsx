@@ -484,7 +484,9 @@ async function testAndMaybeFix() {
   const tb = S.tb;
   tb.fix = null;
   await runTest();
-  const missing = (tb.draft?.secrets || []).some((s) => S.secretInfo[s.name]?.via === "missing");
+  const missing = (tb.draft?.secrets || []).some(
+    (s) => !s.optional && S.secretInfo[s.name]?.via === "missing",
+  );
   if (tb.test && !tb.test.pass && tb.autoFix !== false && !missing && !tb.ro) autoFix();
 }
 
@@ -606,7 +608,7 @@ export function Tools() {
     update();
   };
   // only secrets with no way to get a value block a test; "ask" ones prompt
-  const missing = (d?.secrets || []).filter((s) => S.secretInfo[s.name]?.via === "missing");
+  const missing = (d?.secrets || []).filter((s) => !s.optional && S.secretInfo[s.name]?.via === "missing");
   let body = null;
 
   if (tb.stage === "describe") {

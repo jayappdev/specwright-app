@@ -132,6 +132,8 @@ function SecretBadge({ st }) {
       );
     case "ask":
       return <span className="badge badge-info">will ask when run</span>;
+    case "optional":
+      return <span className="badge">optional · not set</span>;
     default:
       return (
         <span className="badge badge-warn">
@@ -166,6 +168,17 @@ export function SecretsCard({ d }) {
                 <div className="secret-name">
                   <code className="inline-code">{s.name}</code>
                   <small>{s.desc}</small>
+                  <label
+                    className="check secret-optional"
+                    title="Optional: passed when it has a value, never asked for (e.g. a password only some queries need)"
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!!s.optional}
+                      onChange={(e) => setS(s, "optional", e.target.checked || undefined)}
+                    />{" "}
+                    optional
+                  </label>
                 </div>
                 <div className="secret-controls">
                   <select
