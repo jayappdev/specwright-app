@@ -495,13 +495,23 @@ func (h *Hub) FlowCredentials(id string) ([]FlowCredential, error) {
 		return nil, err
 	}
 	used := map[string]bool{}
+	argsOf := map[string]map[string]any{} // a tool's arguments in every step (for ${DB_SALES} of a DB_* family)
+	note := func(tool, at string, args map[string]string) {
+		used[tool] = true
+		if argsOf[tool] == nil {
+			argsOf[tool] = map[string]any{}
+		}
+		for k, v := range args {
+			argsOf[tool][at+"."+k] = v
+		}
+	}
 	for _, n := range f.Nodes {
 		if n.Type == "tool" {
-			used[n.Tool] = true
+			note(n.Tool, n.ID, n.Args)
 		}
-		for _, a := range n.Actions {
+		for i, a := range n.Actions {
 			if a.Type == "tool" {
-				used[a.Tool] = true
+				note(a.Tool, fmt.Sprintf("%s.action%d", n.ID, i), a.Args)
 			}
 		}
 	}
@@ -511,7 +521,10 @@ func (h *Hub) FlowCredentials(id string) ([]FlowCredential, error) {
 		if !used[e.Name] {
 			continue
 		}
-		for _, s := range e.Secrets {
+		for _, s := range extension.WithArgSecrets(e, argsOf[e.Name]).Secrets {
+			if extension.IsSecretFamily(s) { // its members are listed as the steps name them
+				continue
+			}
 			c := byName[s.Name]
 			if c == nil {
 				st := h.SecretInfo([]extension.Secret{s})[0]

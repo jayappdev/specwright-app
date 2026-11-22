@@ -36,6 +36,14 @@ attached read-only: Postgres, MySQL, SQLite, SQL Server, Oracle, DuckDB.
   `save_mode: "append"` adds each run's rows to the file (columns matched by
   name; a new column leaves earlier rows null), so a scheduled flow builds a
   history.
+- Several databases at once: `connections` takes any number, of any types,
+  each with its own connect string (key=value, URL or JDBC) or its parts
+  (host, port, database / service / sid, user, password). Give each its own
+  password as `${DB_<NAME>}`: the tool declares the secret family `DB_*`, so
+  SpecWright resolves any `DB_…` name a call uses (session, environment,
+  keychain, or asks once), and lists them on Run flows before a run so they
+  can be saved for scheduled runs. Values are quoted for the connect string
+  and kept out of error messages.
 - S3: `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (/ `AWS_SESSION_TOKEN`)
   when set, otherwise the AWS chain (profiles, SSO); `AWS_REGION`;
   `AWS_ENDPOINT_URL` for S3-compatible storage (MinIO, Cloudflare R2, Ceph),
@@ -45,7 +53,7 @@ attached read-only: Postgres, MySQL, SQLite, SQL Server, Oracle, DuckDB.
   `DUCKDB_TOOL_DIR=<a folder with @duckdb/node-api installed> node --test library/tools/duckdb_data_query/test/`
   (a project's `.codegen/tools/project/duckdb_data_query` has it once the
   tool has run there).
-- Its tool file carries a usage guide with seven worked examples (Tools › the
+- Its tool file carries a usage guide with eight worked examples (Tools › the
   tool › Test › Guide & examples, and the Flow step guide under Your tools):
   run them there, or open one as a flow with Try it in the designer.
 

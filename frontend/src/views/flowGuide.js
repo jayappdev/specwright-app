@@ -1144,7 +1144,7 @@ export const GUIDE = [
     how: [
       "Add a Tool step and choose duckdb_data_query (an admin publishes it to every project from library/tools; Admin › Import a tool file to publish).",
       'sql is the query. Name the inputs: sources ({"orders": "data/orders.csv"}; globs, s3:// paths, and folders ending in / — every data file under it, sub-folders too, as one table with a filename column, year=2026/ folders as columns), connections ([{"name": "pg", "type": "postgres", "dsn": "…"}], read-only unless "read_only": false), and input: {{input_file}} makes the previous step\'s output the table input.',
-      "Passwords never go in the flow: PGPASSWORD and MYSQL_PWD are read by the drivers, and ${ORACLE_PASSWORD} or ${MSSQL_PASSWORD} in a dsn is filled from Tools › Secrets, the keychain or the environment. S3 uses AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY when set, otherwise your AWS profile or SSO; AWS_REGION, and AWS_ENDPOINT_URL for S3-compatible storage (MinIO, R2, Ceph).",
+      'Passwords never go in the flow: give each connection its own as ${DB_<NAME>} ("password": "${DB_SALES}"): SpecWright asks for it once and keeps it as a secret (Run flows lists them, to save in the keychain for scheduled runs). PGPASSWORD and MYSQL_PWD are read by the drivers when a connection gives none. S3 uses AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY when set, otherwise your AWS profile or SSO; AWS_REGION, and AWS_ENDPOINT_URL for S3-compatible storage (MinIO, R2, Ceph).',
       "format: json (default; numbers stay numbers), csv or markdown. save_to also writes the whole result to .csv, .json, .jsonl or .parquet, locally or on s3://; save_mode append adds the rows to what the file already holds, so a scheduled flow builds up a history; max_rows (default 1000) caps what the next step gets.",
       "Extensions (S3, Postgres, Excel, Oracle…) install the first time they are needed. Where the network blocks them, set DUCKDB_EXTENSION_REPOSITORY (a mirror) or DUCKDB_HTTP_PROXY.",
     ],
@@ -1228,6 +1228,27 @@ export const GUIDE = [
         focus: "top",
         result:
           '[\n  {"name": "Acme GmbH", "orders": 42, "spent": 18250.5},\n  {"name": "Northwind", "orders": 31, "spent": 12990},\n  {"name": "Globex", "orders": 18, "spent": 9100.25}\n]',
+      },
+      {
+        title: "Two Postgres databases and Oracle, each with its own password",
+        text: "Any number of connections, each with its own connect string (parts, or a JDBC string) and its own password secret: DB_SALES, DB_CRM and DB_HR are asked for once. One query joins across them.",
+        nodes: [
+          {
+            id: "multi",
+            type: "tool",
+            title: "Revenue, managers, headcount",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT o.region, sum(o.total) AS revenue, r.manager, h.headcount\nFROM sales.public.orders o\nJOIN crm.crm.regions r USING (region)\nJOIN hr.HR.REGION_HEADCOUNT h ON h.REGION = o.region\nGROUP BY ALL ORDER BY revenue DESC",
+              connections:
+                '[{"name": "sales", "type": "postgres", "host": "pg1.internal", "database": "sales", "user": "reporter", "password": "${DB_SALES}"},\n {"name": "crm", "type": "postgres", "dsn": "jdbc:postgresql://pg2.internal:5432/crm", "user": "reporter", "password": "${DB_CRM}"},\n {"name": "hr", "type": "oracle", "dsn": "jdbc:oracle:thin:@//ora1.internal:1521/HRPDB", "user": "rep", "password": "${DB_HR}"}]',
+            },
+          },
+        ],
+        edges: chain("start", "multi"),
+        focus: "multi",
+        result:
+          '[\n  {"region": "EU", "revenue": 320.5, "manager": "Ana", "headcount": 42},\n  {"region": "US", "revenue": 80, "manager": "Bob", "headcount": 17}\n]',
       },
       {
         title: "Oracle (needs Oracle Instant Client)",

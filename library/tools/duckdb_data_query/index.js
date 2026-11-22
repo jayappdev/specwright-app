@@ -18,10 +18,18 @@
 //                folders such as year=2026/ become columns). A source can
 //                also be {"path": ..., "format": "parquet|csv|json",
 //                "filename": false, "hive": false}.
-//   connections  JSON array: [{"name": "pg", "type": "postgres",
-//                "dsn": "host=db port=5432 dbname=sales user=me", "read_only": true}]
-//                ${NAME} in a dsn is replaced from the environment (secrets
-//                such as PGPASSWORD reach the tool there)
+//   connections  JSON array, one entry per database (as many as needed, of
+//                any types): {"name": "sales", "type": "postgres",
+//                "dsn": "host=db1 dbname=sales user=me password=${DB_SALES}"}
+//                or the parts: {"name": "hr", "type": "oracle", "host": "ora1",
+//                "port": 1521, "service": "HRPDB", "user": "rep",
+//                "password": "${DB_HR}"}. dsn may also be a URL or a JDBC
+//                string (jdbc:postgresql://…, jdbc:oracle:thin:@//…); user and
+//                password are added to it. "schema" limits a Postgres
+//                connection to one schema; "read_only": false allows writes.
+//                ${NAME} is filled from the environment: a DB_* secret
+//                (SpecWright asks for DB_SALES the first time) or any variable
+//                set; values are quoted for the connect string.
 //   extensions   comma-separated, e.g. "httpfs, aws, oracle@community"
 //   input        a file with the previous step's output (a flow passes
 //                {{input_file}}): the table "input"
@@ -63,7 +71,7 @@ function readArgs() {
 const [sqlArg, sourcesArg, connsArg, extsArg, inputArg, formatArg, saveTo, maxRowsArg, saveModeArg] = readArgs();
 
 function fail(msg) {
-  process.stderr.write("duckdb_data_query: " + msg + "\n");
+  process.stderr.write("duckdb_data_query: " + hide(msg) + "\n");
   process.exit(1);
 }
 
@@ -80,12 +88,103 @@ function parseJSON(text, what) {
   }
 }
 
-// ${NAME} -> the environment variable NAME
-const expandEnv = (s) =>
-  String(s).replace(/\$\{([A-Za-z_][A-Za-z0-9_]*)\}/g, (_, n) => {
-    if (process.env[n] === undefined) fail(`the environment variable ${n} (used in a connection) is not set`);
-    return process.env[n];
+// --- connect strings ---------------------------------------------------------
+
+// the secret values put into connect strings: kept out of error messages
+const hidden = [];
+function envValue(n, what) {
+  const v = process.env[n];
+  if (v === undefined || v === "") fail(`${n} (used in ${what}) has no value: set it as a secret (DB_* names are asked for when a run needs them) or in the environment`);
+  hidden.push(v);
+  return v;
+}
+const hide = (msg) => hidden.reduce((m, v) => (v.length >= 3 ? m.split(v).join("***") : m), String(msg));
+
+// a value written into a connect string of a style, quoted as it needs
+const quoteFor = {
+  // libpq / MySQL key=value: 'it''s' style quoting when needed
+  kv: (v) => (v === "" || /[\s'\\=]/.test(v) ? "'" + v.replace(/\\/g, "\\\\").replace(/'/g, "\\'") + "'" : v),
+  url: (v) => encodeURIComponent(v),
+  // Oracle Easy Connect: "quoted" when it has more than letters and digits
+  oracle: (v) => (/^[A-Za-z0-9_$#]*$/.test(v) ? v : '"' + v.replace(/"/g, "") + '"'),
+  // SQL Server (ADO): {braced} when it has ; = { } or spaces
+  ado: (v) => (/[;={}\s]/.test(v) ? "{" + v.replace(/}/g, "}}") + "}" : v),
+  raw: (v) => v,
+};
+
+// ${NAME} in a connect string, each value quoted for the string's style;
+// a placeholder already inside quotes is only escaped
+function expandIn(str, style, what) {
+  return String(str).replace(/(['"]?)\$\{([A-Za-z_][A-Za-z0-9_]*)\}(['"]?)/g, (m, q1, n, q2) => {
+    const v = envValue(n, what);
+    if (q1 && q1 === q2) return q1 + (q1 === "'" ? v.replace(/\\/g, "\\\\").replace(/'/g, "\\'") : v.replace(/"/g, "")) + q2;
+    return q1 + quoteFor[style](v) + q2;
   });
+}
+
+// JDBC strings as DuckDB's drivers take them
+function fromJDBC(d, type) {
+  let m;
+  if (!/^jdbc:/i.test(d)) return d;
+  if ((m = d.match(/^jdbc:postgresql:\/\/(.*)$/i))) return "postgresql://" + m[1];
+  if ((m = d.match(/^jdbc:oracle:thin:(?:([^@]*)@)?(.*)$/i))) {
+    const cred = m[1] ? m[1] + "@" : "";
+    let target = m[2].replace(/^\/\//, "");
+    const sid = target.match(/^([^:/]+):(\d+):([^/:]+)$/); // host:port:SID
+    if (sid) target = `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${sid[1]})(PORT=${sid[2]}))(CONNECT_DATA=(SID=${sid[3]})))`;
+    return cred + target;
+  }
+  if ((m = d.match(/^jdbc:mysql:\/\/([^/:?]+)(?::(\d+))?(?:\/([^?]*))?(?:\?(.*))?$/i))) {
+    const q = new URLSearchParams(m[4] || "");
+    return [`host=${m[1]}`, m[2] && `port=${m[2]}`, m[3] && `database=${m[3]}`, q.get("user") && `user=${q.get("user")}`, q.get("password") && `password=${q.get("password")}`].filter(Boolean).join(" ");
+  }
+  if ((m = d.match(/^jdbc:sqlserver:\/\/([^;:]+)(?::(\d+))?;?(.*)$/i))) {
+    const kv = Object.fromEntries(m[3].split(";").filter(Boolean).map((p) => p.split("=")).map(([k, v]) => [k.toLowerCase(), v]));
+    return [`Server=${m[1]}${m[2] ? "," + m[2] : ""}`, (kv.databasename || kv.database) && `Database=${kv.databasename || kv.database}`, kv.user && `User Id=${kv.user}`, kv.password && `Password=${kv.password}`].filter(Boolean).join(";");
+  }
+  fail(`the ${type} connection's JDBC string is not one I can convert: give it as a dsn or as host, port, database, user and password`);
+}
+
+// the connect string of a connection: its dsn (or URL, or JDBC string) with
+// user and password added, or built from its parts
+function dsnOf(c, type, name) {
+  const what = `the connection ${name}`;
+  const part = (k, style) => (c[k] === undefined || c[k] === null || c[k] === "" ? "" : expandIn(String(c[k]), style, what));
+  const raw = String(c.dsn || c.url || c.connect_string || c.path || "").trim();
+  const db = c.database || c.dbname || c.db;
+  if (type === "sqlite" || type === "duckdb") return expandIn(raw || db || "", "raw", what);
+  if (type === "oracle") {
+    const user = part("user", "oracle"), pw = part("password", "oracle");
+    let target = raw ? expandIn(fromJDBC(raw, type), "oracle", what) : `${c.host || "localhost"}:${c.port || 1521}/${c.service || c.service_name || db || ""}`;
+    if (!raw && c.sid) target = `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${c.host || "localhost"})(PORT=${c.port || 1521}))(CONNECT_DATA=(SID=${c.sid})))`;
+    if (user && !/^[^()]*@/.test(target)) target = `${user}${pw ? "/" + pw : ""}@${target}`;
+    return target;
+  }
+  if (type === "mssql") {
+    const parts = raw ? [expandIn(fromJDBC(raw, type), "ado", what)] : [`Server=${c.host || "localhost"}${c.port ? "," + c.port : ""}`, db && `Database=${db}`];
+    if (c.user) parts.push(`User Id=${part("user", "ado")}`);
+    if (c.password) parts.push(`Password=${part("password", "ado")}`);
+    return parts.filter(Boolean).join(";");
+  }
+  // postgres and mysql: key=value, or a URL
+  const conv = raw ? fromJDBC(raw, type) : "";
+  if (/^[a-z]+:\/\//i.test(conv)) {
+    const u = new URL(expandIn(conv, "url", what));
+    if (c.user) u.username = encodeURIComponent(part("user", "raw"));
+    if (c.password) u.password = encodeURIComponent(part("password", "raw"));
+    return u.toString();
+  }
+  const pairs = conv ? [expandIn(conv, "kv", what)] : [];
+  const add = (k, v) => v !== undefined && v !== null && v !== "" && pairs.push(`${k}=${quoteFor.kv(String(v))}`);
+  if (!conv) {
+    add("host", c.host);
+    add("port", c.port);
+    add(type === "mysql" ? "database" : "dbname", db);
+  }
+  if (c.user) pairs.push("user=" + part("user", "kv"));
+  if (c.password) pairs.push("password=" + part("password", "kv"));
+  return pairs.join(" ");
+}
 
 // the data format of a file name
 const FORMATS = { parquet: "parquet", csv: "csv", tsv: "csv", txt: "csv", json: "json", jsonl: "json", ndjson: "json", xlsx: "xlsx", xls: "xlsx" };
@@ -207,19 +306,26 @@ async function main() {
   }
   if (want.has("aws")) await s3Secret(run);
 
-  // connections: attached (read-only unless read_only is false)
+  // connections: attached (read-only unless read_only is false), each with
+  // its own connect string and credentials
+  const names = new Set(Object.keys(sources));
+  for (const c of conns) {
+    const name = String((c && c.name) || "").trim();
+    if (names.has(name)) fail(`two connections or sources are called ${name}: give each its own name`);
+    names.add(name);
+  }
   for (const c of conns) {
     const name = String(c.name || "").trim();
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) fail(`connection name ${JSON.stringify(c.name)}: letters, digits and _`);
     const type = CONN_TYPES[String(c.type || "").toLowerCase()];
     if (!type) fail(`connection ${name}: type ${c.type}; use postgres, mysql, sqlite, sqlserver, oracle or duckdb`);
-    const dsn = expandEnv(c.dsn || c.path || "");
-    if (!dsn) fail(`connection ${name}: give its dsn (or path, for sqlite and duckdb)`);
-    const opts = [type === "duckdb" ? null : `TYPE ${type}`, c.read_only === false ? null : "READ_ONLY"].filter(Boolean);
+    const dsn = dsnOf(c, type, name);
+    if (!dsn) fail(`connection ${name}: give its dsn (or url, or host and database; path for sqlite and duckdb)`);
+    const opts = [type === "duckdb" ? null : `TYPE ${type}`, c.read_only === false ? null : "READ_ONLY", type === "postgres" && c.schema ? `SCHEMA ${q(c.schema)}` : null].filter(Boolean);
     try {
       await run(`ATTACH ${q(dsn)} AS ${ident(name)}${opts.length ? " (" + opts.join(", ") + ")" : ""}`);
     } catch (e) {
-      fail(`could not connect ${name} (${type}): ${e.message.replace(dsn, "<dsn>")}`);
+      fail(hide(`could not connect ${name} (${type}): ${e.message.split(dsn).join("<dsn>")}`));
     }
   }
 
@@ -362,4 +468,5 @@ function sqlLast(sql) {
   return parts[parts.length - 1];
 }
 
-main().catch((e) => fail(e && e.message ? e.message : String(e)));
+if (require.main === module) main().catch((e) => fail(hide(e && e.message ? e.message : String(e))));
+else module.exports = { dsnOf, fromJDBC }; // for the tests
