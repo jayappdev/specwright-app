@@ -1130,25 +1130,30 @@ export const GUIDE = [
     ],
   },
   {
-    type: "tool",
-    name: "Tool",
+    type: "visualization",
+    name: "Visualization",
+    icon: { type: "tool", tool: "builtin:chart" },
     summary:
-      "Runs one of the project's tools, or a built-in one (read or search files, run a command, call an API, send a notification, ask you questions, draw a chart), with arguments from the flow.",
+      "Draws data as a chart: bar, line, multi-line or stacked bar, from the rows a tool, a query or an Aggregate returned. It is a tool step with the built-in chart tool (builtin:chart); the chart shows as a picture, with Export PNG.",
     when: [
-      "Run a tool you built (a query, a scanner, a generator) with the flow's inputs.",
-      "Draw a bar, line or multi-line chart from rows a tool or a query returned (builtin:chart).",
-      "Ask a person to choose before the flow goes on (builtin:ask_user), or tell them it is done (builtin:notify).",
+      "Show the rows a tool or a query returned as a bar chart (test results by suite, revenue by region).",
+      "Show a trend over time as a line, one line per series (orders per month by region).",
+      "Save a chart as SVG and PNG for a report, an email or a slide.",
     ],
     how: [
-      "Choose the tool; its parameters show as fields. Fill them with text and variables: {{inputs.<name>}}, {{<step id>.buffer_output}} (an earlier step's result) or a field of it, {{<step id>.buffer_output.json.<path>}}.",
-      "Or describe the request in words and let the AI fill the arguments when the flow runs.",
+      "Add a Tool step and choose builtin:chart (in the Charts group). Its parameters show as fields; fill them with text and variables, such as {{<step id>.buffer_output}} for an earlier step's rows.",
       "builtin:chart takes rows (a JSON array of objects) with x (the label field) and y (the number fields; empty: every number field), or labels and series. type: bar, line, multiline or stacked_bar. It saves the chart in out/charts (or path) and returns it as SVG, shown as a picture with Export PNG; format png or both also saves a PNG.",
       "Connect an Output step with HTML format to put the chart on a page of its own, saved where you like.",
     ],
     settings: [
-      ["Tool", "A project tool, or a built-in (builtin:<name>)."],
-      ["Arguments", "One field per parameter; variables are filled in when the step runs."],
-      ["Instruction", "Instead of arguments: what you want, in words; the AI fills them."],
+      ["type", "bar, line, multiline (one line per series) or stacked_bar."],
+      ["rows, x, y", "The data as a JSON array of objects, the label field, and the number field(s)."],
+      [
+        "labels, series / data",
+        "Or the labels and the series ([{name, values}]), or both in one JSON object.",
+      ],
+      ["title, x_label, y_label", "The chart's title and axis captions."],
+      ["format, path", "svg (default), png or both; where to save (default out/charts)."],
     ],
     examples: [
       {

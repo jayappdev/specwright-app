@@ -185,7 +185,7 @@ function Section({ g }) {
   return (
     <section className="card guide-step" id={"guide-" + g.type}>
       <div className="guide-head">
-        <StepIcon n={{ type: g.type }} tools={[]} size={40} />
+        <StepIcon n={g.icon || { type: g.type }} tools={[]} size={40} />
         <div>
           <h2>{g.name}</h2>
           <p className="wf-desc">
@@ -268,7 +268,7 @@ export function FlowGuide() {
             className={"run-item guide-nav" + (cur === g.type ? " active" : "")}
             onClick={() => go(g.type)}
           >
-            <StepIcon n={{ type: g.type }} tools={[]} size={22} />
+            <StepIcon n={g.icon || { type: g.type }} tools={[]} size={22} />
             <span>
               <b>{g.name}</b>
               <small>{g.examples.length} examples</small>

@@ -805,11 +805,11 @@ function StepInspector({ n }) {
           </small>
         </div>
         <span style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
-          {GUIDE_TYPES.has(n.type) && (
+          {(GUIDE_TYPES.has(n.type) || n.tool === "builtin:chart") && (
             <button
               className="link"
               title="How this step works, with examples"
-              onClick={() => openFlowGuide(n.type)}
+              onClick={() => openFlowGuide(n.tool === "builtin:chart" ? "visualization" : n.type)}
             >
               How to use ↗
             </button>
