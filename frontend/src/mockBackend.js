@@ -6919,6 +6919,25 @@ export function createMockBackend(methods) {
       persist();
       return clone(db.lists[db.root]);
     },
+    // a tool file's tools, for the Admin screen to publish one (core/toolshare.go)
+    async ReadToolFile(data) {
+      let b;
+      try {
+        b = JSON.parse(data);
+      } catch (e) {
+        throw new Error("not a tool file: " + e.message);
+      }
+      if (b.format !== "specwright-tools" || !(b.tools || []).length)
+        throw new Error("the file has no tools");
+      return b.tools.map((t) => ({
+        ...t,
+        kind: "script",
+        scope: "project",
+        status: "untested",
+        secrets: t.secrets || [],
+        params: t.params || [],
+      }));
+    },
     // chart (builtin/chart.go): a PNG of a chart, saved in the project
     async ChartPNG(svg, path) {
       if (!/data-specwright-chart="1"/.test(svg || ""))

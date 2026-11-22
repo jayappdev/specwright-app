@@ -221,6 +221,11 @@ func (a *App) SaveListLayout(l core.ListLayout) (core.ListLayout, error) {
 	return ok(a.hub.SaveLayout(l))
 }
 
+// ReadToolFile reads the tools in a tool file without saving them.
+func (a *App) ReadToolFile(data string) ([]extension.Extension, error) {
+	return ok(a.hub.ReadToolFile(data))
+}
+
 // ChartPNG saves a PNG of a chart (its SVG) in the project.
 func (a *App) ChartPNG(svg, path string) (string, error) { return ok(a.hub.ChartPNG(svg, path)) }
 

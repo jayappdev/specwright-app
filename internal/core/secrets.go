@@ -218,6 +218,16 @@ func (h *Hub) ResolveSecrets(ctx context.Context, e extension.Extension) (map[st
 	for _, s := range e.Secrets {
 		src := firstNonEmpty(s.Source, "auto")
 		sv, inSession := h.sec.values[s.Name]
+		if s.Optional { // passed when known, never asked for
+			if inSession {
+				vals[s.Name] = sv
+			} else if v, ok := lookupEnv(envName(s)); ok && src != "keychain" {
+				vals[s.Name] = v
+			} else if v, ok := kcGet(s.Name); ok {
+				vals[s.Name] = v
+			}
+			continue
+		}
 		switch {
 		case (src == "auto" || src == "session" || src == "ask" || src == "keychain") && inSession:
 			vals[s.Name] = sv

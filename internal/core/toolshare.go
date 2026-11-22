@@ -383,3 +383,23 @@ func (h *Hub) importFlowTools(data string) []string {
 	}
 	return notes
 }
+
+// ReadToolFile reads the tools in a tool file (*.tools.json) without saving
+// anything: an admin opens one in the tool editor to publish it as a
+// managed tool (library/tools has the app's own).
+func (h *Hub) ReadToolFile(data string) ([]extension.Extension, error) {
+	b, err := extension.ParseToolFile(data)
+	if err != nil {
+		return nil, err
+	}
+	out := []extension.Extension{}
+	for _, t := range b.Tools {
+		e := t.Extension()
+		e.Status = "untested"
+		out = append(out, e)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("the file has no tools (only Copilot extensions, which are not published this way)")
+	}
+	return out, nil
+}

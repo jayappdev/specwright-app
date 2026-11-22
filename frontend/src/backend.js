@@ -57,6 +57,7 @@ const METHODS = [
   "SetFlowTags",
   "PendingQuestions",
   "ChartPNG",
+  "ReadToolFile",
   "AnswerQuestions",
   "ListLayout",
   "SaveListLayout",

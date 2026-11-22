@@ -2,12 +2,47 @@
 // read-only for everyone else) with the Tools screen, and manage which
 // admin keys this computer trusts.
 import { useEffect, useState } from "react";
-import { confirmDialog } from "../Dialog.jsx";
+import { confirmDialog, askText } from "../Dialog.jsx";
 import { backend } from "../backend.js";
 import { EmptyState } from "../ui.jsx";
-import { S, toast, errMsg, refreshAdmin, refreshExtensions, saveText } from "../store.js";
+import { S, update, toast, errMsg, refreshAdmin, refreshExtensions, saveText } from "../store.js";
 import { Icon, Card } from "../ui.jsx";
 import { openTool, newManagedTool } from "./Tools.jsx";
+
+// publishFromFile: a tool from a tool file, opened in the tool editor in
+// admin mode (review, test, then Publish to all projects).
+async function publishFromFile(text) {
+  try {
+    const tools = (await backend.ReadToolFile(text)) || [];
+    let t = tools[0];
+    if (tools.length > 1) {
+      const pick = await askText("Which tool to publish?", {
+        message:
+          "The file has " +
+          tools.length +
+          " tools: " +
+          tools.map((x) => x.name).join(", ") +
+          ". Publish one at a time.",
+        value: tools[0].name,
+        ok: "Open",
+      });
+      t = tools.find((x) => x.name === (pick || "").trim());
+      if (!t) return;
+    }
+    newManagedTool(true);
+    Object.assign(S.tb, {
+      draft: { ...t, scope: "managed" },
+      stage: "review",
+      prompt: t.prompt || "",
+      testPrompt: t.testPrompt || "",
+    });
+    S.view = "tools";
+    update();
+    toast(`${t.name} is open in the tool editor: review it, test it, then publish it.`);
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+}
 import { loadBuiltins, selectBuiltin } from "./Builtins.jsx";
 
 // a pasted public key: base64 that decodes to at least 16 bytes
@@ -247,6 +282,23 @@ function ManagedCard({ a }) {
         <button className="btn secondary" disabled={!a.unlocked} onClick={() => newManagedTool(true)}>
           Write one myself
         </button>
+        <label
+          className={"btn secondary" + (a.unlocked ? "" : " disabled")}
+          title="A tool file (*.tools.json, as Tools › Export writes, or one of library/tools): open it in the tool editor, test it and publish it"
+        >
+          Import a tool file to publish…
+          <input
+            type="file"
+            accept=".json,application/json"
+            hidden
+            disabled={!a.unlocked}
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              e.target.value = "";
+              if (f) await publishFromFile(await f.text());
+            }}
+          />
+        </label>
         {!a.unlocked && a.hasKey && (
           <span className="muted">
             <button

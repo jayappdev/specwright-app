@@ -59,6 +59,10 @@ type Secret struct {
 	Source string `json:"source,omitempty"`
 	// Env is the environment variable to read (default: Name).
 	Env string `json:"env,omitempty"`
+	// Optional: passed when it has a value (session, environment,
+	// keychain), never asked for and never missing (a database password a
+	// query tool needs only for some queries).
+	Optional bool `json:"optional,omitempty"`
 }
 
 // Extension is one tool.
@@ -462,6 +466,10 @@ const MaxToolOutput = 32 << 20
 // Copilot extension tools).
 const maxOutput = 64 * 1024
 
+// ArgsEnv names the environment variable with a tool's arguments by name,
+// as a JSON object.
+const ArgsEnv = "SPECWRIGHT_ARGS"
+
 // Exec runs e in root with args and secret env values. No shell is
 // involved: the command template is split into words first and {{param}}
 // placeholders are substituted inside words, so arguments cannot inject
@@ -533,6 +541,12 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = root
 	env := append(os.Environ(), extraEnv...)
+	// the arguments by name as well (JSON): a word that is only an empty
+	// placeholder is left out of argv, which shifts positional arguments;
+	// a script with optional parameters reads them from here instead
+	if b, err := json.Marshal(args); err == nil && len(b) < 128<<10 {
+		env = append(env, ArgsEnv+"="+string(b))
+	}
 	for _, s := range e.Secrets {
 		if v, ok := secrets[s.Name]; ok {
 			env = append(env, s.Name+"="+v)

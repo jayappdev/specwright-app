@@ -93,3 +93,27 @@ func TestToolTestAsksForSecret(t *testing.T) {
 		t.Fatalf("%+v %v", tr, err)
 	}
 }
+
+// an optional secret is passed when it has a value and never asked for
+func TestOptionalSecret(t *testing.T) {
+	h, _ := newHub(t)
+	stubKeychain(t)
+	asked := false
+	h.SetSecretAsker(func(context.Context, SecretRequest) (map[string]string, error) {
+		asked = true
+		return nil, nil
+	})
+	e := greet(extension.Secret{Name: "PGPASSWORD", Env: "SPECWRIGHT_TEST_PG", Optional: true})
+	v, err := h.ResolveSecrets(context.Background(), e)
+	if err != nil || asked || len(v) != 0 {
+		t.Fatalf("without a value: %v %v asked=%v", v, err, asked)
+	}
+	t.Setenv("SPECWRIGHT_TEST_PG", "pg-secret-456")
+	v, err = h.ResolveSecrets(context.Background(), e)
+	if err != nil || v["PGPASSWORD"] != "pg-secret-456" || asked {
+		t.Fatalf("with a value: %v %v", v, err)
+	}
+	if got := h.Store.Redactor().String("pw=pg-secret-456"); strings.Contains(got, "pg-secret-456") {
+		t.Fatal("an optional secret's value must be redacted too")
+	}
+}
