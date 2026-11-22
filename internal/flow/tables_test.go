@@ -71,3 +71,12 @@ func TestConvertListsAsTables(t *testing.T) {
 		t.Fatalf("one object stays JSON in Markdown:\n%s", m)
 	}
 }
+
+// an SVG (a chart) is HTML for Output: on a page, as markup
+func TestConvertSVG(t *testing.T) {
+	svg := `<svg xmlns="http://www.w3.org/2000/svg" width="10" height="10"><rect width="10" height="10"/></svg>`
+	h, _ := Convert(svg, "html")
+	if !strings.Contains(h, "<!doctype html>") || !strings.Contains(h, "<rect width=\"10\"") || strings.Contains(h, "&lt;svg") {
+		t.Fatalf("%s", h)
+	}
+}

@@ -6919,6 +6919,19 @@ export function createMockBackend(methods) {
       persist();
       return clone(db.lists[db.root]);
     },
+    // chart (builtin/chart.go): a PNG of a chart, saved in the project
+    async ChartPNG(svg, path) {
+      if (!/data-specwright-chart="1"/.test(svg || ""))
+        throw new Error("this is not a SpecWright chart (no chart data in it)");
+      const title = ((svg.match(/<title>([^<]*)<\/title>/) || [])[1] || "chart")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      return (
+        path ||
+        `out/charts/${title || "chart"}-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.png`
+      );
+    },
     // ask_user (core/questions.go): questions waiting for the person
     async PendingQuestions() {
       return clone(Object.values(pendingQs));

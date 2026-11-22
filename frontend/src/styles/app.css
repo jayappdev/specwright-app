@@ -1563,3 +1563,16 @@
 .fl-guidance textarea {
   width: 100%;
 }
+
+/* charts from the chart tool (ContentView.jsx) */
+.cv-chart {
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px;
+  overflow: auto;
+}
+.cv-chart img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}

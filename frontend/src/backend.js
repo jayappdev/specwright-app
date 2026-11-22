@@ -56,6 +56,7 @@ const METHODS = [
   "RenameFlow",
   "SetFlowTags",
   "PendingQuestions",
+  "ChartPNG",
   "AnswerQuestions",
   "ListLayout",
   "SaveListLayout",

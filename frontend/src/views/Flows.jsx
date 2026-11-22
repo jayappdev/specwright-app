@@ -662,6 +662,7 @@ const BUILTIN_GROUPS = [
   ["edit", "Edit files"],
   ["execute", "Run"],
   ["web", "Web"],
+  ["chart", "Charts"],
 ];
 export const toolLabel = (name) => (isBuiltin(name) ? toolRef(name) + " · built-in" : name);
 async function loadBuiltins() {

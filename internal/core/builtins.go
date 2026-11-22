@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -208,4 +209,41 @@ func (h *Hub) AgentTools() []AgentTool {
 		out = append(out, AgentTool{Name: b.Name, Title: b.Title, Group: b.Group, Desc: clipText(d, 260), App: b.App, ReadOnly: b.ReadOnly})
 	}
 	return out
+}
+
+// ChartPNG saves a PNG of a chart the chart tool drew (its SVG, which holds
+// the chart's data) in the project, and returns where (workspace path).
+// path "" saves it next to the SVG's name in out/charts.
+func (h *Hub) ChartPNG(svg, path string) (string, error) {
+	root, err := h.need()
+	if err != nil {
+		return "", err
+	}
+	spec, err := builtin.ChartFromSVG(svg)
+	if err != nil {
+		return "", err
+	}
+	data, err := builtin.ChartPNG(spec)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(path) == "" {
+		name := strings.Trim(regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(strings.ToLower(firstNonEmpty(spec.Title, "chart")), "-"), "-")
+		path = "out/charts/" + firstNonEmpty(name, "chart") + "-" + time.Now().Format("20060102-150405") + ".png"
+	}
+	if !strings.HasSuffix(strings.ToLower(path), ".png") {
+		path += ".png"
+	}
+	abs := filepath.Join(root, filepath.FromSlash(path))
+	if rel, err := filepath.Rel(root, abs); err != nil || strings.HasPrefix(rel, "..") {
+		return "", errors.New("save the PNG inside the project")
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(abs, data, 0o644); err != nil {
+		return "", err
+	}
+	rel, _ := filepath.Rel(root, abs)
+	return filepath.ToSlash(rel), nil
 }

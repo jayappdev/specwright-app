@@ -221,6 +221,9 @@ func (a *App) SaveListLayout(l core.ListLayout) (core.ListLayout, error) {
 	return ok(a.hub.SaveLayout(l))
 }
 
+// ChartPNG saves a PNG of a chart (its SVG) in the project.
+func (a *App) ChartPNG(svg, path string) (string, error) { return ok(a.hub.ChartPNG(svg, path)) }
+
 // PendingQuestions are the ask_user questions waiting for you.
 func (a *App) PendingQuestions() []core.QuestionRequest { return val(a.hub.PendingQuestions()) }
 

@@ -3,7 +3,8 @@
 // CSV as tables), links to the saved input and output files, and "Open in
 // preview" for the side panel.
 import { useState } from "react";
-import { S, update } from "./store.js";
+import { S, update, toast, errMsg } from "./store.js";
+import { backend } from "./backend.js";
 import { Icon } from "./ui.jsx";
 import { mdRender } from "./markdown.js";
 import { highlight } from "./highlight.js";
@@ -101,9 +102,45 @@ function Table({ head, rows, more }) {
   );
 }
 
+// chartOf: the chart the chart tool drew (SVG with its data inside), on its
+// own or on a page (an Output step's HTML), or "".
+export function chartOf(t) {
+  const s = String(t || "");
+  if (!s.includes('data-specwright-chart="1"')) return "";
+  const m = s.match(/<svg\b[^>]*data-specwright-chart="1"[\s\S]*?<\/svg>/);
+  return m ? m[0] : "";
+}
+export const isChart = (t) => !!chartOf(t);
+
+// exportChartPNG: a PNG of the chart, saved in the project (out/charts).
+export async function exportChartPNG(svg) {
+  try {
+    const path = await backend.ChartPNG(svg, "");
+    toast(`PNG saved: ${path}`);
+    return path;
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+}
+
 // The rendered form of a text in a format.
 export function RenderPreview({ text, format }) {
   const t = String(text || "");
+  const chart = format === "html" ? chartOf(t) : "";
+  // a chart, alone or on a page of its own: the picture, sized to fit
+  if (
+    chart &&
+    t
+      .replace(chart, "")
+      .replace(/<style[\s\S]*?<\/style>/g, "")
+      .replace(/<[^>]+>/g, "")
+      .trim().length < 40
+  )
+    return (
+      <div className="cv-chart">
+        <img src={"data:image/svg+xml;charset=utf-8," + encodeURIComponent(chart)} alt="Chart" />
+      </div>
+    );
   if (format === "html") return <iframe className="cv-html" sandbox="" srcDoc={t} title="HTML preview" />;
   if (format === "md")
     return <div className="rich md cv-md" dangerouslySetInnerHTML={{ __html: mdRender(t) }} />;
@@ -235,6 +272,15 @@ export function ContentView({
               onClick={() => openContentPreview(title, t, fmt)}
             >
               <Icon.files /> Open in preview
+            </button>
+          )}
+          {isChart(t) && (
+            <button
+              className="link"
+              title="Save the chart as a PNG in the project (out/charts)"
+              onClick={() => exportChartPNG(chartOf(t))}
+            >
+              Export PNG
             </button>
           )}
           <CopyButton text={t} format={fmt} name={name} />

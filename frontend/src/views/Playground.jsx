@@ -462,6 +462,7 @@ const TOOL_GROUPS = [
   ["edit", "Edit"],
   ["execute", "Run"],
   ["web", "Web"],
+  ["chart", "Charts"],
   ["plan", "Plan"],
 ];
 

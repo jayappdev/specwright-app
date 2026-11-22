@@ -16,14 +16,14 @@ import (
 
 // patterns compiled once (not on every call)
 var (
-	htmlStart    = regexp.MustCompile(`(?i)^\s*(<!doctype|<html|<(div|p|h[1-6]|table|ul|ol|section|article|body)\b)`) // text that starts as HTML
-	mdHeading    = regexp.MustCompile(`^#{1,6}\s`)                                                                    // a Markdown heading
-	mdTableRule  = regexp.MustCompile(`^\|?\s*:?-{3,}`)                                                               // a Markdown table's header rule
-	mdBullet     = regexp.MustCompile(`^[-*+]\s`)                                                                     // a bullet list item
-	mdNumbered   = regexp.MustCompile(`^\d+[.)]\s`)                                                                   // a numbered list item
-	startsDigit  = regexp.MustCompile(`^\d`)                                                                          // starts with a digit
-	mdListMarker = regexp.MustCompile(`^([-*+]|\d+[.)])\s+`)                                                          // a list item's marker
-	safeHref     = regexp.MustCompile(`^(https?:|mailto:|#|/|\./)`)                                                   // links that may stay links
+	htmlStart    = regexp.MustCompile(`(?i)^\s*(<!doctype|<html|<(div|p|h[1-6]|table|ul|ol|section|article|body|svg)\b)`) // text that starts as HTML
+	mdHeading    = regexp.MustCompile(`^#{1,6}\s`)                                                                        // a Markdown heading
+	mdTableRule  = regexp.MustCompile(`^\|?\s*:?-{3,}`)                                                                   // a Markdown table's header rule
+	mdBullet     = regexp.MustCompile(`^[-*+]\s`)                                                                         // a bullet list item
+	mdNumbered   = regexp.MustCompile(`^\d+[.)]\s`)                                                                       // a numbered list item
+	startsDigit  = regexp.MustCompile(`^\d`)                                                                              // starts with a digit
+	mdListMarker = regexp.MustCompile(`^([-*+]|\d+[.)])\s+`)                                                              // a list item's marker
+	safeHref     = regexp.MustCompile(`^(https?:|mailto:|#|/|\./)`)                                                       // links that may stay links
 )
 
 // --- templates ----------------------------------------------------------------
@@ -844,6 +844,8 @@ func Convert(content, format string) (string, error) {
 		return b.String(), nil
 	case "html":
 		switch {
+		case isHTML && strings.HasPrefix(strings.ToLower(t), "<svg"): // a chart: on a page of its own
+			return htmlDoc(t), nil
 		case isHTML:
 			return content, nil
 		case isJSON:

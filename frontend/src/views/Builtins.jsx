@@ -13,6 +13,7 @@ const GROUPS = [
   ["execute", "Run"],
   ["web", "Web"],
   ["plan", "Plan"],
+  ["chart", "Charts"],
   ["flows", "SpecWright: flows and history"],
   ["tools", "SpecWright: tools"],
 ];

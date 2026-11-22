@@ -933,6 +933,104 @@ export const BUILTINS = [
     "enabled": true
   },
   {
+    "name": "chart",
+    "title": "Chart",
+    "group": "chart",
+    "description": "Draw a bar, line (one or more series: a multi-line chart) or stacked bar chart from data, and save it (out/charts/…, or path). Give labels and series ([{name, values}]), or rows (a JSON array of objects, e.g. a tool's or a query's result) with x (the label field) and y (the number field or fields; empty: every number field). It returns the chart as SVG, which SpecWright shows as a picture (with Export PNG); format png or both also saves a PNG.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "format": {
+          "description": "What to save: svg (default), png, or both",
+          "enum": [
+            "svg",
+            "png",
+            "both"
+          ],
+          "type": "string"
+        },
+        "height": {
+          "description": "Height in pixels (default 480)",
+          "type": "integer"
+        },
+        "labels": {
+          "description": "The x-axis labels (with series)",
+          "items": {
+            "type": "string"
+          },
+          "type": "array"
+        },
+        "path": {
+          "description": "Where to save, without the extension (default out/charts/\u003ctitle\u003e-\u003ctime\u003e)",
+          "type": "string"
+        },
+        "rows": {
+          "description": "Instead of labels and series: a JSON array of objects (or its JSON text), e.g. [{\"month\": \"Jan\", \"sales\": 12, \"returns\": 3}]"
+        },
+        "series": {
+          "description": "The values: one series per bar colour or line",
+          "items": {
+            "additionalProperties": false,
+            "properties": {
+              "name": {
+                "description": "The series' name (legend)",
+                "type": "string"
+              },
+              "values": {
+                "description": "One value per label",
+                "items": {
+                  "type": "number"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "values"
+            ],
+            "type": "object"
+          },
+          "type": "array"
+        },
+        "title": {
+          "description": "The chart's title",
+          "type": "string"
+        },
+        "type": {
+          "description": "bar (default), line, multiline (a line per series) or stacked_bar",
+          "enum": [
+            "bar",
+            "line",
+            "multiline",
+            "stacked_bar"
+          ],
+          "type": "string"
+        },
+        "width": {
+          "description": "Width in pixels (default 800)",
+          "type": "integer"
+        },
+        "x": {
+          "description": "With rows: the field for the labels (default: the first text field)",
+          "type": "string"
+        },
+        "x_label": {
+          "description": "The x-axis caption",
+          "type": "string"
+        },
+        "y": {
+          "description": "With rows: the number field(s) to draw, a name or a list (default: every number field)"
+        },
+        "y_label": {
+          "description": "The y-axis caption",
+          "type": "string"
+        }
+      },
+      "type": "object"
+    },
+    "readOnly": false,
+    "enabled": true
+  },
+  {
     "name": "ask_user",
     "title": "Ask the user",
     "group": "plan",
