@@ -8,6 +8,14 @@ import { STEP_TYPES, StepIcon, addNode, builtinTools, fl, projectTools, togglePa
 
 // --- palette ---------------------------------------------------------------------------
 
+// Visualization: a chart step (the built-in chart tool, as a tool step).
+const VISUALIZATION = {
+  type: "visualization",
+  name: "Visualization",
+  help: "A chart from rows: bar, line, pie, donut, area, scatter, heatmap…; shown as a picture, Export PNG",
+  keywords: "chart graph plot bar line pie donut area scatter heatmap png",
+};
+
 export function Palette() {
   const f = fl(),
     match = (t) => !f.q || (t.name + " " + t.desc).toLowerCase().includes(f.q.toLowerCase());
@@ -75,11 +83,23 @@ export function Palette() {
           update();
         }}
       />
-      {STEP_TYPES.filter(
-        (s) => !f.q || (s.name + " " + s.help).toLowerCase().includes(f.q.toLowerCase()),
-      ).map((s) =>
-        item({ type: s.type }, s.name, s.help, <StepIcon n={{ type: s.type }} tools={[]} size={30} />),
-      )}
+      {[...STEP_TYPES, VISUALIZATION]
+        .filter(
+          (s) =>
+            !f.q ||
+            (s.name + " " + s.help + " " + (s.keywords || "")).toLowerCase().includes(f.q.toLowerCase()),
+        )
+        .sort((a, b) => (a.type === "output") - (b.type === "output")) // Output stays last
+        .map((s) =>
+          s === VISUALIZATION
+            ? item(
+                { type: "tool", tool: "builtin:chart", title: "Chart", args: { type: "bar" } },
+                s.name,
+                s.help,
+                <StepIcon n={{ type: "tool", tool: "builtin:chart" }} tools={builtinTools()} size={30} />,
+              )
+            : item({ type: s.type }, s.name, s.help, <StepIcon n={{ type: s.type }} tools={[]} size={30} />),
+        )}
       <div className="tree-folder">Project tools · {projectTools().length}</div>
       {ts.map((t) => item({ type: "tool", tool: t.name }, t.name, t.desc, <ToolIcon t={t} size={30} />))}
       {!projectTools().length && (
@@ -104,7 +124,9 @@ export function Palette() {
       {!!f.q &&
         !ts.length &&
         !bs.length &&
-        !STEP_TYPES.some((s) => (s.name + " " + s.help).toLowerCase().includes(f.q.toLowerCase())) && (
+        ![...STEP_TYPES, VISUALIZATION].some((s) =>
+          (s.name + " " + s.help + " " + (s.keywords || "")).toLowerCase().includes(f.q.toLowerCase()),
+        ) && (
           <p className="muted" style={{ padding: "0 6px" }}>
             Nothing matches “{f.q}”.
           </p>

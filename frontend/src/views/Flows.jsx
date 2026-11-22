@@ -741,6 +741,8 @@ export function addNode(spec, x, y) {
       n.args[p.name] = "";
     });
     if (spec.tool === "builtin:fetch_webpage") n.args.format = "raw";
+    if (spec.args) Object.assign(n.args, spec.args); // a preset (Visualization: a chart)
+    if (spec.title) n.title = uniqueTitle(flow, spec.title, id);
   } // in a flow, the response is data for the next steps
   if (spec.type === "ai") n.prompt = "";
   if (spec.type === "improve") {
