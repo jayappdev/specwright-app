@@ -1,5 +1,6 @@
 import { registerPlace } from "../navigation.js";
 import { ToolTester } from "./tools/ToolTester.jsx";
+import { ToolGuideEditor } from "./tools/ToolGuide.jsx";
 import { DecisionLog, openToolInPlayground } from "./tools/DecisionLog.jsx";
 import { genTurns, testText } from "./tools/toolHistory.js";
 import { useEffect } from "react";
@@ -559,6 +560,7 @@ function TestTabs({ tb }) {
       {[
         ["args", "Run with arguments"],
         ["ai", "Test with AI"],
+        ["guide", "Guide & examples"],
       ].map(([k, l]) => (
         <button
           key={k}
@@ -1044,6 +1046,18 @@ export function Tools() {
           </div>
         </fieldset>
         <DecisionLog tb={tb} />
+      </>
+    );
+  } else if (tb.stage === "test" && d && tb.testTab === "guide") {
+    body = (
+      <>
+        <TestTabs tb={tb} />
+        <ToolGuideEditor tb={tb} d={d} />
+        <div className="row-actions">
+          <button className="btn secondary" onClick={() => set("stage", "review")}>
+            Back to review
+          </button>
+        </div>
       </>
     );
   } else if (tb.stage === "test" && d && (tb.testTab || "args") === "args") {

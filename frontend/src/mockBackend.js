@@ -338,6 +338,23 @@ function seed() {
         testPrompt: "Regenerate the DTOs",
         call: { spec: "api/openapi.yaml" },
         sampleOutput: "Generated 6 model classes in build/generated",
+        guide: {
+          summary: "Regenerates the Java DTOs from an OpenAPI file, so the code matches the API.",
+          when: ["The OpenAPI file changed.", "Before a build that uses the generated models."],
+          how: [
+            "Give spec the path of the OpenAPI file.",
+            "A later step can read the summary line it prints.",
+          ],
+          examples: [
+            {
+              title: "Regenerate from the main spec",
+              text: "Runs the generator on the project's OpenAPI file.",
+              args: { spec: "api/openapi.yaml" },
+              sample: "",
+              result: "Generated 6 model classes in build/generated",
+            },
+          ],
+        },
       }),
       ext({
         name: "sonar-scan",
@@ -7804,6 +7821,58 @@ export function createMockBackend(methods) {
       });
       persist();
       return clone(db.exts[i]);
+    },
+    async SaveToolGuide(name, g) {
+      await wait(80);
+      const i = db.exts.findIndex((x) => x.name === name);
+      if (i < 0) throw new Error(`no tool named ${name}`);
+      if (db.exts[i].managed) throw new Error("admin-managed tools are changed in the catalog");
+      const empty = !g || (!g.summary?.trim() && !g.when?.length && !g.how?.length && !g.examples?.length);
+      db.exts[i].guide = empty ? null : { ...clone(g), updated: now() };
+      persist();
+      return clone(db.exts[i]);
+    },
+    async GenerateToolGuide(d, _model, ask) {
+      await wait(1200);
+      const params = d.params || [];
+      const ex = (title, text, pick) => ({
+        title,
+        text,
+        args: Object.fromEntries(params.filter(pick).map((p) => [p.name, p.example || p.default || ""])),
+        sample: "",
+        result: "",
+      });
+      return {
+        why: "Read its parameters and description (preview: a sample guide)" + (ask ? `; asked: ${ask}` : ""),
+        guide: {
+          summary: d.desc || `Runs ${d.name}.`,
+          when: [`You need ${d.name} as one step of a flow.`, "A later step should use what it prints."],
+          how: [
+            "Fill its required fields; the others keep their defaults.",
+            "Use {{input}} or {{input_file}} to give it the previous step's output.",
+          ],
+          examples: [
+            ex("Required fields only", "The smallest call that works.", (p) => p.required),
+            ex("Every field", "Every parameter with its example value.", (p) => p.example || p.default),
+          ],
+        },
+      };
+    },
+    async RunToolExample(d, ex, secrets = {}) {
+      const data = {
+        input: ex.sample || "",
+        input_file: ex.sample ? "/tmp/specwright-example/input.txt" : "",
+      };
+      const render = (t) =>
+        String(t ?? "").replace(/\{\{\s*([a-z_.]+)\s*\}\}/g, (m, v) =>
+          v === "input" || v === "sample.buffer_output" || v === "steps.sample" || v === "sample.output"
+            ? data.input
+            : v === "input_file" || v === "sample.output_file"
+              ? data.input_file
+              : m,
+        );
+      const args = Object.fromEntries(Object.entries(ex.args || {}).map(([k, v]) => [k, render(v)]));
+      return api.RunToolWith(d, args, secrets, null);
     },
     async RunToolWith(d, args = {}, secrets = {}, expect = null) {
       await wait(500);

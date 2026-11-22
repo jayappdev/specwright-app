@@ -26,3 +26,16 @@ attached read-only: Postgres, MySQL, SQLite, SQL Server, Oracle, DuckDB.
 - Oracle needs Oracle Instant Client on the machine (19c, 21c or 23ai).
 - With DuckDB 2.0.0, the iceberg extension does not load (upstream), and the
   odbc and gsheets community extensions are not published yet.
+- Its tool file carries a usage guide with five worked examples (Tools › the
+  tool › Test › Guide & examples, and the Flow step guide under Your tools):
+  run them there, or open one as a flow with Try it in the designer.
+
+## Tool guides
+
+Every tool (project, global, admin-managed, Copilot) can have a usage guide:
+a summary, when and how to use it, and examples (step arguments, an optional
+sample of the previous step's output, the result). Write it by hand or with
+AI on the tool's Test › Guide & examples tab. A guide does not change what
+runs, so saving one keeps the tool approved; it is exported in tool files
+and published with managed tools. Library tool files must include one
+(`TestLibraryToolFiles` checks that its examples use only real parameters).

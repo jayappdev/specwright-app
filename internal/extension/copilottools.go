@@ -234,13 +234,16 @@ func (s *Store) PutCopilotTools(rel string, tools []Extension) error {
 	for _, e := range exts {
 		if !(e.Kind == KindCopilot && e.Dir == rel) {
 			keep = append(keep, e)
-		} else if !e.MetaAt.IsZero() {
+		} else if !e.MetaAt.IsZero() || e.Guide != nil {
 			refined[e.Tool] = e
 		}
 	}
 	for i := range tools {
 		if r, ok := refined[tools[i].Tool]; ok {
-			tools[i].Params, tools[i].Output, tools[i].OutputBy, tools[i].Tests, tools[i].MetaAt = r.Params, r.Output, r.OutputBy, r.Tests, r.MetaAt
+			if !r.MetaAt.IsZero() {
+				tools[i].Params, tools[i].Output, tools[i].OutputBy, tools[i].Tests = r.Params, r.Output, r.OutputBy, r.Tests
+			}
+			tools[i].MetaAt, tools[i].Guide = r.MetaAt, r.Guide
 		}
 	}
 	return s.write(append(keep, tools...))

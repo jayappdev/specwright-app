@@ -47,6 +47,26 @@ func TestLibraryToolFiles(t *testing.T) {
 					t.Fatalf("%s: secret %s should be optional (a query may not need it)", e.Name, s.Name)
 				}
 			}
+			// its guide: examples call only its parameters and give the required ones
+			if e.Guide == nil || len(e.Guide.Examples) == 0 || e.Guide.Summary == "" {
+				t.Fatalf("%s: give the tool a guide with examples", e.Name)
+			}
+			params := map[string]bool{}
+			for _, p := range e.Params {
+				params[p.Name] = true
+			}
+			for _, x := range e.Guide.Examples {
+				for k := range x.Args {
+					if !params[k] {
+						t.Fatalf("%s: example %q uses %s, not a parameter", e.Name, x.Title, k)
+					}
+				}
+				for _, p := range e.Params {
+					if p.Required && strings.TrimSpace(x.Args[p.Name]) == "" {
+						t.Fatalf("%s: example %q leaves out %s", e.Name, x.Title, p.Name)
+					}
+				}
+			}
 			// the command passes the parameters in their order, as the script reads them
 			var want []string
 			for _, p := range e.Params {

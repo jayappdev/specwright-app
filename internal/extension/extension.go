@@ -95,7 +95,9 @@ type Extension struct {
 	// the tool's Test page; MetaAt is when its parameters, output or tests
 	// were last refined by hand or with AI (kept when its source is read
 	// again, e.g. approving a Copilot extension).
-	Tests      []ToolTest  `json:"tests,omitempty"`
+	Tests []ToolTest `json:"tests,omitempty"`
+	// Guide is the tool's usage guide with worked examples (see ToolGuide).
+	Guide      *ToolGuide  `json:"guide,omitempty"`
 	MetaAt     time.Time   `json:"metaAt,omitzero"`
 	Revision   int         `json:"revision"`
 	Approved   bool        `json:"approved"`

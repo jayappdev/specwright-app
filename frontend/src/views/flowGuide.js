@@ -1676,3 +1676,50 @@ export function exampleFlow(ex) {
   for (const n of ex.nodes) if (n.sample) steps[n.id] = n.template;
   return { flow: { nodes, edges: ex.edges.map((e) => ({ ...e })), inputs: ex.flowInputs || [] }, steps };
 }
+
+// A tool's own usage guide (saved with the tool: project, global, admin-
+// managed or Copilot) as a flow guide section. Each example is a flow: the
+// example's sample (when it has one) as a template step "sample", then the
+// tool step "run" with the example's arguments.
+export function toolExampleFlow(name, ex) {
+  const run = { id: "run", type: "tool", tool: name, title: ex.title || name, args: { ...(ex.args || {}) } };
+  const nodes = ex.sample ? [sample("sample", "Sample input", ex.sample), run] : [run];
+  return { nodes, edges: chain("start", ...nodes.map((n) => n.id)), focus: "run" };
+}
+
+export const hasToolGuide = (t) =>
+  !!t?.guide &&
+  !!(t.guide.summary || t.guide.when?.length || t.guide.how?.length || t.guide.examples?.length);
+
+export function toolGuideSection(t) {
+  const g = t.guide || {};
+  return {
+    type: "tool:" + t.name,
+    tool: t,
+    name: t.name,
+    icon: { type: "tool", tool: t.name },
+    summary: g.summary || t.desc || "",
+    when: g.when || [],
+    how: g.how || [],
+    settings: (t.params || []).map((p) => [
+      p.name + (p.required ? " (required)" : ""),
+      [
+        p.desc,
+        p.default ? `Default: ${p.default}.` : "",
+        p.enum?.length ? `One of: ${p.enum.join(", ")}.` : "",
+      ]
+        .filter(Boolean)
+        .join(" ") ||
+        p.type ||
+        "string",
+    ]),
+    resultLabel: "Result · from the guide (Run example runs the tool)",
+    examples: (g.examples || []).map((ex) => ({
+      title: ex.title,
+      text: ex.text || "",
+      result: ex.result || "(no result saved yet: Run example runs it)",
+      toolExample: ex,
+      ...toolExampleFlow(t.name, ex),
+    })),
+  };
+}

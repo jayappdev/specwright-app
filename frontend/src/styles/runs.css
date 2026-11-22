@@ -3243,3 +3243,40 @@ select.fl-secret-pick {
   cursor: pointer;
   padding: 0 0 0 2px;
 }
+
+/* flow guide: the "Your tools" group (tool usage guides) */
+.ftree .guide-group {
+  margin: 14px 8px 4px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.ftree .guide-none {
+  margin: 0 8px;
+  font-size: 12px;
+}
+.guide-live {
+  margin-top: 10px;
+}
+/* tool editor: Guide & examples */
+.tg-ex {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  margin-top: 12px;
+}
+.tg-ex .two-col textarea,
+.tg-args textarea {
+  font-family: var(--font-mono);
+  font-size: 12px;
+}
+.tg-args {
+  display: grid;
+  grid-template-columns: minmax(120px, max-content) 1fr;
+  gap: 6px 10px;
+  align-items: start;
+  margin: 8px 0;
+}
+.tg-args code {
+  padding-top: 6px;
+}

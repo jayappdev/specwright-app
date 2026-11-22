@@ -427,6 +427,21 @@ func (a *App) SaveToolMeta(name string, m extension.ToolMeta) (extension.Extensi
 	return ok(a.hub.SaveToolMeta(name, m))
 }
 
+// SaveToolGuide saves a tool's usage guide (nil removes it).
+func (a *App) SaveToolGuide(name string, g *extension.ToolGuide) (extension.Extension, error) {
+	return ok(a.hub.SaveToolGuide(name, g))
+}
+
+// GenerateToolGuide drafts a tool's usage guide with AI.
+func (a *App) GenerateToolGuide(e extension.Extension, model, ask string) (core.ToolGuideDraft, error) {
+	return ok(a.hub.GenerateToolGuide(e, model, ask))
+}
+
+// RunToolExample runs one example of a tool's guide.
+func (a *App) RunToolExample(e extension.Extension, ex extension.ToolExample, secrets map[string]string) (core.ToolRun, error) {
+	return ok(a.hub.RunToolExample(e, ex, secrets))
+}
+
 // RunToolWith runs a tool with the test form's arguments.
 func (a *App) RunToolWith(e extension.Extension, args map[string]any, secrets map[string]string, expect *extension.ToolExpect) (core.ToolRun, error) {
 	return ok(a.hub.RunToolWith(e, args, secrets, expect))

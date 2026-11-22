@@ -17,6 +17,7 @@ import { Icon } from "../../ui.jsx";
 import { AttachBar, onPasteAttach } from "../../Attachments.jsx";
 import { FileLink } from "../../FileLinks.jsx";
 import { openFlowGuide, GUIDE_TYPES } from "../FlowGuide.jsx";
+import { hasToolGuide } from "../flowGuide.js";
 
 // tools with a guide section of their own
 const GUIDE_TOOLS = { "builtin:chart": "visualization", duckdb_data_query: "dataquery" };
@@ -808,11 +809,20 @@ function StepInspector({ n }) {
           </small>
         </div>
         <span style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
-          {(GUIDE_TYPES.has(n.type) || GUIDE_TOOLS[n.tool]) && (
+          {(GUIDE_TYPES.has(n.type) ||
+            GUIDE_TOOLS[n.tool] ||
+            hasToolGuide(n.type === "tool" && tools().find((x) => x.name === n.tool))) && (
             <button
               className="link"
               title="How this step works, with examples"
-              onClick={() => openFlowGuide(GUIDE_TOOLS[n.tool] || n.type)}
+              onClick={() =>
+                openFlowGuide(
+                  GUIDE_TOOLS[n.tool] ||
+                    (hasToolGuide(n.type === "tool" && tools().find((x) => x.name === n.tool))
+                      ? "tool:" + n.tool
+                      : n.type),
+                )
+              }
             >
               How to use ↗
             </button>

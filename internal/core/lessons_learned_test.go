@@ -91,8 +91,13 @@ func TestEditLessonFromReview(t *testing.T) {
 	if err := h.DecideFlow(st.ID, FlowDecision{Action: "edit", Output: edited}); err != nil {
 		t.Fatal(err)
 	}
-	st = waitFlow(t, h, st.ID, func(s FlowRunState) bool { return s.Status == "review" })
-	_ = h.DecideFlow(st.ID, FlowDecision{Action: "continue"})
+	// the edited review (not the one before it was edited, which a quick wait can still see)
+	st = waitFlow(t, h, st.ID, func(s FlowRunState) bool {
+		return s.Status == "review" && s.Review != nil && s.Review.Output == edited
+	})
+	if err := h.DecideFlow(st.ID, FlowDecision{Action: "continue"}); err != nil {
+		t.Fatal(err)
+	}
 	waitFlow(t, h, st.ID, func(s FlowRunState) bool { return s.Status == "done" })
 	ls, _ := h.FlowLessons("notes")
 	if len(ls) != 1 || ls[0].Source != "edit" || !strings.Contains(ls[0].Text, `Added: "See the changelog for details."`) || strings.Contains(ls[0].Text, "Removed") {
