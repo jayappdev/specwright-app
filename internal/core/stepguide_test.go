@@ -52,3 +52,24 @@ func TestAIStepInstructionsAndSkills(t *testing.T) {
 		t.Fatalf("export: %v\n%.400s", err, b)
 	}
 }
+
+// a chart step is previewed (drawn, not saved); other tools are not
+func TestPreviewChartStep(t *testing.T) {
+	h, ws := flowHub(t)
+	f := flow.New("ch", "Chart")
+	f.Nodes = append(f.Nodes,
+		flow.Node{ID: "rows", Type: "transform", Op: "template", Template: "x"},
+		flow.Node{ID: "plot", Type: "tool", Tool: "builtin:chart", Args: map[string]string{"type": "bar", "rows": "{{rows.buffer_output}}", "x": "suite", "title": "Tests"}},
+		flow.Node{ID: "echo", Type: "tool", Tool: "echo-arg", Args: map[string]string{"v": "x"}})
+	f.Edges = append(f.Edges, flow.Edge{From: "start", To: "rows"}, flow.Edge{From: "rows", To: "plot"})
+	p := h.PreviewFlowStep(*f, "plot", flow.Data{Steps: map[string]string{"rows": `[{"suite":"api","passed":10,"failed":1}]`}})
+	if p.Error != "" || !strings.Contains(p.Output, "data-specwright-chart") || !strings.Contains(p.Output, ">failed<") {
+		t.Fatalf("%+v", p)
+	}
+	if _, err := os.Stat(filepath.Join(ws, "out", "charts")); !os.IsNotExist(err) {
+		t.Fatal("a preview saved a chart")
+	}
+	if p := h.PreviewFlowStep(*f, "echo", flow.Data{}); p.Error == "" {
+		t.Fatal("other tools are not previewed")
+	}
+}

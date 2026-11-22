@@ -1,6 +1,7 @@
 package core
 
 import (
+	"codegen/internal/builtin"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -327,6 +328,25 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 				out = strings.Join(lines, "\n")
 			}
 		}
+	case "tool":
+		// a chart has no effects to fear: drawn, not saved. Other tools run
+		// only when the flow runs.
+		if n.Tool != BuiltinPrefix+"chart" {
+			return FlowPreview{Error: "tools and AI steps run when the flow runs; enter sample output for this step instead"}
+		}
+		e, ferr := h.flowBuiltin(n.Tool)
+		if ferr != nil {
+			return FlowPreview{Error: ferr.Error()}
+		}
+		raw := map[string]any{}
+		for k, v := range n.Args {
+			raw[k] = flow.Render(v, sample)
+		}
+		typed, terr := builtinArgs(e, raw)
+		if terr != nil {
+			return FlowPreview{Error: terr.Error()}
+		}
+		out, err = builtin.PreviewChart(typed)
 	case "context":
 		out = flow.ContextPreview(&f, *n, parents, sample)
 	case "merge":
@@ -348,7 +368,7 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 			content = flow.Render(n.Template, sample)
 		}
 		out, err = flow.Convert(content, n.Format)
-	case "tool", "ai", "improve":
+	case "ai", "improve":
 		err = errors.New("tools and AI steps run when the flow runs; enter sample output for this step instead")
 	default:
 		err = errors.New("nothing to preview for this step")

@@ -6,6 +6,7 @@ import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg } from "../store.js";
 import { GUIDE, exampleFlow } from "./flowGuide.js";
 import { StepIcon, openFlowInDesigner } from "./Flows.jsx";
+import { RenderPreview, chartOf } from "../ContentView.jsx";
 
 // Open the guide at a step type (from the Flow designer).
 export function openFlowGuide(type) {
@@ -155,6 +156,8 @@ function Example({ g, ex, k }) {
             <p className="muted">Previewing…</p>
           ) : res.error ? (
             <div className="banner error">{res.error}</div>
+          ) : chartOf(res.output) && node.type !== "output" ? (
+            <RenderPreview text={res.output} format="html" />
           ) : node.type === "output" && node.format === "html" ? (
             <iframe className="fl-html guide-html" sandbox="" srcDoc={res.output} title="HTML preview" />
           ) : (

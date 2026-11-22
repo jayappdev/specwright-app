@@ -1130,6 +1130,138 @@ export const GUIDE = [
     ],
   },
   {
+    type: "tool",
+    name: "Tool",
+    summary:
+      "Runs one of the project's tools, or a built-in one (read or search files, run a command, call an API, send a notification, ask you questions, draw a chart), with arguments from the flow.",
+    when: [
+      "Run a tool you built (a query, a scanner, a generator) with the flow's inputs.",
+      "Draw a bar, line or multi-line chart from rows a tool or a query returned (builtin:chart).",
+      "Ask a person to choose before the flow goes on (builtin:ask_user), or tell them it is done (builtin:notify).",
+    ],
+    how: [
+      "Choose the tool; its parameters show as fields. Fill them with text and variables: {{inputs.<name>}}, {{<step id>.buffer_output}} (an earlier step's result) or a field of it, {{<step id>.buffer_output.json.<path>}}.",
+      "Or describe the request in words and let the AI fill the arguments when the flow runs.",
+      "builtin:chart takes rows (a JSON array of objects) with x (the label field) and y (the number fields; empty: every number field), or labels and series. type: bar, line, multiline or stacked_bar. It saves the chart in out/charts (or path) and returns it as SVG, shown as a picture with Export PNG; format png or both also saves a PNG.",
+      "Connect an Output step with HTML format to put the chart on a page of its own, saved where you like.",
+    ],
+    settings: [
+      ["Tool", "A project tool, or a built-in (builtin:<name>)."],
+      ["Arguments", "One field per parameter; variables are filled in when the step runs."],
+      ["Instruction", "Instead of arguments: what you want, in words; the AI fills them."],
+    ],
+    examples: [
+      {
+        title: "Bar chart: test results by suite",
+        text: "Rows from a test run become a grouped bar chart: x is the label field, and every number field (passed, failed) is a bar colour.",
+        nodes: [
+          sample(
+            "suites",
+            "Test results",
+            '[{"suite": "api", "passed": 120, "failed": 3}, {"suite": "billing", "passed": 80, "failed": 12}, {"suite": "orders", "passed": 95, "failed": 0}, {"suite": "ui", "passed": 60, "failed": 7}]',
+          ),
+          {
+            id: "chart",
+            type: "tool",
+            title: "Results chart",
+            tool: "builtin:chart",
+            args: {
+              type: "bar",
+              title: "Test results by suite",
+              rows: "{{suites.buffer_output}}",
+              x: "suite",
+            },
+          },
+        ],
+        edges: chain("start", "suites", "chart"),
+        focus: "chart",
+      },
+      {
+        title: "Multi-line chart: orders per month by region",
+        text: "One line per region: y names the series to draw, x_label and y_label caption the axes.",
+        nodes: [
+          sample(
+            "orders",
+            "Orders by month",
+            '[{"month": "Jan", "EU": 120, "US": 80, "APAC": 40}, {"month": "Feb", "EU": 135, "US": 95, "APAC": 52}, {"month": "Mar", "EU": 128, "US": 110, "APAC": 61}, {"month": "Apr", "EU": 150, "US": 104, "APAC": 75}, {"month": "May", "EU": 171, "US": 120, "APAC": 70}, {"month": "Jun", "EU": 160, "US": 131, "APAC": 88}]',
+          ),
+          {
+            id: "trend",
+            type: "tool",
+            title: "Orders trend",
+            tool: "builtin:chart",
+            args: {
+              type: "multiline",
+              title: "Orders per month",
+              rows: "{{orders.buffer_output}}",
+              x: "month",
+              y: "EU, US, APAC",
+              x_label: "Month",
+              y_label: "Orders",
+            },
+          },
+        ],
+        edges: chain("start", "orders", "trend"),
+        focus: "trend",
+      },
+      {
+        title: "Totals by region, saved as PNG too",
+        text: "Rows that an Aggregate step (or a query) returns, one per region, become a bar chart; with format both a PNG is saved next to the SVG, for an email or a slide.",
+        nodes: [
+          sample(
+            "totals",
+            "Totals by region",
+            '[{"region": "EU", "revenue": 360.5, "orders": 3}, {"region": "US", "revenue": 390, "orders": 2}, {"region": "APAC", "revenue": 212, "orders": 2}]',
+          ),
+          {
+            id: "png",
+            type: "tool",
+            title: "Region chart",
+            tool: "builtin:chart",
+            args: {
+              type: "bar",
+              title: "Revenue by region",
+              rows: "{{totals.buffer_output}}",
+              x: "region",
+              y: "revenue",
+              format: "both",
+              path: "out/charts/revenue-by-region",
+            },
+          },
+        ],
+        edges: chain("start", "totals", "png"),
+        focus: "png",
+      },
+      {
+        title: "A chart on its own page (Output, HTML)",
+        text: "labels and series given as one JSON object (data). The chart step's SVG then goes into an Output step with HTML format: a page with the chart, saved as out/burn-up.html and shown in the run (with Export PNG).",
+        nodes: [
+          sample(
+            "sprint",
+            "Sprint",
+            '{"labels": ["Mon", "Tue", "Wed", "Thu", "Fri"], "series": [{"name": "done", "values": [2, 5, 9, 12, 16]}, {"name": "planned", "values": [3, 6, 9, 12, 15]}]}',
+          ),
+          {
+            id: "burn",
+            type: "tool",
+            title: "Burn-up chart",
+            tool: "builtin:chart",
+            args: { type: "line", title: "Sprint burn-up", data: "{{sprint.buffer_output}}" },
+          },
+          {
+            id: "page",
+            type: "output",
+            title: "Burn-up (html)",
+            format: "html",
+            actions: [{ type: "save", path: "out/burn-up.html" }, { type: "show" }],
+          },
+        ],
+        edges: chain("start", "sprint", "burn", "page"),
+        focus: "burn",
+      },
+    ],
+  },
+  {
     type: "output",
     name: "Output",
     summary:

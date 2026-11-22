@@ -779,3 +779,13 @@ func chartTool(_ context.Context, b *Box, a args) (string, error) {
 	}
 	return ChartSVG(s, "Saved as "+strings.Join(saved, ", ")), nil
 }
+
+// PreviewChart draws the chart for the arguments without saving anything
+// (the Flow designer's and the guide's previews).
+func PreviewChart(raw map[string]any) (string, error) {
+	s, err := parseChart(args(raw))
+	if err != nil {
+		return "", err
+	}
+	return ChartSVG(s, "Preview: the chart step saves it when the flow runs"), nil
+}
