@@ -1130,6 +1130,183 @@ export const GUIDE = [
     ],
   },
   {
+    type: "dataquery",
+    name: "Data query (DuckDB)",
+    icon: { type: "tool", tool: "duckdb_data_query" },
+    resultLabel: "Result · an example (the query runs when the flow runs)",
+    summary:
+      "Queries data with DuckDB SQL: files (CSV, JSON, Parquet, Excel), URLs, S3 and Azure, the previous step's output, and databases (Postgres, MySQL, SQLite, SQL Server, Oracle). One query reads, joins, transforms and aggregates; the rows come back as JSON for the next steps.",
+    when: [
+      "Summarise or join files: CSV exports, JSON from an API, Parquet in a data lake.",
+      "Read a database (read-only) and combine it with a file or an earlier step's result.",
+      "Prepare rows for a chart, a report table or a decision.",
+    ],
+    how: [
+      "Add a Tool step and choose duckdb_data_query (an admin publishes it to every project from library/tools; Admin › Import a tool file to publish).",
+      'sql is the query. Name the inputs: sources ({"orders": "data/orders.csv"}, globs and s3:// paths too), connections ([{"name": "pg", "type": "postgres", "dsn": "…"}], read-only unless "read_only": false), and input: {{input_file}} makes the previous step\'s output the table input.',
+      "Passwords never go in the flow: PGPASSWORD and MYSQL_PWD are read by the drivers, and ${ORACLE_PASSWORD} or ${MSSQL_PASSWORD} in a dsn is filled from Tools › Secrets, the keychain or the environment. S3 uses your AWS profile or SSO.",
+      "format: json (default; numbers stay numbers), csv or markdown. save_to also writes the whole result to .csv, .json or .parquet; max_rows (default 1000) caps what the next step gets.",
+      "Extensions (S3, Postgres, Excel, Oracle…) install the first time they are needed. Where the network blocks them, set DUCKDB_EXTENSION_REPOSITORY (a mirror) or DUCKDB_HTTP_PROXY.",
+    ],
+    settings: [
+      ["sql", "The DuckDB SQL; several statements run in turn, the last one's rows are the result."],
+      ["sources", "Tables from files, globs, URLs or cloud paths."],
+      ["connections", "Databases to attach: postgres, mysql, sqlite, sqlserver, oracle, duckdb."],
+      ["input", "{{input_file}}: the previous step's output as the table input."],
+      [
+        "format, save_to, max_rows",
+        "How the rows come back, where to save all of them, how many to pass on.",
+      ],
+      ["extensions", "Extra DuckDB extensions (most load by themselves)."],
+    ],
+    examples: [
+      {
+        title: "Summarise a CSV export",
+        text: "Revenue and order count per region from a CSV file, largest first. The rows feed a Filter, an Aggregate or a chart.",
+        nodes: [
+          {
+            id: "revenue",
+            type: "tool",
+            title: "Revenue by region",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT region, round(sum(total), 2) AS revenue, count(*) AS orders\nFROM orders\nGROUP BY region\nORDER BY revenue DESC",
+              sources: '{"orders": "data/orders.csv"}',
+            },
+          },
+        ],
+        edges: chain("start", "revenue"),
+        focus: "revenue",
+        result:
+          '[\n  {"region": "EU", "revenue": 360.5, "orders": 3},\n  {"region": "US", "revenue": 390, "orders": 2},\n  {"region": "APAC", "revenue": 212, "orders": 2}\n]',
+      },
+      {
+        title: "Join the previous step's output with a file",
+        text: "A tool returned this month's targets as JSON; the query joins them with the orders file (input is the step before) and returns a Markdown table for a report.",
+        nodes: [
+          sample(
+            "targets",
+            "Targets",
+            '[{"region": "EU", "target": 300}, {"region": "US", "target": 450}, {"region": "APAC", "target": 200}]',
+          ),
+          {
+            id: "vs",
+            type: "tool",
+            title: "Revenue vs. target",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT o.region, sum(o.total) AS revenue, t.target,\n       round(100 * sum(o.total) / t.target) AS pct\nFROM orders o JOIN input t USING (region)\nGROUP BY o.region, t.target\nORDER BY pct DESC",
+              sources: '{"orders": "data/orders.csv"}',
+              input: "{{input_file}}",
+              format: "markdown",
+            },
+          },
+        ],
+        edges: chain("start", "targets", "vs"),
+        focus: "vs",
+        result:
+          "| region | revenue | target | pct |\n| --- | --- | --- | --- |\n| EU | 360.5 | 300 | 120 |\n| APAC | 212 | 200 | 106 |\n| US | 390 | 450 | 87 |",
+      },
+      {
+        title: "Postgres, read-only, password from a secret",
+        text: "The connection is attached read-only; the password comes from the secret PGPASSWORD (Tools › Secrets or the keychain), never from the flow. {{inputs.days}} is an input of the flow.",
+        flowInputs: [{ name: "days", label: "Days back", type: "text", default: "30" }],
+        nodes: [
+          {
+            id: "top",
+            type: "tool",
+            title: "Top customers",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT c.name, count(*) AS orders, sum(o.amount) AS spent\nFROM pg.public.orders o JOIN pg.public.customers c ON c.id = o.customer_id\nWHERE o.created_at >= now() - INTERVAL {{inputs.days}} DAY\nGROUP BY c.name ORDER BY spent DESC LIMIT 10",
+              connections:
+                '[{"name": "pg", "type": "postgres", "dsn": "host=db.internal port=5432 dbname=sales user=reporter"}]',
+            },
+          },
+        ],
+        edges: chain("start", "top"),
+        focus: "top",
+        result:
+          '[\n  {"name": "Acme GmbH", "orders": 42, "spent": 18250.5},\n  {"name": "Northwind", "orders": 31, "spent": 12990},\n  {"name": "Globex", "orders": 18, "spent": 9100.25}\n]',
+      },
+      {
+        title: "Oracle (needs Oracle Instant Client)",
+        text: "The oracle community extension installs by itself; the machine needs Oracle Instant Client (19c, 21c or 23ai). ${ORACLE_PASSWORD} in the dsn is filled from that secret.",
+        nodes: [
+          {
+            id: "open",
+            type: "tool",
+            title: "Open invoices",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT status, count(*) AS invoices, sum(amount) AS total\nFROM ora.FIN.INVOICES\nWHERE status <> 'PAID'\nGROUP BY status",
+              connections:
+                '[{"name": "ora", "type": "oracle", "dsn": "user=REPORTER password=${ORACLE_PASSWORD} dbq=//ora.internal:1521/FINPDB"}]',
+            },
+          },
+        ],
+        edges: chain("start", "open"),
+        focus: "open",
+        result:
+          '[\n  {"status": "OPEN", "invoices": 128, "total": 412900},\n  {"status": "OVERDUE", "invoices": 17, "total": 58210.4}\n]',
+      },
+      {
+        title: "Parquet on S3, the whole result saved as CSV",
+        text: "A glob over a month of Parquet files in S3 (your AWS profile or SSO signs the requests). save_to writes every row to a CSV file; the next step gets the first 100 (max_rows).",
+        nodes: [
+          {
+            id: "errors",
+            type: "tool",
+            title: "Errors by service",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT service, date_trunc('day', ts) AS day, count(*) AS errors\nFROM events\nWHERE level = 'ERROR'\nGROUP BY ALL ORDER BY day, errors DESC",
+              sources: '{"events": "s3://acme-logs/2026/11/*.parquet"}',
+              save_to: "out/errors-by-service.csv",
+              max_rows: "100",
+            },
+          },
+        ],
+        edges: chain("start", "errors"),
+        focus: "errors",
+        result:
+          '[\n  {"service": "billing", "day": "2026-11-01T00:00:00.000Z", "errors": 214},\n  {"service": "orders", "day": "2026-11-01T00:00:00.000Z", "errors": 97}\n]',
+      },
+      {
+        title: "Query, then a chart",
+        text: "The query's rows go straight into a Visualization step (builtin:chart) that reads {{revenue.buffer_output}}.",
+        nodes: [
+          {
+            id: "revenue",
+            type: "tool",
+            title: "Revenue by month",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT strftime(order_date, '%Y-%m') AS month, region, sum(total) AS revenue\nFROM read_csv('data/orders-*.csv')\nGROUP BY ALL ORDER BY month",
+            },
+          },
+          {
+            id: "pivot",
+            type: "tool",
+            title: "Revenue chart",
+            tool: "builtin:chart",
+            args: {
+              type: "line",
+              title: "Revenue by month",
+              rows: "{{revenue.buffer_output}}",
+              x: "month",
+              y: "revenue",
+            },
+          },
+        ],
+        edges: chain("start", "revenue", "pivot"),
+        focus: "revenue",
+        result:
+          '[\n  {"month": "2026-09", "region": "EU", "revenue": 18200},\n  {"month": "2026-10", "region": "EU", "revenue": 21450},\n  {"month": "2026-11", "region": "EU", "revenue": 19900}\n]',
+      },
+    ],
+  },
+  {
     type: "visualization",
     name: "Visualization",
     icon: { type: "tool", tool: "builtin:chart" },

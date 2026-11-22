@@ -37,6 +37,10 @@ function Rich({ text }) {
 
 const previews = {}; // "<type>/<n>" → { output, error }
 
+// fixedResult: the section's examples show the result written with them
+// (AI steps; tools that reach real data, which a preview must not run).
+const fixedResult = (g) => g.type === "ai" || g.type === "improve" || !!g.resultLabel;
+
 function stepSettings(n) {
   const c = { ...n };
   for (const k of ["id", "type", "x", "y", "title", "sample"]) delete c[k];
@@ -82,7 +86,7 @@ function Example({ g, ex, k }) {
     .filter((id) => id in steps);
   const after = flow.edges.filter((e) => e.from === ex.focus);
   useEffect(() => {
-    if (previews[key] || g.type === "ai" || g.type === "improve") return;
+    if (previews[key] || fixedResult(g)) return;
     previews[key] = { busy: true };
     backend
       .PreviewFlowStep({ id: "guide", name: "guide", ...flow, skills: [], context: { text: "" } }, ex.focus, {
@@ -98,10 +102,7 @@ function Example({ g, ex, k }) {
         redraw((x) => x + 1);
       });
   }, [key]);
-  const res =
-    g.type === "ai" || g.type === "improve"
-      ? { output: ex.result, ai: true }
-      : previews[key] || { busy: true };
+  const res = fixedResult(g) ? { output: ex.result, ai: true } : previews[key] || { busy: true };
   // the path: every step in order, the example's step highlighted
   const order = [];
   const visit = (id) => {
@@ -150,7 +151,9 @@ function Example({ g, ex, k }) {
         </div>
         <div>
           <div className="muted">
-            {res.ai ? "Result · an example answer (the AI's will vary)" : "Result · previewed by the app"}
+            {res.ai
+              ? g.resultLabel || "Result · an example answer (the AI's will vary)"
+              : "Result · previewed by the app"}
           </div>
           {res.busy ? (
             <p className="muted">Previewing…</p>
