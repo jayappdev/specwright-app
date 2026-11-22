@@ -20,7 +20,12 @@ import { openFlowGuide, GUIDE_TYPES } from "../FlowGuide.jsx";
 import { hasToolGuide } from "../flowGuide.js";
 
 // tools with a guide section of their own
-const GUIDE_TOOLS = { "builtin:chart": "visualization", duckdb_data_query: "dataquery" };
+const GUIDE_TOOLS = {
+  "builtin:chart": "visualization",
+  "builtin:table": "formattedtable",
+  "builtin:dashboard": "dashboard",
+  duckdb_data_query: "dataquery",
+};
 import { paths as schemaPaths, compact, typeName } from "../../schema.js";
 import {
   FILE_PARAM,

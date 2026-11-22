@@ -39,6 +39,8 @@ function Rich({ text }) {
 }
 
 const previews = {}; // "<type>/<n>" → { output, error }
+// built-in tool steps the app can preview (drawn, nothing saved)
+const PREVIEWED = new Set(["builtin:chart", "builtin:table", "builtin:dashboard"]);
 
 // fixedResult: the section's examples show the result written with them
 // (AI steps; tools that reach real data, which a preview must not run).
@@ -92,14 +94,29 @@ function Example({ g, ex, k }) {
     .map((e) => e.from)
     .filter((id) => id in steps);
   const after = flow.edges.filter((e) => e.from === ex.focus);
+  // the path: every step in order, the example's step highlighted
+  const order = [];
+  const visit = (id) => {
+    if (order.includes(id)) return;
+    order.push(id);
+    flow.edges.filter((e) => e.from === id).forEach((e) => visit(e.to));
+  };
+  visit("start");
   useEffect(() => {
     if (previews[key] || fixedResult(g)) return;
     previews[key] = { busy: true };
-    backend
-      .PreviewFlowStep({ id: "guide", name: "guide", ...flow, skills: [], context: { text: "" } }, ex.focus, {
-        inputs: {},
-        steps,
-      })
+    const fl = { id: "guide", name: "guide", ...flow, skills: [], context: { text: "" } };
+    (async () => {
+      // charts and tables before the step are drawn first (a dashboard shows them)
+      const all = { ...steps };
+      for (const id of order) {
+        const n = flow.nodes.find((x) => x.id === id);
+        if (id === ex.focus || !n || id in all || !PREVIEWED.has(n.tool)) continue;
+        const r = await backend.PreviewFlowStep(fl, id, { inputs: {}, steps: all }).catch(() => null);
+        if (r?.output) all[id] = r.output;
+      }
+      return backend.PreviewFlowStep(fl, ex.focus, { inputs: {}, steps: all });
+    })()
       .then((r) => {
         previews[key] = r || {};
         redraw((x) => x + 1);
@@ -110,14 +127,6 @@ function Example({ g, ex, k }) {
       });
   }, [key]);
   const res = fixedResult(g) ? { output: ex.result, ai: true } : previews[key] || { busy: true };
-  // the path: every step in order, the example's step highlighted
-  const order = [];
-  const visit = (id) => {
-    if (order.includes(id)) return;
-    order.push(id);
-    flow.edges.filter((e) => e.from === id).forEach((e) => visit(e.to));
-  };
-  visit("start");
   return (
     <div className="guide-ex">
       <h4>{ex.title}</h4>
@@ -168,6 +177,15 @@ function Example({ g, ex, k }) {
             <div className="banner error">{res.error}</div>
           ) : chartOf(res.output) && node.type !== "output" ? (
             <RenderPreview text={res.output} format="html" />
+          ) : /^\s*<!doctype html/i.test(res.output || "") ? (
+            <iframe
+              className={
+                "fl-html guide-html" + (res.output.includes("data-specwright-dashboard") ? " guide-dash" : "")
+              }
+              sandbox=""
+              srcDoc={res.output}
+              title="HTML preview"
+            />
           ) : node.type === "output" && node.format === "html" ? (
             <iframe className="fl-html guide-html" sandbox="" srcDoc={res.output} title="HTML preview" />
           ) : (

@@ -329,9 +329,12 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 			}
 		}
 	case "tool":
-		// a chart has no effects to fear: drawn, not saved. Other tools run
+		// a chart, table or dashboard has no effects to fear: drawn, not saved. Other tools run
 		// only when the flow runs.
-		if n.Tool != BuiltinPrefix+"chart" {
+		preview := map[string]func(map[string]any) (string, error){
+			BuiltinPrefix + "chart": builtin.PreviewChart, BuiltinPrefix + "table": builtin.PreviewTable, BuiltinPrefix + "dashboard": builtin.PreviewDashboard,
+		}[n.Tool]
+		if preview == nil {
 			return FlowPreview{Error: "tools and AI steps run when the flow runs; enter sample output for this step instead"}
 		}
 		e, ferr := h.flowBuiltin(n.Tool)
@@ -346,7 +349,7 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 		if terr != nil {
 			return FlowPreview{Error: terr.Error()}
 		}
-		out, err = builtin.PreviewChart(typed)
+		out, err = preview(typed)
 	case "context":
 		out = flow.ContextPreview(&f, *n, parents, sample)
 	case "merge":

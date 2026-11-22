@@ -198,27 +198,70 @@ var registry = []Tool{
 		})},
 	// --- charts -----------------------------------------------------------
 	{Name: "chart", Title: "Chart", Group: "chart", run: chartTool,
-		Desc: "Draw a chart from data and save it (out/charts/…, or path): bar, hbar (horizontal bars, for long labels), stacked_bar, line (one line per series: multiline), area, stacked_area, scatter, pie, donut or heatmap. " +
+		Desc: "Draw a chart from data and save it (out/charts/…, or path): bar, hbar (horizontal bars, for long labels), stacked_bar, line (one line per series: multiline), area, stacked_area, scatter, pie, donut, heatmap, kpi (a tile per label: its value, and its change against a second series such as last month or the target), gauge (a half dial per label), bullet (a bar per label over its bands, the second series as a target mark) or sparklines (a small trend line per series, with its last value and change). " +
 			"Give labels and series ([{name, values}]), or rows (a JSON array of objects, e.g. a tool's or a query's result) with x (the label field) and y (the number field or fields; empty: every number field). " +
 			"pie and donut draw the first series, a slice per label. scatter needs numbers on x (name the x field). heatmap: rows with x (the columns), y (the rows) and value, or labels (columns) and series (rows). " +
+			"kpi, gauge and bullet: bands are the thresholds between bad, so-so and good (e.g. [90, 98]; lower_is_better turns them round), unit is written with the values ($, %, \" ms\"), min and max set the scale. sparklines from long rows: x (the points), y (the field naming each line) and value. " +
 			"show_values writes each value on its bar, point, slice or cell. It returns the chart as SVG, which SpecWright shows as a picture (with Export PNG); format png or both also saves a PNG.",
 		Schema: obj(map[string]any{
-			"type":        map[string]any{"type": "string", "enum": []string{"bar", "hbar", "stacked_bar", "line", "multiline", "area", "stacked_area", "scatter", "pie", "donut", "heatmap"}, "description": "The kind of chart (default bar)"},
-			"show_values": p("boolean", "Write each value on its bar, point, slice or cell"),
-			"value":       p("string", "heatmap with rows: the number field (y is then the row field)"),
-			"title":       p("string", "The chart's title"),
-			"labels":      arr(map[string]any{"type": "string"}, "The x-axis labels (with series)"),
-			"series":      arr(obj(map[string]any{"name": p("string", "The series' name (legend)"), "values": arr(map[string]any{"type": "number"}, "One value per label")}, "values"), "The values: one series per bar colour or line"),
-			"rows":        map[string]any{"description": "Instead of labels and series: a JSON array of objects (or its JSON text), e.g. [{\"month\": \"Jan\", \"sales\": 12, \"returns\": 3}]"},
-			"x":           p("string", "With rows: the field for the labels (default: the first text field)"),
-			"y":           map[string]any{"description": "With rows: the number field(s) to draw, a name or a list (default: every number field); a heatmap: the row field"},
-			"x_label":     p("string", "The x-axis caption"),
-			"y_label":     p("string", "The y-axis caption"),
-			"format":      map[string]any{"type": "string", "enum": []string{"svg", "png", "both"}, "description": "What to save: svg (default), png, or both"},
-			"path":        p("string", "Where to save, without the extension (default out/charts/<title>-<time>)"),
-			"width":       p("integer", "Width in pixels (default 800)"),
-			"height":      p("integer", "Height in pixels (default 480)"),
+			"type":            map[string]any{"type": "string", "enum": []string{"bar", "hbar", "stacked_bar", "line", "multiline", "area", "stacked_area", "scatter", "pie", "donut", "heatmap", "kpi", "gauge", "bullet", "sparklines"}, "description": "The kind of chart (default bar)"},
+			"show_values":     p("boolean", "Write each value on its bar, point, slice or cell"),
+			"value":           p("string", "heatmap with rows: the number field (y is then the row field)"),
+			"title":           p("string", "The chart's title"),
+			"labels":          arr(map[string]any{"type": "string"}, "The x-axis labels (with series)"),
+			"series":          arr(obj(map[string]any{"name": p("string", "The series' name (legend)"), "values": arr(map[string]any{"type": "number"}, "One value per label")}, "values"), "The values: one series per bar colour or line"),
+			"rows":            map[string]any{"description": "Instead of labels and series: a JSON array of objects (or its JSON text), e.g. [{\"month\": \"Jan\", \"sales\": 12, \"returns\": 3}]"},
+			"x":               p("string", "With rows: the field for the labels (default: the first text field)"),
+			"y":               map[string]any{"description": "With rows: the number field(s) to draw, a name or a list (default: every number field); a heatmap: the row field"},
+			"x_label":         p("string", "The x-axis caption"),
+			"y_label":         p("string", "The y-axis caption"),
+			"format":          map[string]any{"type": "string", "enum": []string{"svg", "png", "both"}, "description": "What to save: svg (default), png, or both"},
+			"path":            p("string", "Where to save, without the extension (default out/charts/<title>-<time>)"),
+			"width":           p("integer", "Width in pixels (default 800)"),
+			"height":          p("integer", "Height in pixels (default 480; kpi, gauge, bullet and sparklines: sized to fit)"),
+			"bands":           map[string]any{"description": "kpi, gauge, bullet: the thresholds between bad, so-so and good, e.g. [90, 98]"},
+			"lower_is_better": p("boolean", "kpi, gauge, bullet, sparklines: smaller values are good (latency, cost, errors)"),
+			"unit":            p("string", "Written with the values: $ € £ ¥ before them, anything else after (%, \" ms\", k)"),
+			"min":             p("number", "kpi, gauge, bullet: the scale's start (default 0)"),
+			"max":             p("number", "kpi, gauge, bullet: the scale's end (default from the data; 100 for %)"),
 		})},
+	{Name: "table", Title: "Formatted table", Group: "chart", run: tableTool,
+		Desc: "Make a formatted HTML table from rows (a JSON array of objects, e.g. a query's result) and save it (out/tables/…, or path). " +
+			"columns picks and orders them (names, or objects {field, label, format, decimals, unit, align, bands, lower_is_better, rules, total}); formats: number, integer, percent, currency, date, datetime, bytes, duration_ms, bar (a data bar), sparkline (a list of numbers drawn as a small line), json, text (default: guessed). " +
+			"sort by a field (-field or \"field desc\" for largest first); totals: true sums the number columns, or {\"field\": \"sum|avg|min|max|count\"}. " +
+			"Colours: bands on a number column (good/so-so/bad), or rules [{op: > >= < <= = != contains empty, value, color: good|warn|bad|info|#hex, row: true to colour the row}]. " +
+			"It returns the page (SpecWright shows it; opened in a browser, its headers sort); format markdown returns a Markdown table instead.",
+		Schema: obj(map[string]any{
+			"rows":     map[string]any{"description": "A JSON array of objects (or its JSON text), e.g. {{query.buffer_output}}"},
+			"columns":  map[string]any{"description": "The columns: [\"region\", {\"field\": \"revenue\", \"format\": \"currency\", \"bands\": [1000, 5000]}, {\"field\": \"trend\", \"format\": \"sparkline\"}] or \"region, revenue\" (default: every field)"},
+			"title":    p("string", "The table's title"),
+			"caption":  p("string", "A line under the title"),
+			"sort":     p("string", "The field to sort by; -field or \"field desc\" for descending"),
+			"totals":   map[string]any{"description": "true: a totals row summing the number columns; or {\"field\": \"sum|avg|min|max|count\"}"},
+			"formats":  map[string]any{"description": "A shortcut: {\"field\": \"format\"} for columns you do not otherwise describe"},
+			"max_rows": p("integer", "At most this many rows (default 500)"),
+			"format":   map[string]any{"type": "string", "enum": []string{"html", "markdown"}, "description": "html (default; saved as a page) or markdown"},
+			"path":     p("string", "Where to save the page (default out/tables/<title>-<time>.html)"),
+		}, "rows")},
+	{Name: "dashboard", Title: "Dashboard", Group: "chart", run: dashboardTool,
+		Desc: "Put several results on one HTML page and save it (out/dashboards/…, or path): panel_1 … panel_8 are earlier steps' outputs (e.g. {{revenue_chart.buffer_output}}): charts, formatted tables, JSON rows (shown as a table), Markdown or text. " +
+			"They are laid out in a grid (columns, default 2; wide lists the panels that take a whole row; wide tables do by themselves) under the title, an intro (Markdown) and when it was made. It returns the page, which SpecWright shows.",
+		Schema: obj(map[string]any{
+			"title":   p("string", "The dashboard's title"),
+			"intro":   p("string", "Markdown under the title, e.g. what it shows and for whom"),
+			"panel_1": p("string", "The first panel: a step's output, e.g. {{chart.buffer_output}}"),
+			"panel_2": p("string", "The second panel"),
+			"panel_3": p("string", "The third panel"),
+			"panel_4": p("string", "The fourth panel"),
+			"panel_5": p("string", "The fifth panel"),
+			"panel_6": p("string", "The sixth panel"),
+			"panel_7": p("string", "The seventh panel"),
+			"panel_8": p("string", "The eighth panel"),
+			"titles":  p("string", "Panel titles, in order, separated by | (charts and tables show their own)"),
+			"columns": p("integer", "Panels per row, 1 to 4 (default 2)"),
+			"wide":    map[string]any{"description": "Panel numbers that take a whole row, e.g. [3]"},
+			"path":    p("string", "Where to save the page (default out/dashboards/<title>-<time>.html)"),
+		}, "panel_1")},
 	// --- plan -------------------------------------------------------------
 	{Name: "ask_user", Title: "Ask the user", Group: "plan", ReadOnly: true, run: askUser,
 		Desc: "Ask a person multiple-choice questions and wait for their answers: give questions, each with options and the recommended answer (and why). " +

@@ -72,4 +72,22 @@ func TestPreviewChartStep(t *testing.T) {
 	if p := h.PreviewFlowStep(*f, "echo", flow.Data{}); p.Error == "" {
 		t.Fatal("other tools are not previewed")
 	}
+	// a formatted table and a dashboard are previewed too, nothing saved
+	f.Nodes = append(f.Nodes,
+		flow.Node{ID: "tab", Type: "tool", Tool: "builtin:table", Args: map[string]string{"rows": "{{rows.buffer_output}}", "title": "Suites"}},
+		flow.Node{ID: "dash", Type: "tool", Tool: "builtin:dashboard", Args: map[string]string{"title": "Weekly", "panel_1": "{{plot.buffer_output}}", "panel_2": "{{tab.buffer_output}}"}})
+	rows := `[{"suite":"api","passed":10,"failed":1}]`
+	tab := h.PreviewFlowStep(*f, "tab", flow.Data{Steps: map[string]string{"rows": rows}})
+	if tab.Error != "" || !strings.Contains(tab.Output, "data-specwright-table") || !strings.Contains(tab.Output, ">api<") {
+		t.Fatalf("%+v", tab)
+	}
+	dash := h.PreviewFlowStep(*f, "dash", flow.Data{Steps: map[string]string{"rows": rows, "plot": p.Output, "tab": tab.Output}})
+	if dash.Error != "" || !strings.Contains(dash.Output, "data-specwright-dashboard") || strings.Count(dash.Output, `<section class="panel`) != 2 {
+		t.Fatalf("%+v", dash)
+	}
+	for _, d := range []string{"tables", "dashboards"} {
+		if _, err := os.Stat(filepath.Join(ws, "out", d)); !os.IsNotExist(err) {
+			t.Fatal("a preview saved a page")
+		}
+	}
 }
