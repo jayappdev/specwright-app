@@ -1134,19 +1134,28 @@ export const GUIDE = [
     name: "Visualization",
     icon: { type: "tool", tool: "builtin:chart" },
     summary:
-      "Draws data as a chart: bar, line, multi-line or stacked bar, from the rows a tool, a query or an Aggregate returned. It is a tool step with the built-in chart tool (builtin:chart); the chart shows as a picture, with Export PNG.",
+      "Draws data as a chart: bar, horizontal bar, stacked bar, line, multi-line, area, stacked area, scatter, pie, donut or heatmap, from the rows a tool, a query or an Aggregate returned. It is a tool step with the built-in chart tool (builtin:chart); the chart shows as a picture, with Export PNG.",
     when: [
       "Show the rows a tool or a query returned as a bar chart (test results by suite, revenue by region).",
       "Show a trend over time as a line, one line per series (orders per month by region).",
+      "Show shares of a whole as a pie or donut (failures by cause, spend by team).",
+      "Find patterns: a scatter of two numbers (size against defects), a heatmap of a grid (failed builds by day and hour).",
       "Save a chart as SVG and PNG for a report, an email or a slide.",
     ],
     how: [
       "Add a Tool step and choose builtin:chart (in the Charts group). Its parameters show as fields; fill them with text and variables, such as {{<step id>.buffer_output}} for an earlier step's rows.",
       "builtin:chart takes rows (a JSON array of objects) with x (the label field) and y (the number fields; empty: every number field), or labels and series. type: bar, line, multiline or stacked_bar. It saves the chart in out/charts (or path) and returns it as SVG, shown as a picture with Export PNG; format png or both also saves a PNG.",
+      "pie and donut draw the first series, a slice per label, with the share on each slice and the values in the legend (a donut shows the total in its hole). hbar puts the labels down the side, for long names. scatter needs numbers on x: name the x field. heatmap takes rows with x (the columns), y (the rows) and value (repeated cells are added up).",
+      "show_values writes each value on its bar, point, slice or cell, so a PNG reads without the grid.",
       "Connect an Output step with HTML format to put the chart on a page of its own, saved where you like.",
     ],
     settings: [
-      ["type", "bar, line, multiline (one line per series) or stacked_bar."],
+      [
+        "type",
+        "bar, hbar, stacked_bar, line or multiline, area, stacked_area, scatter, pie, donut, heatmap.",
+      ],
+      ["show_values", "Write each value on the chart."],
+      ["value", "heatmap with rows: the number field (y is the row field)."],
       ["rows, x, y", "The data as a JSON array of objects, the label field, and the number field(s)."],
       [
         "labels, series / data",
@@ -1208,6 +1217,115 @@ export const GUIDE = [
         ],
         edges: chain("start", "orders", "trend"),
         focus: "trend",
+      },
+      {
+        title: "Donut: failures by cause",
+        text: "Shares of a whole: one slice per cause, the share on each slice, the count and share in the legend, the total in the middle.",
+        nodes: [
+          sample(
+            "causes",
+            "Failures by cause",
+            '[{"cause": "Assertion", "n": 22}, {"cause": "Timeout", "n": 14}, {"cause": "Network", "n": 9}, {"cause": "Setup", "n": 5}, {"cause": "Other", "n": 2}]',
+          ),
+          {
+            id: "donut",
+            type: "tool",
+            title: "Causes donut",
+            tool: "builtin:chart",
+            args: {
+              type: "donut",
+              title: "Failures by cause",
+              rows: "{{causes.buffer_output}}",
+              x: "cause",
+              y: "n",
+              y_label: "failures",
+            },
+          },
+        ],
+        edges: chain("start", "causes", "donut"),
+        focus: "donut",
+      },
+      {
+        title: "Horizontal bars with values: the slowest tests",
+        text: "Long names read best down the side; show_values writes each duration at the end of its bar.",
+        nodes: [
+          sample(
+            "slow",
+            "Slowest tests",
+            '[{"test": "OrderServiceIntegrationTest.placesOrder", "seconds": 41.2}, {"test": "InvoiceExportTest.exportsPdf", "seconds": 30.8}, {"test": "ui/checkout.spec.ts", "seconds": 22.1}, {"test": "BillingRoundingTest.roundsHalfEven", "seconds": 12.5}]',
+          ),
+          {
+            id: "hbar",
+            type: "tool",
+            title: "Slowest tests chart",
+            tool: "builtin:chart",
+            args: {
+              type: "hbar",
+              title: "Slowest tests (s)",
+              rows: "{{slow.buffer_output}}",
+              x: "test",
+              show_values: "true",
+            },
+          },
+        ],
+        edges: chain("start", "slow", "hbar"),
+        focus: "hbar",
+      },
+      {
+        title: "Scatter: file size against defects",
+        text: "Two numbers per row: x is lines of code, y the defects found; each point is a file.",
+        nodes: [
+          sample(
+            "files",
+            "Files",
+            '[{"file": "Order.java", "loc": 120, "defects": 1}, {"file": "Billing.java", "loc": 480, "defects": 4}, {"file": "Invoice.java", "loc": 900, "defects": 9}, {"file": "Cart.java", "loc": 300, "defects": 2}, {"file": "Checkout.java", "loc": 1500, "defects": 11}, {"file": "Money.java", "loc": 60, "defects": 0}]',
+          ),
+          {
+            id: "scatter",
+            type: "tool",
+            title: "Size vs. defects",
+            tool: "builtin:chart",
+            args: {
+              type: "scatter",
+              title: "File size vs. defects",
+              rows: "{{files.buffer_output}}",
+              x: "loc",
+              y: "defects",
+              x_label: "Lines of code",
+              y_label: "Defects",
+            },
+          },
+        ],
+        edges: chain("start", "files", "scatter"),
+        focus: "scatter",
+      },
+      {
+        title: "Heatmap: failed builds by day and hour",
+        text: "x is the columns (hour), y the rows (day), value the number; darker is more. Rows for the same cell are added up.",
+        nodes: [
+          sample(
+            "builds",
+            "Failed builds",
+            '[{"day": "Mon", "hour": "09", "fails": 2}, {"day": "Mon", "hour": "12", "fails": 5}, {"day": "Mon", "hour": "17", "fails": 1}, {"day": "Tue", "hour": "09", "fails": 0}, {"day": "Tue", "hour": "12", "fails": 3}, {"day": "Tue", "hour": "17", "fails": 7}, {"day": "Wed", "hour": "09", "fails": 1}, {"day": "Wed", "hour": "12", "fails": 8}, {"day": "Wed", "hour": "17", "fails": 4}]',
+          ),
+          {
+            id: "heat",
+            type: "tool",
+            title: "Failures heatmap",
+            tool: "builtin:chart",
+            args: {
+              type: "heatmap",
+              title: "Failed builds",
+              rows: "{{builds.buffer_output}}",
+              x: "hour",
+              y: "day",
+              value: "fails",
+              show_values: "true",
+            },
+          },
+        ],
+        edges: chain("start", "builds", "heat"),
+        focus: "heat",
       },
       {
         title: "Totals by region, saved as PNG too",

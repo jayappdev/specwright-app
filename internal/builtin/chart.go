@@ -37,7 +37,8 @@ import (
 
 // ChartSpec is a chart's data and look.
 type ChartSpec struct {
-	Type   string        `json:"type"` // bar | line | stacked_bar
+	// bar | hbar | stacked_bar | line | area | stacked_area | scatter | pie | donut | heatmap
+	Type   string        `json:"type"`
 	Title  string        `json:"title,omitempty"`
 	XLabel string        `json:"x_label,omitempty"`
 	YLabel string        `json:"y_label,omitempty"`
@@ -45,6 +46,37 @@ type ChartSpec struct {
 	Series []ChartSeries `json:"series"`
 	Width  int           `json:"width,omitempty"`
 	Height int           `json:"height,omitempty"`
+	// ShowValues writes each value on its bar, point, slice or cell.
+	ShowValues bool `json:"show_values,omitempty"`
+}
+
+// chartTypes: each type and the names it is also asked by.
+var chartTypes = map[string][]string{
+	"bar":          {"bar", "bars", "column", "columns", "vbar"},
+	"hbar":         {"hbar", "horizontal_bar", "horizontal-bar", "barh", "horizontal", "horizontal bar"},
+	"stacked_bar":  {"stacked", "stacked_bar", "stacked-bar", "stackedbar"},
+	"line":         {"line", "lines", "multiline", "multi_line", "multi-line", "linechart"},
+	"area":         {"area", "area_chart"},
+	"stacked_area": {"stacked_area", "stacked-area", "stackedarea"},
+	"scatter":      {"scatter", "points", "xy", "scatterplot"},
+	"pie":          {"pie", "pie_chart"},
+	"donut":        {"donut", "doughnut", "ring"},
+	"heatmap":      {"heatmap", "heat", "heat_map", "matrix"},
+}
+
+// ChartTypeNames lists the chart types, for the tool's description.
+const ChartTypeNames = "bar, hbar (horizontal bars), stacked_bar, line (or multiline), area, stacked_area, scatter, pie, donut, heatmap"
+
+func chartType(t string) (string, bool) {
+	t = strings.ToLower(strings.TrimSpace(t))
+	for k, names := range chartTypes {
+		for _, n := range names {
+			if n == t {
+				return k, true
+			}
+		}
+	}
+	return "", false
 }
 
 // ChartSeries is one named row of values (one bar colour, one line).
@@ -63,18 +95,13 @@ var chartPalette = []string{"#4e79a7", "#f28e2b", "#e15759", "#76b7b2", "#59a14f
 // parseChart reads the tool's arguments: labels and series, or rows
 // (a JSON array of objects) with the x field and the y field(s).
 func parseChart(a args) (ChartSpec, error) {
-	s := ChartSpec{Type: strings.ToLower(firstStr(strings.TrimSpace(a.str("type")), "bar")), Title: a.str("title"),
-		XLabel: a.str("x_label"), YLabel: a.str("y_label"), Width: a.num("width", 800, 320, 2400), Height: a.num("height", 480, 240, 1600)}
-	switch s.Type {
-	case "bar", "bars", "column", "columns":
-		s.Type = "bar"
-	case "line", "lines", "multiline", "multi_line", "multi-line", "linechart":
-		s.Type = "line"
-	case "stacked", "stacked_bar", "stacked-bar", "stackedbar":
-		s.Type = "stacked_bar"
-	default:
-		return s, fmt.Errorf("type %q: use bar, line (one or more series: a multi-line chart) or stacked_bar", s.Type)
+	s := ChartSpec{Title: a.str("title"), XLabel: a.str("x_label"), YLabel: a.str("y_label"),
+		Width: a.num("width", 800, 320, 2400), Height: a.num("height", 480, 240, 1600), ShowValues: a.flag("show_values")}
+	t, ok := chartType(firstStr(a.str("type"), "bar"))
+	if !ok {
+		return s, fmt.Errorf("type %q: use %s", a.str("type"), ChartTypeNames)
 	}
+	s.Type = t
 	data := any(a)
 	if d, ok := a["data"]; ok { // everything inside data, as an object or its JSON text
 		switch x := d.(type) {
@@ -114,7 +141,13 @@ func parseChart(a args) (ChartSpec, error) {
 		if len(ys) == 0 {
 			ys = strList(a["y"])
 		}
-		if err := fromRows(&s, list, x, ys); err != nil {
+		var err error
+		if s.Type == "heatmap" {
+			err = heatFromRows(&s, list, x, firstStr(strField(get("y")), a.str("y")), firstStr(strField(get("value")), a.str("value")))
+		} else {
+			err = fromRows(&s, list, x, ys)
+		}
+		if err != nil {
 			return s, err
 		}
 	} else {
@@ -151,9 +184,9 @@ func fromRows(s *ChartSpec, rows []any, x string, ys []string) error {
 	if first == nil {
 		return errors.New("rows must be objects, e.g. [{\"month\": \"Jan\", \"sales\": 12}]")
 	}
-	if x == "" { // the first text field
+	if x == "" { // the first text field (a scatter: the first number field)
 		for _, k := range sortedFields(first) {
-			if _, isNum := first[k].(float64); !isNum {
+			if _, isNum := first[k].(float64); isNum == (s.Type == "scatter") {
 				x = k
 				break
 			}
@@ -182,6 +215,84 @@ func fromRows(s *ChartSpec, rows []any, x string, ys []string) error {
 	return nil
 }
 
+// heatFromRows builds a heatmap's grid from rows: x the column field, y
+// the row field, value the number (summed where rows repeat a cell).
+func heatFromRows(s *ChartSpec, rows []any, x, y, value string) error {
+	if len(rows) == 0 {
+		return errors.New("rows is empty: there is nothing to chart")
+	}
+	first, _ := rows[0].(map[string]any)
+	if first == nil {
+		return errors.New("rows must be objects, e.g. [{\"day\": \"Mon\", \"hour\": \"9\", \"builds\": 4}]")
+	}
+	var texts, nums []string
+	for _, k := range sortedFields(first) {
+		if _, isNum := first[k].(float64); isNum {
+			nums = append(nums, k)
+		} else {
+			texts = append(texts, k)
+		}
+	}
+	if x == "" && len(texts) > 0 {
+		x = texts[0]
+	}
+	if y == "" {
+		for _, k := range append(texts, nums...) {
+			if k != x && k != value {
+				y = k
+				break
+			}
+		}
+	}
+	if value == "" {
+		for _, k := range nums {
+			if k != x && k != y {
+				value = k
+				break
+			}
+		}
+	}
+	if x == "" || y == "" || value == "" {
+		return errors.New("a heatmap from rows needs x (the columns), y (the rows) and value (the number)")
+	}
+	col, row := map[string]int{}, map[string]int{}
+	cells := map[[2]int]float64{}
+	seen := map[[2]int]bool{}
+	for _, r := range rows {
+		m, _ := r.(map[string]any)
+		cx, cy := cellText(lookupField(m, x)), cellText(lookupField(m, y))
+		if _, ok := col[cx]; !ok {
+			col[cx] = len(s.Labels)
+			s.Labels = append(s.Labels, cx)
+		}
+		if _, ok := row[cy]; !ok {
+			row[cy] = len(s.Series)
+			s.Series = append(s.Series, ChartSeries{Name: cy})
+		}
+		if v := number(lookupField(m, value)); v != nil {
+			k := [2]int{row[cy], col[cx]}
+			cells[k] += *v
+			seen[k] = true
+		}
+	}
+	for i := range s.Series {
+		s.Series[i].Values = make([]*float64, len(s.Labels))
+		for j := range s.Labels {
+			if k := [2]int{i, j}; seen[k] {
+				v := cells[k]
+				s.Series[i].Values[j] = &v
+			}
+		}
+	}
+	if s.YLabel == "" {
+		s.YLabel = y
+	}
+	if s.XLabel == "" {
+		s.XLabel = x
+	}
+	return nil
+}
+
 // lookupField reads a field, or a dotted path (customer.name).
 func lookupField(m map[string]any, path string) any {
 	var cur any = m
@@ -199,8 +310,11 @@ func checkChart(s *ChartSpec) error {
 	if len(s.Series) == 0 {
 		return errors.New("give the data: labels and series ([{name, values}]), or rows with x and y")
 	}
-	if len(s.Series) > maxChartSeries {
+	if len(s.Series) > maxChartSeries && s.Type != "heatmap" {
 		return fmt.Errorf("at most %d series in one chart", maxChartSeries)
+	}
+	if s.Type == "heatmap" && len(s.Series) > 200 {
+		return errors.New("at most 200 rows in a heatmap")
 	}
 	n := len(s.Labels)
 	for _, sr := range s.Series {
@@ -231,6 +345,24 @@ func checkChart(s *ChartSpec) error {
 	}
 	if !any {
 		return errors.New("the series have no numbers")
+	}
+	switch s.Type {
+	case "scatter":
+		for _, l := range s.Labels {
+			if number(l) == nil {
+				return fmt.Errorf("a scatter chart needs numbers on the x axis, not %q: choose a number field as x", l)
+			}
+		}
+	case "pie", "donut":
+		sum := 0.0
+		for _, v := range s.Series[0].Values {
+			if v != nil && *v > 0 {
+				sum += *v
+			}
+		}
+		if sum <= 0 {
+			return errors.New("a pie needs positive values")
+		}
 	}
 	return nil
 }
@@ -327,7 +459,7 @@ func sortedFields(m map[string]any) []string {
 // --- layout -----------------------------------------------------------------
 
 type prim struct {
-	kind   string // rect | line | path | circle | text
+	kind   string // rect | line | path | poly | circle | text
 	x, y   float64
 	w, h   float64
 	x2, y2 float64
@@ -339,6 +471,9 @@ type prim struct {
 	size   float64
 	anchor string // start | middle | end
 	bold   bool
+	// poly: a filled polygon (pts); opacity 0 is opaque; stroke an outline
+	opacity float64
+	stroke  string
 }
 
 func niceStep(span float64, ticks int) float64 {
@@ -378,54 +513,100 @@ func chartClip(s string, n int) string {
 
 // layout places everything in pixels.
 func layout(s ChartSpec) []prim {
-	W, H := float64(s.Width), float64(s.Height)
-	var ps []prim
-	text := func(x, y float64, t string, size float64, anchor string, bold bool, col string) {
-		ps = append(ps, prim{kind: "text", x: x, y: y, text: t, size: size, anchor: anchor, bold: bold, color: col})
+	L := &chartLayout{s: s, W: float64(s.Width), H: float64(s.Height)}
+	L.header()
+	switch s.Type {
+	case "pie", "donut":
+		L.pie()
+	case "heatmap":
+		L.heatmap()
+	case "hbar":
+		L.hbar()
+	case "scatter":
+		L.scatter()
+	default:
+		L.axes()
 	}
-	top := 20.0
+	return L.ps
+}
+
+type chartLayout struct {
+	s    ChartSpec
+	W, H float64
+	top  float64 // where the plot may start, under the title, legend and caption
+	ps   []prim
+}
+
+func (L *chartLayout) text(x, y float64, t string, size float64, anchor string, bold bool, col string) {
+	L.ps = append(L.ps, prim{kind: "text", x: x, y: y, text: t, size: size, anchor: anchor, bold: bold, color: col})
+}
+
+func (L *chartLayout) add(p prim) { L.ps = append(L.ps, p) }
+
+func seriesColor(i int) string { return chartPalette[i%len(chartPalette)] }
+
+// header: the title, the legend (one entry per series; a pie's are its
+// slices, a heatmap has its own scale) and the y caption.
+func (L *chartLayout) header() {
+	s := L.s
+	L.top = 20
 	if s.Title != "" {
-		text(W/2, 28, chartClip(s.Title, 90), 18, "middle", true, "#1f2328")
-		top = 44
+		L.text(L.W/2, 28, chartClip(s.Title, 90), 18, "middle", true, "#1f2328")
+		L.top = 44
 	}
-	if len(s.Series) > 1 { // the legend, under the title
-		x := 64.0
-		y := top + 8
+	if len(s.Series) > 1 && s.Type != "pie" && s.Type != "donut" && s.Type != "heatmap" {
+		x, y := 64.0, L.top+8
 		for i, sr := range s.Series {
-			c := chartPalette[i%len(chartPalette)]
 			label := chartClip(sr.Name, 24)
 			wid := 22 + float64(len([]rune(label)))*7.2 + 18
-			if x+wid > W-16 {
+			if x+wid > L.W-16 {
 				x, y = 64, y+20
 			}
-			ps = append(ps, prim{kind: "rect", x: x, y: y - 9, w: 12, h: 12, color: c})
-			text(x+18, y+1, label, 12, "start", false, "#3a3f45")
+			L.add(prim{kind: "rect", x: x, y: y - 9, w: 12, h: 12, color: seriesColor(i)})
+			L.text(x+18, y+1, label, 12, "start", false, "#3a3f45")
 			x += wid
 		}
-		top = y + 20
+		L.top = y + 20
 	}
-	if s.YLabel != "" {
-		text(16, top+4, chartClip(s.YLabel, 60), 12, "start", true, "#57606a")
-		top += 14
+	if s.YLabel != "" && s.Type != "pie" && s.Type != "donut" {
+		L.text(16, L.top+4, chartClip(s.YLabel, 60), 12, "start", true, "#57606a")
+		L.top += 14
 	}
-	left, right, bottom := 64.0, 24.0, 52.0
-	if s.XLabel != "" {
-		bottom += 18
+}
+
+// scale is a nice value axis over [lo, hi].
+type scale struct{ lo, hi, step float64 }
+
+func niceScale(lo, hi float64, fromZero bool) scale {
+	if fromZero || lo > 0 && hi > 0 && lo/hi < 0.5 {
+		lo = math.Min(lo, 0)
 	}
-	pw, ph := W-left-right, H-top-bottom-8
-	py := top + 8
-	// the value range (stacked: the sums)
-	lo, hi := 0.0, 0.0
-	first := true
-	n := len(s.Labels)
-	for i := 0; i < n; i++ {
+	if hi <= lo {
+		hi = lo + 1
+	}
+	step := niceStep(hi-lo, 5)
+	return scale{math.Floor(lo/step) * step, math.Ceil(hi/step) * step, step}
+}
+
+func (sc scale) ticks() []float64 {
+	var out []float64
+	for v := sc.lo; v <= sc.hi+sc.step/2; v += sc.step {
+		out = append(out, v)
+	}
+	return out
+}
+
+// valueRange: the smallest and largest value (stacked: the sums).
+func valueRange(s ChartSpec, stacked bool) (float64, float64) {
+	lo, hi, first := 0.0, 0.0, true
+	for i := range s.Labels {
 		pos, neg := 0.0, 0.0
 		for _, sr := range s.Series {
 			v := sr.Values[i]
 			if v == nil {
 				continue
 			}
-			if s.Type == "stacked_bar" {
+			if stacked {
 				if *v >= 0 {
 					pos += *v
 				} else {
@@ -438,53 +619,67 @@ func layout(s ChartSpec) []prim {
 			}
 			lo, hi = math.Min(lo, *v), math.Max(hi, *v)
 		}
-		if s.Type == "stacked_bar" {
+		if stacked {
 			lo, hi = math.Min(lo, neg), math.Max(hi, pos)
 		}
 	}
-	if s.Type != "line" || lo > 0 { // bars start at zero; lines may float
-		lo = math.Min(lo, 0)
+	return lo, hi
+}
+
+// axes: bar, stacked_bar, line, area and stacked_area, labels along x.
+func (L *chartLayout) axes() {
+	s := L.s
+	left, right, bottom := 64.0, 24.0, 52.0
+	if s.XLabel != "" {
+		bottom += 18
 	}
-	if hi <= lo {
-		hi = lo + 1
+	pw, ph := L.W-left-right, L.H-L.top-bottom-8
+	py := L.top + 8
+	stacked := s.Type == "stacked_bar" || s.Type == "stacked_area"
+	lo, hi := valueRange(s, stacked)
+	sc := niceScale(lo, hi, s.Type != "line")
+	ys := func(v float64) float64 { return py + ph - (v-sc.lo)/(sc.hi-sc.lo)*ph }
+	for _, v := range sc.ticks() {
+		L.add(prim{kind: "line", x: left, y: ys(v), x2: left + pw, y2: ys(v), color: "#e6e8eb", width: 1})
+		L.text(left-8, ys(v)+4, fmtNum(v), 11, "end", false, "#57606a")
 	}
-	step := niceStep(hi-lo, 5)
-	lo, hi = math.Floor(lo/step)*step, math.Ceil(hi/step)*step
-	ys := func(v float64) float64 { return py + ph - (v-lo)/(hi-lo)*ph }
-	// grid and y ticks
-	for v := lo; v <= hi+step/2; v += step {
-		y := ys(v)
-		ps = append(ps, prim{kind: "line", x: left, y: y, x2: left + pw, y2: y, color: "#e6e8eb", width: 1})
-		text(left-8, y+4, fmtNum(v), 11, "end", false, "#57606a")
+	if sc.lo < 0 {
+		L.add(prim{kind: "line", x: left, y: ys(0), x2: left + pw, y2: ys(0), color: "#8c959f", width: 1})
 	}
-	if lo < 0 {
-		ps = append(ps, prim{kind: "line", x: left, y: ys(0), x2: left + pw, y2: ys(0), color: "#8c959f", width: 1})
-	}
-	ps = append(ps, prim{kind: "line", x: left, y: py + ph, x2: left + pw, y2: py + ph, color: "#8c959f", width: 1})
+	L.add(prim{kind: "line", x: left, y: py + ph, x2: left + pw, y2: py + ph, color: "#8c959f", width: 1})
+	n := len(s.Labels)
 	band := pw / float64(n)
 	xc := func(i int) float64 { return left + band*(float64(i)+0.5) }
-	// x labels: as many as fit
-	every := int(math.Ceil(float64(n) * 64 / pw))
-	every = max(every, 1)
+	every := max(int(math.Ceil(float64(n)*64/pw)), 1)
 	for i := 0; i < n; i += every {
-		text(xc(i), py+ph+18, chartClip(s.Labels[i], max(4, int(band*float64(every)/7))), 11, "middle", false, "#57606a")
+		L.text(xc(i), py+ph+18, chartClip(s.Labels[i], max(4, int(band*float64(every)/7))), 11, "middle", false, "#57606a")
 	}
 	if s.XLabel != "" {
-		text(left+pw/2, H-12, chartClip(s.XLabel, 80), 12, "middle", true, "#57606a")
+		L.text(left+pw/2, L.H-12, chartClip(s.XLabel, 80), 12, "middle", true, "#57606a")
 	}
+	valueText := func(x, y float64, v float64) {
+		L.text(x, y, fmtNum(v), 10, "middle", false, "#3a3f45")
+	}
+	base := ys(math.Max(sc.lo, math.Min(0, sc.hi)))
 	switch s.Type {
 	case "bar":
 		k := float64(len(s.Series))
 		bw := math.Max(1, band*0.8/k)
 		for si, sr := range s.Series {
-			c := chartPalette[si%len(chartPalette)]
 			for i, v := range sr.Values {
 				if v == nil {
 					continue
 				}
 				x := left + band*float64(i) + band*0.1 + bw*float64(si)
 				y0, y1 := ys(0), ys(*v)
-				ps = append(ps, prim{kind: "rect", x: x, y: math.Min(y0, y1), w: math.Max(bw-1, 1), h: math.Abs(y0 - y1), color: c})
+				L.add(prim{kind: "rect", x: x, y: math.Min(y0, y1), w: math.Max(bw-1, 1), h: math.Abs(y0 - y1), color: seriesColor(si)})
+				if s.ShowValues && bw >= 14 {
+					if *v >= 0 {
+						valueText(x+bw/2, y1-4, *v)
+					} else {
+						valueText(x+bw/2, y1+12, *v)
+					}
+				}
 			}
 		}
 	case "stacked_bar":
@@ -496,27 +691,61 @@ func layout(s ChartSpec) []prim {
 				if v == nil || *v == 0 {
 					continue
 				}
-				c := chartPalette[si%len(chartPalette)]
-				base := pos
+				from := pos
 				if *v < 0 {
-					base = neg
+					from = neg
 				}
-				y0, y1 := ys(base), ys(base+*v)
-				ps = append(ps, prim{kind: "rect", x: xc(i) - bw/2, y: math.Min(y0, y1), w: bw, h: math.Abs(y0 - y1), color: c})
+				y0, y1 := ys(from), ys(from+*v)
+				L.add(prim{kind: "rect", x: xc(i) - bw/2, y: math.Min(y0, y1), w: bw, h: math.Abs(y0 - y1), color: seriesColor(si)})
+				if s.ShowValues && math.Abs(y0-y1) >= 14 && bw >= 18 {
+					L.text(xc(i), (y0+y1)/2+4, fmtNum(*v), 10, "middle", false, "#ffffff")
+				}
 				if *v < 0 {
 					neg += *v
 				} else {
 					pos += *v
 				}
 			}
+			if s.ShowValues && bw >= 18 && pos > 0 {
+				valueText(xc(i), ys(pos)-4, pos)
+			}
 		}
-	case "line":
+	case "line", "area", "stacked_area":
+		cum := make([]float64, n) // stacked: the sums so far
 		for si, sr := range s.Series {
-			c := chartPalette[si%len(chartPalette)]
+			c := seriesColor(si)
+			// the area under the line (to the axis, or to the series below)
+			if s.Type != "line" {
+				var seg [][2]float64
+				var lower []float64
+				flush := func() {
+					if len(seg) > 1 {
+						poly := append([][2]float64{}, seg...)
+						for k := len(seg) - 1; k >= 0; k-- {
+							poly = append(poly, [2]float64{seg[k][0], lower[k]})
+						}
+						L.add(prim{kind: "poly", pts: poly, color: c, opacity: 0.28})
+					}
+					seg, lower = nil, nil
+				}
+				for i, v := range sr.Values {
+					if v == nil {
+						flush()
+						continue
+					}
+					bottomY, topV := base, *v
+					if s.Type == "stacked_area" {
+						bottomY, topV = ys(cum[i]), cum[i]+*v
+					}
+					seg = append(seg, [2]float64{xc(i), ys(topV)})
+					lower = append(lower, bottomY)
+				}
+				flush()
+			}
 			var seg [][2]float64
 			flush := func() {
 				if len(seg) > 1 {
-					ps = append(ps, prim{kind: "path", pts: seg, color: c, width: 2.2})
+					L.add(prim{kind: "path", pts: seg, color: c, width: 2.2})
 				}
 				seg = nil
 			}
@@ -525,19 +754,283 @@ func layout(s ChartSpec) []prim {
 					flush()
 					continue
 				}
-				seg = append(seg, [2]float64{xc(i), ys(*v)})
+				y := *v
+				if s.Type == "stacked_area" {
+					y = cum[i] + *v
+				}
+				seg = append(seg, [2]float64{xc(i), ys(y)})
 			}
 			flush()
-			if n <= 60 {
-				for i, v := range sr.Values {
-					if v != nil {
-						ps = append(ps, prim{kind: "circle", x: xc(i), y: ys(*v), w: 3, color: c})
-					}
+			for i, v := range sr.Values {
+				if v == nil {
+					continue
+				}
+				y := *v
+				if s.Type == "stacked_area" {
+					y = cum[i] + *v
+					cum[i] = y
+				}
+				if n <= 60 {
+					L.add(prim{kind: "circle", x: xc(i), y: ys(y), w: 3, color: c})
+				}
+				if s.ShowValues && n <= 40 {
+					valueText(xc(i), ys(y)-8, *v)
 				}
 			}
 		}
 	}
-	return ps
+}
+
+// hbar: horizontal bars, the labels down the left (long names fit).
+func (L *chartLayout) hbar() {
+	s := L.s
+	longest := 0
+	for _, l := range s.Labels {
+		longest = max(longest, len([]rune(chartClip(l, 32))))
+	}
+	left := math.Min(260, math.Max(60, float64(longest)*6.6+16))
+	right, bottom := 40.0, 36.0
+	if s.XLabel != "" {
+		bottom += 18
+	}
+	pw, ph := L.W-left-right, L.H-L.top-bottom-8
+	py := L.top + 8
+	lo, hi := valueRange(s, false)
+	sc := niceScale(lo, hi, true)
+	xs := func(v float64) float64 { return left + (v-sc.lo)/(sc.hi-sc.lo)*pw }
+	for _, v := range sc.ticks() {
+		L.add(prim{kind: "line", x: xs(v), y: py, x2: xs(v), y2: py + ph, color: "#e6e8eb", width: 1})
+		L.text(xs(v), py+ph+16, fmtNum(v), 11, "middle", false, "#57606a")
+	}
+	L.add(prim{kind: "line", x: xs(0), y: py, x2: xs(0), y2: py + ph, color: "#8c959f", width: 1})
+	n := len(s.Labels)
+	band := ph / float64(n)
+	k := float64(len(s.Series))
+	bh := math.Max(1, band*0.8/k)
+	every := max(int(math.Ceil(float64(n)*14/ph)), 1)
+	for i := 0; i < n; i += every {
+		L.text(left-8, py+band*(float64(i)+0.5)+4, chartClip(s.Labels[i], 32), 11, "end", false, "#3a3f45")
+	}
+	for si, sr := range s.Series {
+		for i, v := range sr.Values {
+			if v == nil {
+				continue
+			}
+			y := py + band*float64(i) + band*0.1 + bh*float64(si)
+			x0, x1 := xs(0), xs(*v)
+			L.add(prim{kind: "rect", x: math.Min(x0, x1), y: y, w: math.Abs(x1 - x0), h: math.Max(bh-1, 1), color: seriesColor(si)})
+			if s.ShowValues && bh >= 10 {
+				if *v >= 0 {
+					L.text(x1+4, y+bh/2+4, fmtNum(*v), 10, "start", false, "#3a3f45")
+				} else {
+					L.text(x1-4, y+bh/2+4, fmtNum(*v), 10, "end", false, "#3a3f45")
+				}
+			}
+		}
+	}
+	if s.XLabel != "" {
+		L.text(left+pw/2, L.H-12, chartClip(s.XLabel, 80), 12, "middle", true, "#57606a")
+	}
+}
+
+// scatter: numbers on both axes; each series a colour of points.
+func (L *chartLayout) scatter() {
+	s := L.s
+	left, right, bottom := 64.0, 24.0, 44.0
+	if s.XLabel != "" {
+		bottom += 18
+	}
+	pw, ph := L.W-left-right, L.H-L.top-bottom-8
+	py := L.top + 8
+	xlo, xhi, first := 0.0, 0.0, true
+	for _, l := range s.Labels {
+		if v := number(l); v != nil {
+			if first {
+				xlo, xhi, first = *v, *v, false
+			}
+			xlo, xhi = math.Min(xlo, *v), math.Max(xhi, *v)
+		}
+	}
+	xsc := niceScale(xlo, xhi, false)
+	lo, hi := valueRange(s, false)
+	ysc := niceScale(lo, hi, false)
+	xs := func(v float64) float64 { return left + (v-xsc.lo)/(xsc.hi-xsc.lo)*pw }
+	ys := func(v float64) float64 { return py + ph - (v-ysc.lo)/(ysc.hi-ysc.lo)*ph }
+	for _, v := range ysc.ticks() {
+		L.add(prim{kind: "line", x: left, y: ys(v), x2: left + pw, y2: ys(v), color: "#e6e8eb", width: 1})
+		L.text(left-8, ys(v)+4, fmtNum(v), 11, "end", false, "#57606a")
+	}
+	for _, v := range xsc.ticks() {
+		L.add(prim{kind: "line", x: xs(v), y: py, x2: xs(v), y2: py + ph, color: "#f0f1f3", width: 1})
+		L.text(xs(v), py+ph+18, fmtNum(v), 11, "middle", false, "#57606a")
+	}
+	L.add(prim{kind: "line", x: left, y: py + ph, x2: left + pw, y2: py + ph, color: "#8c959f", width: 1})
+	L.add(prim{kind: "line", x: left, y: py, x2: left, y2: py + ph, color: "#8c959f", width: 1})
+	for si, sr := range s.Series {
+		for i, v := range sr.Values {
+			x := number(s.Labels[i])
+			if v == nil || x == nil {
+				continue
+			}
+			L.add(prim{kind: "circle", x: xs(*x), y: ys(*v), w: 4, color: seriesColor(si), opacity: 0.8})
+			if s.ShowValues && len(s.Labels) <= 40 {
+				L.text(xs(*x)+6, ys(*v)-6, fmtNum(*v), 10, "start", false, "#3a3f45")
+			}
+		}
+	}
+	if s.XLabel != "" {
+		L.text(left+pw/2, L.H-12, chartClip(s.XLabel, 80), 12, "middle", true, "#57606a")
+	}
+}
+
+// pie and donut: the first series, one slice per label; the legend on the
+// right with each slice's value and share.
+func (L *chartLayout) pie() {
+	s := L.s
+	vals := s.Series[0].Values
+	total := 0.0
+	type slice struct {
+		label string
+		v     float64
+		i     int
+	}
+	var sl []slice
+	for i, v := range vals {
+		if v != nil && *v > 0 {
+			sl = append(sl, slice{s.Labels[i], *v, i})
+			total += *v
+		}
+	}
+	legendW := math.Min(300, L.W*0.38)
+	cx := (L.W - legendW) / 2
+	cy := L.top + (L.H-L.top-16)/2
+	r := math.Min((L.W-legendW)/2-24, (L.H-L.top-24)/2)
+	inner := 0.0
+	if s.Type == "donut" {
+		inner = r * 0.56
+	}
+	a0 := -math.Pi / 2
+	for k, x := range sl {
+		a1 := a0 + x.v/total*2*math.Pi
+		steps := max(int((a1-a0)/(2*math.Pi)*120), 2)
+		var poly [][2]float64
+		for t := 0; t <= steps; t++ {
+			a := a0 + (a1-a0)*float64(t)/float64(steps)
+			poly = append(poly, [2]float64{cx + r*math.Cos(a), cy + r*math.Sin(a)})
+		}
+		if inner > 0 {
+			for t := steps; t >= 0; t-- {
+				a := a0 + (a1-a0)*float64(t)/float64(steps)
+				poly = append(poly, [2]float64{cx + inner*math.Cos(a), cy + inner*math.Sin(a)})
+			}
+		} else {
+			poly = append(poly, [2]float64{cx, cy})
+		}
+		L.add(prim{kind: "poly", pts: poly, color: seriesColor(k), stroke: "#ffffff"})
+		// the share on the slice, when it has room
+		if a1-a0 > 0.28 {
+			mid := (a0 + a1) / 2
+			rr := r * 0.66
+			if inner > 0 {
+				rr = (r + inner) / 2
+			}
+			label := fmt.Sprintf("%.0f%%", x.v/total*100)
+			if s.ShowValues {
+				label = fmtNum(x.v)
+			}
+			L.text(cx+rr*math.Cos(mid), cy+rr*math.Sin(mid)+4, label, 11, "middle", true, "#ffffff")
+		}
+		a0 = a1
+	}
+	if inner > 0 {
+		L.text(cx, cy+2, fmtNum(total), 20, "middle", true, "#1f2328")
+		L.text(cx, cy+20, firstStr(s.YLabel, "total"), 11, "middle", false, "#57606a")
+	}
+	// the legend
+	lx := L.W - legendW + 8
+	ly := cy - float64(len(sl))*11
+	ly = math.Max(ly, L.top+12)
+	for k, x := range sl {
+		if ly > L.H-12 {
+			L.text(lx, ly, fmt.Sprintf("… %d more", len(sl)-k), 11, "start", false, "#57606a")
+			break
+		}
+		L.add(prim{kind: "rect", x: lx, y: ly - 9, w: 12, h: 12, color: seriesColor(k)})
+		L.text(lx+18, ly+1, chartClip(x.label, 24), 12, "start", false, "#3a3f45")
+		L.text(L.W-12, ly+1, fmt.Sprintf("%s · %.0f%%", fmtNum(x.v), x.v/total*100), 11, "end", false, "#57606a")
+		ly += 22
+	}
+}
+
+// heatmap: a grid, the labels across and the series down, each cell's
+// colour by its value (a scale under the grid).
+func (L *chartLayout) heatmap() {
+	s := L.s
+	longest := 0
+	for _, sr := range s.Series {
+		longest = max(longest, len([]rune(chartClip(sr.Name, 24))))
+	}
+	left := math.Min(200, math.Max(48, float64(longest)*6.6+16))
+	right, bottom := 16.0, 64.0
+	if s.XLabel != "" {
+		bottom += 16
+	}
+	pw, ph := L.W-left-right, L.H-L.top-bottom
+	py := L.top + 4
+	cols, rows := len(s.Labels), len(s.Series)
+	cw, rh := pw/float64(cols), ph/float64(rows)
+	lo, hi := valueRange(s, false)
+	if hi <= lo {
+		hi = lo + 1
+	}
+	for ri, sr := range s.Series {
+		if rh >= 10 || ri%max(int(math.Ceil(12/rh)), 1) == 0 {
+			L.text(left-8, py+rh*(float64(ri)+0.5)+4, chartClip(sr.Name, 24), 11, "end", false, "#3a3f45")
+		}
+		for ci, v := range sr.Values {
+			x, y := left+cw*float64(ci), py+rh*float64(ri)
+			if v == nil {
+				L.add(prim{kind: "rect", x: x + 0.5, y: y + 0.5, w: cw - 1, h: rh - 1, color: "#f6f8fa"})
+				continue
+			}
+			t := (*v - lo) / (hi - lo)
+			c := heatColor(t)
+			L.add(prim{kind: "rect", x: x + 0.5, y: y + 0.5, w: math.Max(cw-1, 0.5), h: math.Max(rh-1, 0.5), color: c})
+			if s.ShowValues && cw >= 26 && rh >= 14 {
+				fg := "#1f2328"
+				if t > 0.55 {
+					fg = "#ffffff"
+				}
+				L.text(x+cw/2, y+rh/2+4, fmtNum(*v), 10, "middle", false, fg)
+			}
+		}
+	}
+	every := max(int(math.Ceil(float64(cols)*44/pw)), 1)
+	for ci := 0; ci < cols; ci += every {
+		L.text(left+cw*(float64(ci)+0.5), py+ph+16, chartClip(s.Labels[ci], max(3, int(cw*float64(every)/7))), 11, "middle", false, "#57606a")
+	}
+	// the scale
+	sy := py + ph + 30
+	sx, sw := left, math.Min(240, pw)
+	for k := 0; k < 40; k++ {
+		L.add(prim{kind: "rect", x: sx + sw*float64(k)/40, y: sy, w: sw/40 + 0.5, h: 8, color: heatColor(float64(k) / 39)})
+	}
+	L.text(sx, sy+20, fmtNum(lo), 10, "start", false, "#57606a")
+	L.text(sx+sw, sy+20, fmtNum(hi), 10, "end", false, "#57606a")
+	if s.XLabel != "" {
+		L.text(left+pw/2, L.H-8, chartClip(s.XLabel, 80), 12, "middle", true, "#57606a")
+	}
+}
+
+// heatColor runs from a pale to a deep blue (t in 0..1).
+func heatColor(t float64) string {
+	t = math.Max(0, math.Min(1, t))
+	from, to := [3]float64{0xef, 0xf3, 0xff}, [3]float64{0x08, 0x30, 0x6b}
+	var c [3]int
+	for i := range c {
+		c[i] = int(math.Round(from[i] + (to[i]-from[i])*t))
+	}
+	return fmt.Sprintf("#%02x%02x%02x", c[0], c[1], c[2])
 }
 
 // --- SVG ----------------------------------------------------------------------
@@ -569,8 +1062,25 @@ func ChartSVG(s ChartSpec, note string) string {
 				pts = append(pts, fmt.Sprintf("%.1f,%.1f", q[0], q[1]))
 			}
 			fmt.Fprintf(&b, "\n<polyline points=\"%s\" fill=\"none\" stroke=\"%s\" stroke-width=\"%.1f\" stroke-linejoin=\"round\" stroke-linecap=\"round\"/>", strings.Join(pts, " "), p.color, p.width)
+		case "poly":
+			var pts []string
+			for _, q := range p.pts {
+				pts = append(pts, fmt.Sprintf("%.1f,%.1f", q[0], q[1]))
+			}
+			extra := ""
+			if p.opacity > 0 {
+				extra += fmt.Sprintf(` fill-opacity="%.2f"`, p.opacity)
+			}
+			if p.stroke != "" {
+				extra += fmt.Sprintf(` stroke="%s" stroke-width="1.5" stroke-linejoin="round"`, p.stroke)
+			}
+			fmt.Fprintf(&b, "\n<polygon points=\"%s\" fill=\"%s\"%s/>", strings.Join(pts, " "), p.color, extra)
 		case "circle":
-			fmt.Fprintf(&b, "\n<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%.1f\" fill=\"%s\"/>", p.x, p.y, p.w, p.color)
+			op := ""
+			if p.opacity > 0 {
+				op = fmt.Sprintf(` fill-opacity="%.2f"`, p.opacity)
+			}
+			fmt.Fprintf(&b, "\n<circle cx=\"%.1f\" cy=\"%.1f\" r=\"%.1f\" fill=\"%s\"%s/>", p.x, p.y, p.w, p.color, op)
 		case "text":
 			weight := ""
 			if p.bold {
@@ -631,7 +1141,11 @@ func ChartPNG(s ChartSpec) ([]byte, error) {
 	W, H := int(float64(s.Width)*k), int(float64(s.Height)*k)
 	img := image.NewRGBA(image.Rect(0, 0, W, H))
 	draw.Draw(img, img.Bounds(), &image.Uniform{color.White}, image.Point{}, draw.Src)
-	fill := func(poly [][2]float64, c string) {
+	fillA := func(poly [][2]float64, c string, opacity float64) {
+		col := color.NRGBA(hexColor(c))
+		if opacity > 0 {
+			col.A = uint8(math.Round(opacity * 255))
+		}
 		r := vector.NewRasterizer(W, H)
 		r.DrawOp = draw.Over
 		for i, p := range poly {
@@ -642,8 +1156,9 @@ func ChartPNG(s ChartSpec) ([]byte, error) {
 			}
 		}
 		r.ClosePath()
-		r.Draw(img, img.Bounds(), &image.Uniform{hexColor(c)}, image.Point{})
+		r.Draw(img, img.Bounds(), &image.Uniform{col}, image.Point{})
 	}
+	fill := func(poly [][2]float64, c string) { fillA(poly, c, 0) }
 	stroke := func(x1, y1, x2, y2, w float64, c string) {
 		dx, dy := x2-x1, y2-y1
 		l := math.Hypot(dx, dy)
@@ -653,14 +1168,15 @@ func ChartPNG(s ChartSpec) ([]byte, error) {
 		nx, ny := -dy/l*w/2, dx/l*w/2
 		fill([][2]float64{{x1 + nx, y1 + ny}, {x2 + nx, y2 + ny}, {x2 - nx, y2 - ny}, {x1 - nx, y1 - ny}}, c)
 	}
-	circle := func(x, y, r float64, c string) {
+	circleA := func(x, y, r float64, c string, opacity float64) {
 		var poly [][2]float64
 		for i := 0; i < 20; i++ {
 			a := float64(i) / 20 * 2 * math.Pi
 			poly = append(poly, [2]float64{x + r*math.Cos(a), y + r*math.Sin(a)})
 		}
-		fill(poly, c)
+		fillA(poly, c, opacity)
 	}
+	circle := func(x, y, r float64, c string) { circleA(x, y, r, c, 0) }
 	faces := map[string]font.Face{}
 	face := func(size float64, bold bool) font.Face {
 		key := fmt.Sprint(size, bold)
@@ -691,8 +1207,16 @@ func ChartPNG(s ChartSpec) ([]byte, error) {
 				stroke(p.pts[i-1][0], p.pts[i-1][1], p.pts[i][0], p.pts[i][1], p.width, p.color)
 				circle(p.pts[i][0], p.pts[i][1], p.width/2, p.color) // round joins
 			}
+		case "poly":
+			fillA(p.pts, p.color, p.opacity)
+			if p.stroke != "" {
+				for i := range p.pts {
+					q := p.pts[(i+1)%len(p.pts)]
+					stroke(p.pts[i][0], p.pts[i][1], q[0], q[1], 1.5, p.stroke)
+				}
+			}
 		case "circle":
-			circle(p.x, p.y, p.w, p.color)
+			circleA(p.x, p.y, p.w, p.color, p.opacity)
 		case "text":
 			f := face(p.size, p.bold)
 			if f == nil {

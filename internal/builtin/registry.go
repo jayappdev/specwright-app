@@ -198,23 +198,26 @@ var registry = []Tool{
 		})},
 	// --- charts -----------------------------------------------------------
 	{Name: "chart", Title: "Chart", Group: "chart", run: chartTool,
-		Desc: "Draw a bar, line (one or more series: a multi-line chart) or stacked bar chart from data, and save it (out/charts/…, or path). " +
+		Desc: "Draw a chart from data and save it (out/charts/…, or path): bar, hbar (horizontal bars, for long labels), stacked_bar, line (one line per series: multiline), area, stacked_area, scatter, pie, donut or heatmap. " +
 			"Give labels and series ([{name, values}]), or rows (a JSON array of objects, e.g. a tool's or a query's result) with x (the label field) and y (the number field or fields; empty: every number field). " +
-			"It returns the chart as SVG, which SpecWright shows as a picture (with Export PNG); format png or both also saves a PNG.",
+			"pie and donut draw the first series, a slice per label. scatter needs numbers on x (name the x field). heatmap: rows with x (the columns), y (the rows) and value, or labels (columns) and series (rows). " +
+			"show_values writes each value on its bar, point, slice or cell. It returns the chart as SVG, which SpecWright shows as a picture (with Export PNG); format png or both also saves a PNG.",
 		Schema: obj(map[string]any{
-			"type":    map[string]any{"type": "string", "enum": []string{"bar", "line", "multiline", "stacked_bar"}, "description": "bar (default), line, multiline (a line per series) or stacked_bar"},
-			"title":   p("string", "The chart's title"),
-			"labels":  arr(map[string]any{"type": "string"}, "The x-axis labels (with series)"),
-			"series":  arr(obj(map[string]any{"name": p("string", "The series' name (legend)"), "values": arr(map[string]any{"type": "number"}, "One value per label")}, "values"), "The values: one series per bar colour or line"),
-			"rows":    map[string]any{"description": "Instead of labels and series: a JSON array of objects (or its JSON text), e.g. [{\"month\": \"Jan\", \"sales\": 12, \"returns\": 3}]"},
-			"x":       p("string", "With rows: the field for the labels (default: the first text field)"),
-			"y":       map[string]any{"description": "With rows: the number field(s) to draw, a name or a list (default: every number field)"},
-			"x_label": p("string", "The x-axis caption"),
-			"y_label": p("string", "The y-axis caption"),
-			"format":  map[string]any{"type": "string", "enum": []string{"svg", "png", "both"}, "description": "What to save: svg (default), png, or both"},
-			"path":    p("string", "Where to save, without the extension (default out/charts/<title>-<time>)"),
-			"width":   p("integer", "Width in pixels (default 800)"),
-			"height":  p("integer", "Height in pixels (default 480)"),
+			"type":        map[string]any{"type": "string", "enum": []string{"bar", "hbar", "stacked_bar", "line", "multiline", "area", "stacked_area", "scatter", "pie", "donut", "heatmap"}, "description": "The kind of chart (default bar)"},
+			"show_values": p("boolean", "Write each value on its bar, point, slice or cell"),
+			"value":       p("string", "heatmap with rows: the number field (y is then the row field)"),
+			"title":       p("string", "The chart's title"),
+			"labels":      arr(map[string]any{"type": "string"}, "The x-axis labels (with series)"),
+			"series":      arr(obj(map[string]any{"name": p("string", "The series' name (legend)"), "values": arr(map[string]any{"type": "number"}, "One value per label")}, "values"), "The values: one series per bar colour or line"),
+			"rows":        map[string]any{"description": "Instead of labels and series: a JSON array of objects (or its JSON text), e.g. [{\"month\": \"Jan\", \"sales\": 12, \"returns\": 3}]"},
+			"x":           p("string", "With rows: the field for the labels (default: the first text field)"),
+			"y":           map[string]any{"description": "With rows: the number field(s) to draw, a name or a list (default: every number field); a heatmap: the row field"},
+			"x_label":     p("string", "The x-axis caption"),
+			"y_label":     p("string", "The y-axis caption"),
+			"format":      map[string]any{"type": "string", "enum": []string{"svg", "png", "both"}, "description": "What to save: svg (default), png, or both"},
+			"path":        p("string", "Where to save, without the extension (default out/charts/<title>-<time>)"),
+			"width":       p("integer", "Width in pixels (default 800)"),
+			"height":      p("integer", "Height in pixels (default 480)"),
 		})},
 	// --- plan -------------------------------------------------------------
 	{Name: "ask_user", Title: "Ask the user", Group: "plan", ReadOnly: true, run: askUser,

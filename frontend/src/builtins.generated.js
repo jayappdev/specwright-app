@@ -936,7 +936,7 @@ export const BUILTINS = [
     "name": "chart",
     "title": "Chart",
     "group": "chart",
-    "description": "Draw a bar, line (one or more series: a multi-line chart) or stacked bar chart from data, and save it (out/charts/…, or path). Give labels and series ([{name, values}]), or rows (a JSON array of objects, e.g. a tool's or a query's result) with x (the label field) and y (the number field or fields; empty: every number field). It returns the chart as SVG, which SpecWright shows as a picture (with Export PNG); format png or both also saves a PNG.",
+    "description": "Draw a chart from data and save it (out/charts/…, or path): bar, hbar (horizontal bars, for long labels), stacked_bar, line (one line per series: multiline), area, stacked_area, scatter, pie, donut or heatmap. Give labels and series ([{name, values}]), or rows (a JSON array of objects, e.g. a tool's or a query's result) with x (the label field) and y (the number field or fields; empty: every number field). pie and donut draw the first series, a slice per label. scatter needs numbers on x (name the x field). heatmap: rows with x (the columns), y (the rows) and value, or labels (columns) and series (rows). show_values writes each value on its bar, point, slice or cell. It returns the chart as SVG, which SpecWright shows as a picture (with Export PNG); format png or both also saves a PNG.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
@@ -991,18 +991,33 @@ export const BUILTINS = [
           },
           "type": "array"
         },
+        "show_values": {
+          "description": "Write each value on its bar, point, slice or cell",
+          "type": "boolean"
+        },
         "title": {
           "description": "The chart's title",
           "type": "string"
         },
         "type": {
-          "description": "bar (default), line, multiline (a line per series) or stacked_bar",
+          "description": "The kind of chart (default bar)",
           "enum": [
             "bar",
+            "hbar",
+            "stacked_bar",
             "line",
             "multiline",
-            "stacked_bar"
+            "area",
+            "stacked_area",
+            "scatter",
+            "pie",
+            "donut",
+            "heatmap"
           ],
+          "type": "string"
+        },
+        "value": {
+          "description": "heatmap with rows: the number field (y is then the row field)",
           "type": "string"
         },
         "width": {
@@ -1018,7 +1033,7 @@ export const BUILTINS = [
           "type": "string"
         },
         "y": {
-          "description": "With rows: the number field(s) to draw, a name or a list (default: every number field)"
+          "description": "With rows: the number field(s) to draw, a name or a list (default: every number field); a heatmap: the row field"
         },
         "y_label": {
           "description": "The y-axis caption",
