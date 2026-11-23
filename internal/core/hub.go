@@ -344,7 +344,15 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	h.pkgs = extension.NewPackageStore(abs)
 	h.runner = &workflow.Runner{Bus: h.Bus, Store: h.Store, Agents: h.Agents, Workspace: abs,
 		Env: h.childEnv, MCPConfig: h.mcpConfig, OnStatus: h.onStepStatus,
-		ToolsReached: func(since time.Time) bool { return h.Bridge.LastContact().After(since) }}
+		ToolsReached: func(since time.Time) bool { return h.Bridge.LastContact().After(since) },
+		AskPermission: func(ctx context.Context, agentID, tool string, input map[string]any) (bool, string) {
+			a := h.AskPermission(ctx, extension.PermissionRequest{Agent: agentID, Tool: tool, Input: input})
+			return a.Allow, a.Message
+		},
+		AutoAllow: func(dirs []string) func(string, map[string]any) bool {
+			return func(tool string, input map[string]any) bool { return extension.AutoAllowCopilot(tool, input, dirs) }
+		},
+		AskUser: h.askAgentQuestion}
 	h.tools.SetRoot(abs)
 	h.watcher = watch.New(abs, time.Second)
 	w0 := h.watcher

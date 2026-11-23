@@ -43,6 +43,12 @@ type Runner struct {
 	// time (the bridge's last contact): a run that never did gets a
 	// tools.unreachable event, as its CLI did not load the MCP server.
 	ToolsReached func(since time.Time) bool
+	// AskPermission, AutoAllow and AskUser let an interactive run's agent
+	// put its permission questions and questions to the person in the app
+	// (Copilot hosted through its SDK; see agent.Request).
+	AskPermission func(ctx context.Context, agentID, tool string, input map[string]any) (bool, string)
+	AutoAllow     func(dirs []string) func(tool string, input map[string]any) bool
+	AskUser       func(ctx context.Context, question string, choices []string, freeform bool) (string, bool, error)
 
 	mu     sync.Mutex
 	active *Run
@@ -307,6 +313,12 @@ func (rn *Runner) once(parent context.Context, run *Run, drv agent.Driver, o Sta
 		AllowTools: []string{"mcp__agentbridge"}, Interactive: o.Interactive} // every agentbridge tool: built-ins + extension_managed
 	if rn.Env != nil {
 		req.Env = rn.Env()
+	}
+	if o.Interactive {
+		req.AskPermission, req.AskUser = rn.AskPermission, rn.AskUser
+		if rn.AutoAllow != nil {
+			req.AutoAllow = rn.AutoAllow(append([]string{dir}, o.AddDirs...))
+		}
 	}
 	if rn.MCPConfig != nil {
 		if p, done, err := rn.MCPConfig(!o.NoTools); err == nil {

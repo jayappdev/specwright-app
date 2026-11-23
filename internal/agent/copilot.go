@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -293,6 +294,14 @@ func (c *Copilot) Run(ctx context.Context, req Request, emit func(Event)) (Resul
 	bin, err := c.bin()
 	if err != nil {
 		return Result{}, err
+	}
+	if useSDK(req) { // a person is watching: SpecWright hosts the session (copilot_sdk.go)
+		res, err := c.runSDK(ctx, bin, req, emit)
+		if !errors.Is(err, errSDKUnavailable) {
+			return res, err
+		}
+		emit(Event{Type: "agent.log", Summary: "Copilot could not be hosted by SpecWright; running it as copilot -p, where commands needing approval may be refused",
+			Data: map[string]any{"line": err.Error()}})
 	}
 	if c.structured(ctx, bin) {
 		return c.runJSON(ctx, bin, req, emit)

@@ -47,6 +47,16 @@ type Request struct {
 	// about paths outside the project too, instead of refusing them, and
 	// asks about edits outside it (see Copilot.argsWith).
 	Interactive bool
+	// AskPermission asks the person in the app whether the agent may use a
+	// tool (Copilot hosted through its SDK, in an interactive run); agentID
+	// scopes "allow for this run". AutoAllow says which calls need no
+	// question (SpecWright's own tools, edits inside the run's folders).
+	AskPermission func(ctx context.Context, agentID, tool string, input map[string]any) (allow bool, message string)
+	AutoAllow     func(tool string, input map[string]any) bool
+	// AskUser puts the agent's question to the person (choices, or their
+	// own words when freeform); it returns the answer and whether it was
+	// typed rather than chosen.
+	AskUser func(ctx context.Context, question string, choices []string, freeform bool) (answer string, typed bool, err error)
 	// Hints are used only by the mock driver to decide which extension to call.
 	Hints []ToolHint
 }

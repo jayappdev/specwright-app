@@ -191,3 +191,10 @@ func editInside(tool string, input map[string]any, dirs []string) bool {
 	}
 	return false
 }
+
+// AutoAllowCopilot says whether a Copilot tool call needs no question:
+// SpecWright's own tools, and file edits inside dirs (the run's folders).
+// The -p hook and the SDK-hosted session (agent/copilot_sdk.go) share it.
+func AutoAllowCopilot(tool string, input map[string]any, dirs []string) bool {
+	return ownTool(tool) || ownToolCommand(tool, input) || editInside(tool, input, dirs)
+}
