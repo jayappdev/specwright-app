@@ -127,3 +127,20 @@ func TestSDKHandshakeLive(t *testing.T) {
 	}
 	_ = s.Disconnect()
 }
+
+// SendAndWait stops at 60 seconds when its context has no deadline: a turn
+// gets the run's own deadline, or a long one
+func TestSDKSendHasNoMinuteLimit(t *testing.T) {
+	ctx, cancel := sdkSendContext(context.Background())
+	defer cancel()
+	if d, ok := ctx.Deadline(); !ok || time.Until(d) < 23*time.Hour {
+		t.Fatalf("deadline %v %v", d, ok)
+	}
+	own, c2 := context.WithTimeout(context.Background(), 5*time.Minute)
+	defer c2()
+	ctx2, cancel2 := sdkSendContext(own)
+	defer cancel2()
+	if d, _ := ctx2.Deadline(); time.Until(d) > 6*time.Minute {
+		t.Fatal("a run's own deadline is kept")
+	}
+}

@@ -191,6 +191,20 @@ func mcpServers(path string) map[string]copilot.MCPServerConfig {
 	return out
 }
 
+// sdkMaxRun bounds one SDK-hosted turn. SendAndWait gives up after 60
+// seconds when its context has no deadline, which cut off longer prompts
+// (and any wait for the person to answer a permission question) with
+// "context deadline exceeded"; a run ends when it is stopped or its budget
+// is spent, as with copilot -p.
+const sdkMaxRun = 24 * time.Hour
+
+func sdkSendContext(ctx context.Context) (context.Context, context.CancelFunc) {
+	if _, ok := ctx.Deadline(); ok {
+		return ctx, func() {}
+	}
+	return context.WithTimeout(ctx, sdkMaxRun)
+}
+
 // runSDK runs req as an SDK-hosted session. errSDKUnavailable means the
 // runtime could not be started and nothing ran.
 func (c *Copilot) runSDK(ctx context.Context, bin string, req Request, emit func(Event)) (res Result, err error) {
@@ -243,7 +257,16 @@ func (c *Copilot) runSDK(ctx context.Context, bin string, req Request, emit func
 		}
 	})
 	defer off()
-	_, sendErr := session.SendAndWait(ctx, copilot.MessageOptions{Prompt: req.Prompt})
+	// stopping the run stops Copilot's work too (the SDK only stops waiting)
+	stopWatch := context.AfterFunc(ctx, func() {
+		actx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		_ = session.Abort(actx)
+	})
+	defer stopWatch()
+	sctx, cancelSend := sdkSendContext(ctx)
+	defer cancelSend()
+	_, sendErr := session.SendAndWait(sctx, copilot.MessageOptions{Prompt: req.Prompt})
 	if m, merr := session.RPC.Usage.GetMetrics(context.WithoutCancel(ctx)); merr == nil && m != nil {
 		if f, ferr := os.CreateTemp("", "specwright-copilot-usage-*.json"); ferr == nil {
 			b, _ := json.Marshal(m)
