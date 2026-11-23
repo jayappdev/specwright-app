@@ -44,6 +44,21 @@ attached read-only: Postgres, MySQL, SQLite, SQL Server, Oracle, DuckDB.
   keychain, or asks once), and lists them on Run flows before a run so they
   can be saved for scheduled runs. Values are quoted for the connect string
   and kept out of error messages.
+- Kerberos (no passwords): `"auth": "kerberos"` on a postgres or oracle
+  connection uses the ticket from `kinit`, or `keytab` + `principal` for a
+  private ticket (unattended runs); `krb5_conf`, `kerberos_service`.
+  - Oracle logs in as `/@target` (external authentication) with a
+    `sqlnet.ora` written for the run (or your own via `tns_admin` /
+    `TNS_ADMIN`). Oracle's client reads the ticket from a file:
+    `ticket_cache: "FILE:…"`, `KRB5CCNAME=FILE:…`, or a keytab (macOS keeps
+    tickets in its own store by default).
+  - Postgres: DuckDB's bundled Postgres driver is built without GSSAPI
+    ("GSSAPI support is not compiled in"), so the tables listed in `tables`
+    are read with `psql` (libpq with GSSAPI: `brew install libpq` or the
+    PostgreSQL client) and queried as `name.schema.table`.
+  - Tested without a KDC: the connect strings, `sqlnet.ora`, and the psql
+    path end to end with stand-in `kinit` / `psql`. A real Kerberos login
+    has not been tried here.
 - S3: `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (/ `AWS_SESSION_TOKEN`)
   when set, otherwise the AWS chain (profiles, SSO); `AWS_REGION`;
   `AWS_ENDPOINT_URL` for S3-compatible storage (MinIO, Cloudflare R2, Ceph),
@@ -53,7 +68,7 @@ attached read-only: Postgres, MySQL, SQLite, SQL Server, Oracle, DuckDB.
   `DUCKDB_TOOL_DIR=<a folder with @duckdb/node-api installed> node --test library/tools/duckdb_data_query/test/`
   (a project's `.codegen/tools/project/duckdb_data_query` has it once the
   tool has run there).
-- Its tool file carries a usage guide with eight worked examples (Tools › the
+- Its tool file carries a usage guide with nine worked examples (Tools › the
   tool › Test › Guide & examples, and the Flow step guide under Your tools):
   run them there, or open one as a flow with Try it in the designer.
 

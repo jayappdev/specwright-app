@@ -30,6 +30,8 @@
 //                ${NAME} is filled from the environment: a DB_* secret
 //                (SpecWright asks for DB_SALES the first time) or any variable
 //                set; values are quoted for the connect string.
+//                "auth": "kerberos" logs in with a Kerberos ticket instead of a
+//                password (see kerberos below).
 //   extensions   comma-separated, e.g. "httpfs, aws, oracle@community"
 //   input        a file with the previous step's output (a flow passes
 //                {{input_file}}): the table "input"
@@ -40,6 +42,19 @@
 //   save_mode    overwrite (default) | append: add the rows to what save_to
 //                already holds (accumulate results across runs)
 //
+// Kerberos ("auth": "kerberos" on a postgres or oracle connection): the
+// ticket in your cache (kinit), or "keytab" and "principal" for a private
+// one (unattended runs); "krb5_conf" when not /etc/krb5.conf.
+//   oracle: logs in as /@target (external authentication); the Oracle client
+//     is pointed at the ticket by a sqlnet.ora written for the run (unless
+//     "tns_admin" or TNS_ADMIN names your own). It reads tickets from a
+//     file: KRB5CCNAME=FILE:… (or a keytab). "kerberos_service" (default
+//     oracle) is the server's service name.
+//   postgres: DuckDB's own Postgres driver has no Kerberos, so the tables
+//     you list in "tables" (["public.orders"] or {"recent": "SELECT …"}) are
+//     read with psql (libpq with GSSAPI; "psql" or $PSQL names it) and are
+//     queried as <name>.<schema>.<table> (<name>.<key> for a query).
+//     "kerberos_service" (default postgres) is the server's krbsrvname.
 // Credentials: AWS keys from AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY
 // (/ AWS_SESSION_TOKEN), else its usual chain (~/.aws profiles, SSO);
 // AWS_REGION; AWS_ENDPOINT_URL for S3-compatible storage (MinIO, R2, Ceph);
@@ -49,7 +64,9 @@
 // extensions.duckdb.org), DUCKDB_HTTP_PROXY.
 "use strict";
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
+const { execFileSync } = require("node:child_process");
 
 const ARGS = ["sql", "sources", "connections", "extensions", "input", "format", "save_to", "max_rows", "save_mode"];
 function readArgs() {
@@ -143,6 +160,171 @@ function fromJDBC(d, type) {
     return [`Server=${m[1]}${m[2] ? "," + m[2] : ""}`, (kv.databasename || kv.database) && `Database=${kv.databasename || kv.database}`, kv.user && `User Id=${kv.user}`, kv.password && `Password=${kv.password}`].filter(Boolean).join(";");
   }
   fail(`the ${type} connection's JDBC string is not one I can convert: give it as a dsn or as host, port, database, user and password`);
+}
+
+// --- Kerberos -------------------------------------------------------------------
+
+const isKerberos = (c) => /^(kerberos|gssapi|krb5?)$/i.test(String((c && c.auth) || ""));
+let krbDir = null;
+function krbTemp() {
+  if (!krbDir) {
+    krbDir = fs.mkdtempSync(path.join(os.tmpdir(), "sw-krb-"));
+    process.on("exit", () => fs.rmSync(krbDir, { recursive: true, force: true }));
+  }
+  return krbDir;
+}
+
+// the environment a Kerberos connection needs: its ticket cache (a private
+// one from a keytab) and krb5.conf
+function kerberosEnv(c, name) {
+  const env = {};
+  if (c.krb5_conf) env.KRB5_CONFIG = String(c.krb5_conf);
+  if (c.keytab) {
+    if (!c.principal) fail(`connection ${name}: a keytab needs its principal (user@REALM)`);
+    const cache = "FILE:" + path.join(krbTemp(), "cc_" + name);
+    try {
+      execFileSync(process.env.KINIT || "kinit", ["-k", "-t", String(c.keytab), "-c", cache, String(c.principal)], {
+        env: { ...process.env, ...env },
+        stdio: ["ignore", "pipe", "pipe"],
+        timeout: 30000,
+      });
+    } catch (e) {
+      fail(`connection ${name}: kinit with the keytab failed: ${String((e.stderr && e.stderr.toString()) || e.message).trim()}`);
+    }
+    env.KRB5CCNAME = cache;
+  } else if (c.ticket_cache) {
+    env.KRB5CCNAME = String(c.ticket_cache);
+  }
+  return env;
+}
+
+// sqlnet.ora for an Oracle Kerberos login: where the ticket and krb5.conf are
+function sqlnetOra(c, name, env) {
+  const cc = env.KRB5CCNAME || process.env.KRB5CCNAME || "";
+  if (!/^FILE:|^\//.test(cc))
+    fail(
+      `connection ${name}: Oracle's client reads the Kerberos ticket from a file. Run kinit -c FILE:$HOME/.krb5cc_oracle <you@REALM> and give "ticket_cache": "FILE:…" (or set KRB5CCNAME to it), or give keytab and principal`,
+    );
+  const conf = String(c.krb5_conf || env.KRB5_CONFIG || process.env.KRB5_CONFIG || "/etc/krb5.conf");
+  return [
+    "# written by duckdb_data_query for a Kerberos login",
+    "SQLNET.AUTHENTICATION_SERVICES = (BEQ, KERBEROS5PRE, KERBEROS5)",
+    `SQLNET.AUTHENTICATION_KERBEROS5_SERVICE = ${String(c.kerberos_service || "oracle")}`,
+    `SQLNET.KERBEROS5_CONF = ${conf}`,
+    "SQLNET.KERBEROS5_CONF_MIT = TRUE",
+    `SQLNET.KERBEROS5_CC_NAME = ${cc.replace(/^FILE:/, "")}`,
+    "",
+  ].join("\n");
+}
+
+// the Oracle target with no user or password: /@target (external login)
+function oracleKerberosDsn(c, name) {
+  const raw = String(c.dsn || c.url || c.connect_string || "").trim();
+  let target = raw ? expandIn(fromJDBC(raw, "oracle"), "oracle", `the connection ${name}`) : "";
+  if (target) target = target.replace(/^[^()@]*@/, ""); // any user/password in it
+  else if (c.sid) target = `(DESCRIPTION=(ADDRESS=(PROTOCOL=TCP)(HOST=${c.host || "localhost"})(PORT=${c.port || 1521}))(CONNECT_DATA=(SID=${c.sid})))`;
+  else target = `${c.host || "localhost"}:${c.port || 1521}/${c.service || c.service_name || c.database || ""}`;
+  return "/@" + target;
+}
+
+let sqlnetWritten = "";
+function useOracleKerberos(c, name) {
+  const env = kerberosEnv(c, name);
+  Object.assign(process.env, env); // the Oracle client runs in this process
+  if (c.tns_admin) process.env.TNS_ADMIN = String(c.tns_admin);
+  else if (!process.env.TNS_ADMIN || sqlnetWritten) {
+    const ora = sqlnetOra(c, name, env);
+    if (sqlnetWritten && sqlnetWritten !== ora) fail(`connection ${name}: two Oracle Kerberos connections with different tickets or settings cannot share a run`);
+    const dir = path.join(krbTemp(), "tns");
+    fs.mkdirSync(dir, { recursive: true });
+    fs.writeFileSync(path.join(dir, "sqlnet.ora"), ora);
+    process.env.TNS_ADMIN = dir;
+    sqlnetWritten = ora;
+  }
+  return oracleKerberosDsn(c, name);
+}
+
+// psql: the one named, $PSQL, or found on PATH and the usual places
+function findPsql(c) {
+  if (c.psql) return String(c.psql);
+  if (process.env.PSQL) return process.env.PSQL;
+  const dirs = (process.env.PATH || "").split(path.delimiter).concat(["/opt/homebrew/opt/libpq/bin", "/usr/local/opt/libpq/bin", "/Applications/Postgres.app/Contents/Versions/latest/bin", "/usr/local/pgsql/bin"]);
+  for (const d of dirs) {
+    const f = path.join(d, process.platform === "win32" ? "psql.exe" : "psql");
+    if (d && fs.existsSync(f)) return f;
+  }
+  fail("Kerberos logins to Postgres go through psql, which was not found: install it (brew install libpq, or the PostgreSQL client) or give \"psql\": \"/path/to/psql\"");
+}
+
+// the tables a psql connection reads: [{schema, table, sql}]
+function psqlTables(c, name) {
+  const t = c.tables;
+  const out = [];
+  const ref = /^[A-Za-z_][A-Za-z0-9_$]*(\.[A-Za-z_][A-Za-z0-9_$]*)?$/;
+  const add = (key, what) => {
+    const parts = String(key).split(".");
+    const [schema, table] = parts.length === 2 ? parts : ["main", parts[0]];
+    if (!ref.test(key)) fail(`connection ${name}: table name ${key}: schema.table or a name`);
+    const sql = ref.test(String(what).trim()) ? `SELECT * FROM ${String(what).trim()}` : String(what).trim().replace(/;+\s*$/, "");
+    out.push({ schema: schema === "main" && parts.length === 1 ? "main" : schema, table, sql });
+  };
+  if (Array.isArray(t)) for (const x of t) add(String(x), String(x));
+  else if (t && typeof t === "object") for (const [k, v] of Object.entries(t)) add(k, v);
+  else if (typeof t === "string" && t.trim()) for (const x of t.split(",")) add(x.trim(), x.trim());
+  if (!out.length)
+    fail(`connection ${name}: a Kerberos Postgres connection is read through psql: list what to read in "tables", e.g. ["public.orders"] or {"recent": "SELECT * FROM orders WHERE …"}`);
+  return out;
+}
+
+// the libpq connect string for psql with Kerberos (no password)
+function psqlDsn(c, name) {
+  const raw = String(c.dsn || c.url || "").trim();
+  let base = raw ? fromJDBC(raw, "postgres") : "";
+  const pairs = [];
+  if (/^[a-z]+:\/\//i.test(base)) {
+    const u = new URL(expandIn(base, "url", `the connection ${name}`));
+    for (const [k, v] of u.searchParams) pairs.push(`${k}=${quoteFor.kv(v)}`);
+    pairs.push(`host=${quoteFor.kv(u.hostname)}`);
+    if (u.port) pairs.push(`port=${u.port}`);
+    if (u.pathname.length > 1) pairs.push(`dbname=${quoteFor.kv(decodeURIComponent(u.pathname.slice(1)))}`);
+    if (u.username) pairs.push(`user=${quoteFor.kv(decodeURIComponent(u.username))}`);
+    base = "";
+  }
+  if (base) pairs.push(expandIn(base, "kv", `the connection ${name}`));
+  const add = (k, v) => v !== undefined && v !== null && v !== "" && !new RegExp(`(^|\\s)${k}=`).test(pairs.join(" ")) && pairs.push(`${k}=${quoteFor.kv(String(v))}`);
+  add("host", c.host);
+  add("port", c.port);
+  add("dbname", c.database || c.dbname || c.db);
+  add("user", c.user);
+  add("sslmode", c.sslmode);
+  add("krbsrvname", c.kerberos_service || "postgres");
+  add("gssencmode", c.gssencmode);
+  return pairs.join(" ").replace(/(^|\s)password=('[^']*'|\S*)/g, "");
+}
+
+// read a Kerberos Postgres connection's tables with psql into DuckDB, as
+// <name>.<schema>.<table>
+async function loadWithPsql(run, c, name) {
+  const env = { ...process.env, ...kerberosEnv(c, name) };
+  delete env.PGPASSWORD;
+  const psql = findPsql(c);
+  const dsn = psqlDsn(c, name);
+  await run(`ATTACH ':memory:' AS ${ident(name)}`);
+  const dir = krbTemp();
+  for (const t of psqlTables(c, name)) {
+    const file = path.join(dir, `${name}.${t.schema}.${t.table}.csv`);
+    const copy = `\\copy (${t.sql.replace(/\n/g, " ")}) TO '${file.replace(/'/g, "''")}' WITH (FORMAT csv, HEADER)`;
+    try {
+      execFileSync(psql, ["-X", "-q", "-w", "-v", "ON_ERROR_STOP=1", "-d", dsn, "-c", copy], { env, stdio: ["ignore", "pipe", "pipe"], timeout: 15 * 60000, maxBuffer: 16 << 20 });
+    } catch (e) {
+      fail(`connection ${name} (postgres, Kerberos, through psql): ${String((e.stderr && e.stderr.toString()) || e.message).trim()}`);
+    }
+    if (t.schema !== "main") await run(`CREATE SCHEMA IF NOT EXISTS ${ident(name)}.${ident(t.schema)}`);
+    await run(`CREATE TABLE ${ident(name)}.${ident(t.schema)}.${ident(t.table)} AS SELECT * FROM read_csv(${q(file)}, header = true, auto_detect = true)`).catch((e) =>
+      fail(`connection ${name}: reading ${t.schema}.${t.table}: ${e.message}`),
+    );
+    fs.rmSync(file, { force: true });
+  }
 }
 
 // the connect string of a connection: its dsn (or URL, or JDBC string) with
@@ -319,7 +501,12 @@ async function main() {
     if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(name)) fail(`connection name ${JSON.stringify(c.name)}: letters, digits and _`);
     const type = CONN_TYPES[String(c.type || "").toLowerCase()];
     if (!type) fail(`connection ${name}: type ${c.type}; use postgres, mysql, sqlite, sqlserver, oracle or duckdb`);
-    const dsn = dsnOf(c, type, name);
+    if (isKerberos(c) && type === "postgres") {
+      await loadWithPsql(run, c, name);
+      continue;
+    }
+    if (isKerberos(c) && type !== "oracle") fail(`connection ${name}: Kerberos ("auth": "kerberos") is for postgres and oracle connections`);
+    const dsn = isKerberos(c) ? useOracleKerberos(c, name) : dsnOf(c, type, name);
     if (!dsn) fail(`connection ${name}: give its dsn (or url, or host and database; path for sqlite and duckdb)`);
     const opts = [type === "duckdb" ? null : `TYPE ${type}`, c.read_only === false ? null : "READ_ONLY", type === "postgres" && c.schema ? `SCHEMA ${q(c.schema)}` : null].filter(Boolean);
     try {
@@ -469,4 +656,4 @@ function sqlLast(sql) {
 }
 
 if (require.main === module) main().catch((e) => fail(hide(e && e.message ? e.message : String(e))));
-else module.exports = { dsnOf, fromJDBC }; // for the tests
+else module.exports = { dsnOf, fromJDBC, oracleKerberosDsn, sqlnetOra, psqlDsn, psqlTables }; // for the tests

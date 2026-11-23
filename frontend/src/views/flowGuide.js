@@ -1251,6 +1251,27 @@ export const GUIDE = [
           '[\n  {"region": "EU", "revenue": 320.5, "manager": "Ana", "headcount": 42},\n  {"region": "US", "revenue": 80, "manager": "Bob", "headcount": 17}\n]',
       },
       {
+        title: "Kerberos: Oracle and Postgres without passwords",
+        text: "auth kerberos logs in with a Kerberos ticket (here from a service keytab, for scheduled runs). Oracle is attached live as /@service; DuckDB's Postgres driver has no Kerberos, so the Postgres tables listed in tables are read with psql and queried as sales.public.orders.",
+        nodes: [
+          {
+            id: "krb",
+            type: "tool",
+            title: "Headcount and revenue",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT h.REGION AS region, h.HEADCOUNT AS headcount, sum(o.total) AS revenue\nFROM hr.HR.REGION_HEADCOUNT h\nJOIN sales.public.orders o ON o.region = h.REGION\nGROUP BY ALL ORDER BY revenue DESC",
+              connections:
+                '[{"name": "hr", "type": "oracle", "auth": "kerberos", "host": "ora1.corp", "service": "HRPDB", "keytab": "/etc/security/reporting.keytab", "principal": "reporting@CORP.EXAMPLE"},\n {"name": "sales", "type": "postgres", "auth": "kerberos", "host": "pg1.corp", "database": "sales", "user": "reporting", "keytab": "/etc/security/reporting.keytab", "principal": "reporting@CORP.EXAMPLE", "tables": ["public.orders"]}]',
+            },
+          },
+        ],
+        edges: chain("start", "krb"),
+        focus: "krb",
+        result:
+          '[\n  {"region": "EU", "headcount": 42, "revenue": 320.5},\n  {"region": "US", "headcount": 17, "revenue": 80}\n]',
+      },
+      {
         title: "Oracle (needs Oracle Instant Client)",
         text: "The oracle community extension installs by itself; the machine needs Oracle Instant Client (19c, 21c or 23ai). ${ORACLE_PASSWORD} in the dsn is filled from that secret.",
         nodes: [
