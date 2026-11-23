@@ -8,6 +8,7 @@ import { Icon } from "../../ui.jsx";
 import { openFlowInDesigner } from "../Flows.jsx";
 import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../../Attachments.jsx";
 import { Commands, frs, loadFlow, start } from "../FlowRun.jsx";
+import { TagEditor, allTags } from "../../flowLists.jsx";
 
 // --- setup ------------------------------------------------------------------------
 
@@ -616,6 +617,27 @@ export function Setup() {
         </div>
       </header>
       {f.description && <p className="wf-desc">{f.description}</p>}
+      <div className="fl-tagrow">
+        <span className="muted">Tags</span>
+        <TagEditor
+          tags={f.tags || []}
+          suggestions={allTags(r.flows)}
+          onChange={async (t) => {
+            const before = f.tags;
+            f.tags = t;
+            update();
+            try {
+              f.tags = await backend.SetFlowTags(f.id, t);
+              const x = (r.flows || []).find((y) => y.id === f.id);
+              if (x) x.tags = f.tags;
+            } catch (e) {
+              f.tags = before;
+              toast(errMsg(e), "error");
+            }
+            update();
+          }}
+        />
+      </div>
       <div className="card">
         <div className="card-head">
           <Icon.inputs />

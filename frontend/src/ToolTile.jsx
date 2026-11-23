@@ -4,6 +4,8 @@
 // messaging, cloud), worked out from its name, description, permissions and
 // connections, plus a small chip for the language it runs in. Colors come
 // from the theme's terminal palette, so they suit every theme.
+import { useEffect } from "react";
+import { reliability, loadToolStats } from "./toolStats.js";
 
 const svg = (children) =>
   function CatIcon() {
@@ -250,9 +252,32 @@ function Status({ t }) {
 }
 
 // One tile. `compact` is the sidebar version (two per row, no actions).
-export function ToolTile({ t, active, onOpen, action, compact }) {
+// Reliability: how the tool did in its latest calls ("failed 4 of the last 10")
+export function Reliability({ name, long }) {
+  useEffect(() => {
+    loadToolStats();
+  }, [name]);
+  const r = reliability(name);
+  if (!r) return null;
+  return (
+    <small
+      className={"tt-rel rel-" + r.level}
+      title={
+        r.stat.lastError
+          ? "Last error: " + r.stat.lastError
+          : "Calls from flows, agents and the test form in this project"
+      }
+    >
+      {r.text}
+      {long && r.stat.lastError && r.level !== "ok" ? ` · last error: ${r.stat.lastError}` : ""}
+    </small>
+  );
+}
+
+export function ToolTile({ t, active, onOpen, action, compact, drag }) {
   return (
     <div
+      {...(drag || {})}
       className={
         "tool-tile" + (compact ? " compact" : "") + (active ? " active" : "") + (t.managed ? " managed" : "")
       }
@@ -268,6 +293,7 @@ export function ToolTile({ t, active, onOpen, action, compact }) {
       </div>
       <b className="tt-name">{t.name}</b>
       {t.desc && <small className="tt-desc">{t.desc}</small>}
+      <Reliability name={t.name} />
       {t.tags?.length > 0 && (
         <span className="tt-tags">
           {t.tags.map((x) => (
@@ -296,12 +322,17 @@ export function ToolTile({ t, active, onOpen, action, compact }) {
 }
 
 // A titled grid of tiles; shows `empty` when there are none.
-export function ToolGrid({ title, tools, compact, empty = "None yet", render }) {
+// zone: props making the group a drop target; actions: shown after the title
+export function ToolGrid({ title, tools, compact, empty = "None yet", render, zone, actions }) {
   return (
-    <section className={"tool-group" + (compact ? " compact" : "")}>
+    <section
+      className={"tool-group" + (compact ? " compact" : "") + (zone ? " drop-zone" : "")}
+      {...(zone || {})}
+    >
       {title && (
         <div className="tree-folder">
           {title} · {tools.length}
+          {actions}
         </div>
       )}
       {tools.length ? (

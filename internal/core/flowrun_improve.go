@@ -69,6 +69,7 @@ type improvePair struct {
 	file       string // the result's file in the results folder
 	history    []ImproveRound
 	feedback   string // a person's feedback, for the next round
+	judged     bool   // the judge's reason was kept as a lesson in this run
 }
 
 func (h *Hub) runImprove(ctx context.Context, root string, fr *flowRun, n *flow.Node, d flow.Data, parents int) (string, store.Usage, error) {
@@ -158,6 +159,10 @@ func (h *Hub) runImprove(ctx context.Context, root string, fr *flowRun, n *flow.
 		}
 		changes := p.changes(v)
 		rec := ImproveRound{Round: round, By: "ai", Done: v.Done, Reason: clipText(v.Reason, 600), File: p.file}
+		if !v.Done && !p.judged && feedback == "" { // the judge's first "not yet" in this run (lessons.go)
+			p.judged = true
+			h.learnFromJudge(fr, n.ID, v.Reason)
+		}
 		if !v.Done {
 			rec.Changes = changes
 		}
@@ -189,6 +194,7 @@ func (h *Hub) runImprove(ctx context.Context, root string, fr *flowRun, n *flow.
 				h.improveNote(fr, n.ID, fmt.Sprintf("Approved by you after round %d", round))
 				return final, u, nil
 			case "edit":
+				h.learnFromEdit(fr, n.ID, final, dec.Output) // a small correction is a lesson (lessons.go)
 				h.improveNote(fr, n.ID, fmt.Sprintf("Edited by you after round %d", round))
 				return dec.Output, u, nil
 			case "stop":
@@ -196,6 +202,7 @@ func (h *Hub) runImprove(ctx context.Context, root string, fr *flowRun, n *flow.
 			case "next": // another round, with the person's feedback if any
 				fb := strings.TrimSpace(dec.Prompt)
 				if fb != "" {
+					h.learnFromReview(fr, n.ID, fb, "improve") // later runs of this step get it (lessons.go)
 					p.history = append(p.history, ImproveRound{Round: round, By: "person", Reason: clipText(fb, 2000)})
 					h.flowPublish(fr, "gate.changes", "Another round: "+fb, map[string]any{"_step": n.ID, "feedback": fb})
 					h.improveState(fr, p)
@@ -487,7 +494,9 @@ func (h *Hub) improvePrompt(fr *flowRun, p *improvePair, d flow.Data, round, lim
  "output": "<only when done and the result needs a small fix the tool cannot make: the complete fixed result>"}
 When not done, give the arguments to change for the next run (only the ones that change) and, only if the input itself must change, the new input. Leave out what you do not change.`)
 	}
-	b.WriteString(h.aiSuffix(f, d))
+	b.WriteString(h.contextPacks(f, n, d, n.Prompt+n.Goal)) // Context steps before it (flowrun_context.go)
+	b.WriteString(h.lessonsNote(f.ID, n.ID))
+	b.WriteString(h.aiSuffix(f, n, d))
 	return b.String()
 }
 

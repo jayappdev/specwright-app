@@ -3032,3 +3032,214 @@ select.fl-secret-pick {
   border-color: color-mix(in srgb, var(--ok) 50%, transparent);
   color: var(--ok);
 }
+/* Run History: runs found by what they contain */
+.hist-hits {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 6px;
+  padding-bottom: 6px;
+}
+.hist-hits-head,
+.hist-hits-none {
+  padding: 4px 14px;
+  font-size: 0.85em;
+}
+.hist-snippet {
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+.hist-snippet mark {
+  background: color-mix(in srgb, var(--info) 24%, transparent);
+  color: inherit;
+  border-radius: 2px;
+  padding: 0 1px;
+}
+/* tool reliability (tiles, the Flow Designer's tool step) */
+.tt-rel {
+  display: block;
+  font-size: 0.8em;
+}
+.tt-rel.rel-ok {
+  color: var(--muted);
+}
+.tt-rel.rel-warn {
+  color: var(--warn);
+}
+.tt-rel.rel-bad {
+  color: var(--error);
+  font-weight: 600;
+}
+/* lessons from reviews (AI and Improve steps) */
+.fl-lessons summary {
+  cursor: pointer;
+  font-weight: 600;
+}
+.fl-lesson {
+  display: grid;
+  gap: 4px;
+  margin: 6px 0;
+}
+.fl-lesson textarea {
+  width: 100%;
+  max-width: 100%;
+}
+.fl-lesson.off textarea {
+  opacity: 0.6;
+}
+.fl-lesson-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 10px;
+  align-items: center;
+  font-size: 0.85em;
+}
+.fl-lesson-meta > span {
+  flex: 1 1 auto;
+}
+.fl-lesson-add {
+  display: flex;
+  gap: 6px;
+}
+.fl-lesson-add input {
+  flex: 1;
+  min-width: 0;
+}
+.fl-trigger-busy summary {
+  cursor: pointer;
+}
+/* Run flows: a trigger run waiting for its turn */
+.fr-queued {
+  display: block;
+  padding-left: 2px;
+}
+/* the Context step: its sources in the designer, what it kept in a run */
+.fl-ctx-src {
+  display: grid;
+  gap: 4px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 6px 8px;
+  margin: 6px 0;
+}
+.fl-ctx-src-head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.fl-ctx-src-head input {
+  flex: 1;
+  min-width: 0;
+}
+.fl-ctx-src textarea,
+.fl-ctx-src input {
+  max-width: 100%;
+}
+.fr-ctx {
+  margin: 6px 0;
+}
+.fr-ctx-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.9em;
+  margin-top: 4px;
+}
+.fr-ctx-table th,
+.fr-ctx-table td {
+  text-align: left;
+  padding: 3px 6px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.fr-ctx-table tr.none td {
+  opacity: 0.6;
+}
+/* a Decision the AI decides: a person chooses the path; the AI's reason */
+.fr-choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 4px;
+}
+.fr-why {
+  margin: 4px 0;
+}
+/* organising flows: search, tag chips, groups (flowLists.jsx) */
+.fls-bar {
+  display: grid;
+  gap: 6px;
+  padding: 0 8px 8px;
+}
+.fls-bar .hk-search {
+  width: 100%;
+}
+.fls-tags,
+.fls-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+.fls-chips {
+  margin-top: 2px;
+}
+.fl-tag {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 0 8px;
+  font-size: 0.8em;
+  line-height: 1.7;
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+.fl-tag.small {
+  font-size: 0.75em;
+  padding: 0 6px;
+  line-height: 1.5;
+}
+.fl-tag.on,
+.fl-tag[aria-pressed="true"] {
+  background: color-mix(in srgb, var(--info) 18%, transparent);
+  border-color: color-mix(in srgb, var(--info) 55%, transparent);
+  color: var(--fg);
+}
+.fls-group-head {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  cursor: pointer;
+}
+.fls-caret {
+  display: inline-block;
+  width: 1em;
+}
+.fls-editor {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  align-items: center;
+  border: 1px solid var(--input-border, var(--border));
+  border-radius: var(--radius);
+  padding: 4px;
+}
+.fls-editor input {
+  flex: 1;
+  min-width: 8em;
+  border: 0;
+  background: none;
+  outline: none;
+}
+.fls-x {
+  border: 0;
+  background: none;
+  color: inherit;
+  cursor: pointer;
+  padding: 0 0 0 2px;
+}

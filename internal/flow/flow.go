@@ -32,15 +32,18 @@ import (
 
 // Flow is one designed flow.
 type Flow struct {
-	Version     int     `json:"version"`
-	ID          string  `json:"id"`
-	Name        string  `json:"name"`
-	Description string  `json:"description,omitempty"`
-	Inputs      []Input `json:"inputs"`
-	Context     Context `json:"context"`
-	Skills      []Skill `json:"skills"`
-	Nodes       []Node  `json:"nodes"`
-	Edges       []Edge  `json:"edges"`
+	Version     int    `json:"version"`
+	ID          string `json:"id"`
+	Name        string `json:"name"`
+	Description string `json:"description,omitempty"`
+	// Group is where the flow is listed; Tags are labels to find it (tags.go)
+	Group   string   `json:"group,omitempty"`
+	Tags    []string `json:"tags,omitempty"`
+	Inputs  []Input  `json:"inputs"`
+	Context Context  `json:"context"`
+	Skills  []Skill  `json:"skills"`
+	Nodes   []Node   `json:"nodes"`
+	Edges   []Edge   `json:"edges"`
 	// Triggers start the flow by themselves (a schedule…); see trigger.go
 	Triggers []Trigger `json:"triggers,omitempty"`
 	// MinutesSaved is the manual work one successful run replaces (for
@@ -76,6 +79,8 @@ func (f *Flow) EstimatedMinutes() int {
 			m += 10
 		case "ai", "improve":
 			m += 20
+		case "context":
+			m += 15
 		case "merge", "transform", "loop", "gather":
 			m += 5
 		case "output":
@@ -189,7 +194,7 @@ type Skill struct {
 // Node is one step on the canvas.
 type Node struct {
 	ID    string  `json:"id"`
-	Type  string  `json:"type"` // start | tool | ai | improve | merge | transform | loop | gather | decision | filter | aggregate | output
+	Type  string  `json:"type"` // start | tool | ai | improve | context | merge | transform | loop | gather | decision | filter | aggregate | output
 	Title string  `json:"title,omitempty"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
@@ -209,6 +214,14 @@ type Node struct {
 	// ai
 	Prompt string `json:"prompt,omitempty"`
 	Model  string `json:"model,omitempty"`
+	// Instructions and Skills shape what this AI step answers (ai, improve,
+	// an AI decision or transform, a tool step whose arguments the AI
+	// fills): its own guidance (variables allowed) and skill files, added
+	// to the flow's context and skills. FlowSkillsOff leaves the flow's
+	// skills out for this step.
+	Instructions  string  `json:"instructions,omitempty"`
+	Skills        []Skill `json:"skills,omitempty"`
+	FlowSkillsOff bool    `json:"flowSkillsOff,omitempty"`
 	// OutputSchema is the JSON an AI step is expected to reply with: the
 	// designer shows it to the steps after it, and the agent is asked to
 	// reply in that shape (the only shape metadata the AI is sent).
@@ -220,6 +233,11 @@ type Node struct {
 	Goal    string `json:"goal,omitempty"`    // when the result is good enough
 	Rounds  int    `json:"rounds,omitempty"`  // at most this many rounds (0: DefaultImproveRounds)
 	Approve string `json:"approve,omitempty"` // none | done | each: when a person confirms
+
+	// context (see context.go; Goal: what the context is for)
+	Sources  []CtxSource `json:"sources,omitempty"`
+	Budget   int         `json:"budget,omitempty"`   // tokens (0: DefaultCtxBudget)
+	Condense bool        `json:"condense,omitempty"` // an AI pass condenses the pack for the purpose
 
 	// merge
 	Mode      string `json:"mode,omitempty"`      // concat | json-object | json-array | template
@@ -245,6 +263,12 @@ type Node struct {
 
 	// decision: the paths out of it (Mode: first | all); see rows.go
 	Branches []Branch `json:"branches,omitempty"`
+	// Decide "ai": the AI chooses the path (Prompt: the question; Model;
+	// Confidence: below it the step is unsure, Unsure: ask | else |
+	// accept); see decide_ai.go
+	Decide     string `json:"decide,omitempty"`
+	Confidence int    `json:"confidence,omitempty"`
+	Unsure     string `json:"unsure,omitempty"`
 	// filter: the rows to keep (Mode: keep | drop; Unique, Max, OrderBy);
 	// filter and aggregate read their rows as Split (RowFormats)
 	Cond *Cond `json:"cond,omitempty"`
@@ -278,7 +302,7 @@ type Edge struct {
 
 // NodeTypes, transform operations, merge modes and output formats.
 var (
-	NodeTypes   = []string{"start", "tool", "ai", "improve", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
+	NodeTypes   = []string{"start", "tool", "ai", "improve", "context", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
 	MergeModes  = []string{"concat", "json-object", "json-array", "template"}
 	Formats     = []string{"md", "txt", "html", "csv", "json"}
 	InputTypes  = []string{"text", "multiline", "secret", "number", "boolean", "date", "datetime", "choice", "multichoice", "file", "files", "clipboard"}
@@ -664,6 +688,12 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 			f.checkImprove(n, add)
 			checkVars(n, label(n), n.Prompt)
 			checkVars(n, label(n)+" › done when", n.Goal)
+		case "context":
+			f.checkContext(n, parents, add)
+			checkVars(n, label(n)+" › purpose", n.Goal)
+			for _, s := range n.Sources {
+				checkVars(n, label(n)+" › "+CtxLabel(s), strings.Join(s.Paths, " ")+" "+s.Text+" "+s.Query+" "+s.URL)
+			}
 		case "merge":
 			if !contains(MergeModes, n.Mode) {
 				add(n.ID, "error", "%s: choose how to merge.", label(n))
@@ -724,6 +754,9 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 					add(n.ID, "error", "%s: two paths have the id %q.", label(n), b.ID)
 				}
 				bids[b.ID] = true
+				if AIDecides(n) { // the AI chooses: no conditions
+					continue
+				}
 				if err := b.When.Check(); err != nil {
 					add(n.ID, "error", "%s › %s: %v", label(n), name, err)
 				}
@@ -750,6 +783,10 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				}
 			}
 			checkVars(n, label(n), n.Source)
+			if AIDecides(n) {
+				f.checkAIDecision(n, add)
+				checkVars(n, label(n)+" › question", n.Prompt)
+			}
 		case "filter":
 			if !contains(FilterModes, firstNonEmptyStr(n.Mode, "keep")) {
 				add(n.ID, "error", "%s: choose whether to keep or drop the matching rows.", label(n))
@@ -964,6 +1001,10 @@ type Summary struct {
 	Updated     time.Time `json:"updated"`
 	Parent      string    `json:"parent,omitempty"`
 	Revision    int       `json:"revision,omitempty"`
+	Group       string    `json:"group,omitempty"`
+	Tags        []string  `json:"tags,omitempty"`
+	// Keywords: the steps' names and tools, for searching the lists
+	Keywords []string `json:"keywords,omitempty"`
 }
 
 // List returns the workspace's flows, newest first.
@@ -984,7 +1025,8 @@ func List(root string) ([]Summary, error) {
 		if err != nil {
 			continue
 		}
-		s := Summary{ID: f.ID, Name: f.Name, Description: f.Description, Updated: f.Updated, Parent: f.Parent, Revision: f.Revision}
+		s := Summary{ID: f.ID, Name: f.Name, Description: f.Description, Updated: f.Updated, Parent: f.Parent, Revision: f.Revision,
+			Group: NormGroup(f.Group), Tags: NormTags(f.Tags), Keywords: f.keywords()}
 		for _, n := range f.Nodes {
 			switch n.Type {
 			case "output":
@@ -1130,6 +1172,7 @@ func Save(root string, f *Flow) error {
 		return fmt.Errorf("flow id %q: use lowercase letters, digits and -", f.ID)
 	}
 	f.normalize()
+	f.Group, f.Tags = NormGroup(f.Group), NormTags(f.Tags)
 	f.Updated = time.Now().UTC().Truncate(time.Second)
 	f.Rev = ""
 	repairs := f.Repairs
@@ -1217,6 +1260,11 @@ func (f *Flow) referencedFiles() []string {
 	for _, s := range f.Skills {
 		add(s.Path)
 	}
+	for _, n := range f.Nodes {
+		for _, s := range n.Skills {
+			add(s.Path)
+		}
+	}
 	for _, p := range f.Context.Files {
 		add(p)
 	}
@@ -1282,6 +1330,11 @@ func Import(root string, data []byte) (*Flow, []string, error) {
 	}
 	for i := range f.Skills {
 		f.Skills[i].Path = re(f.Skills[i].Path)
+	}
+	for i := range f.Nodes {
+		for j := range f.Nodes[i].Skills {
+			f.Nodes[i].Skills[j].Path = re(f.Nodes[i].Skills[j].Path)
+		}
 	}
 	for i := range f.Context.Files {
 		f.Context.Files[i] = re(f.Context.Files[i])

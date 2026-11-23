@@ -161,6 +161,7 @@ function TriggerCard({ t, v, remove, reload }) {
       {t.kind === "schedule" && <ScheduleFields t={t} />}
       {t.kind === "flow" && <AfterFields t={t} />}
       {t.kind === "files" && <FilesFields t={t} />}
+      <BusyFields t={t} />
       {inputs.length > 0 && (
         <details open={inputs.some((i) => i.required && !i.default && !(t.inputs || {})[i.name])}>
           <summary className="muted">Inputs for its runs</summary>
@@ -265,6 +266,7 @@ function TriggerCard({ t, v, remove, reload }) {
         {st.runs ? `${st.runs} run${st.runs === 1 ? "" : "s"}` : "No runs yet"}
         {st.lastRun ? ` · last ${when(st.lastRun)} (${st.lastStatus || "…"})` : ""}
         {st.missed ? ` · ${st.missed} missed` : ""}
+        {st.queued ? ` · ${st.queued} waiting for their turn` : ""}
         {st.done ? " · finished" : st.nextRun && t.enabled ? ` · next ${when(st.nextRun)}` : ""}
         {st.watching?.length > 0 && <div>Watching {st.watching.join(", ")} (outside the project)</div>}
         {st.watchError && <div className="ai-trial-err">Not watched: {st.watchError}</div>}
@@ -456,6 +458,82 @@ function ScheduleFields({ t }) {
   );
 }
 
+// when a run cannot start yet (the flow is still running, or 2 triggered
+// runs are going), and when one fails (core/trigger_queue.go)
+function BusyFields({ t }) {
+  const retries = t.retries || 0;
+  return (
+    <details className="fl-trigger-busy" open={t.ifBusy === "skip" || retries > 0}>
+      <summary className="muted">
+        When busy: {t.ifBusy === "skip" ? "skip" : "wait"} · on failure:{" "}
+        {retries ? `retry ${retries}×` : "no retry"}
+      </summary>
+      <div className="field">
+        <span className="muted">If a run is due while this flow is still running</span>
+        <div className="seg" role="group" aria-label="If the flow is still running">
+          {[
+            ["wait", "Wait for its turn"],
+            ["skip", "Skip that time"],
+          ].map(([k, l]) => (
+            <button
+              key={k}
+              type="button"
+              aria-pressed={(t.ifBusy || "wait") === k}
+              onClick={() => {
+                t.ifBusy = k === "wait" ? undefined : k;
+                changed();
+              }}
+            >
+              {l}
+            </button>
+          ))}
+        </div>
+        <small className="muted">
+          Waiting runs start in order when the flow is free (at most 2 triggered runs go at once, 3 wait per
+          trigger); they carry on after the app starts again.
+        </small>
+      </div>
+      <div className="field">
+        <span className="muted">If a run fails</span>
+        <span className="fl-trigger-every">
+          try again
+          <select
+            value={retries}
+            aria-label="Retries"
+            onChange={(e) => {
+              t.retries = +e.target.value || undefined;
+              changed();
+            }}
+          >
+            {[0, 1, 2, 3].map((x) => (
+              <option key={x} value={x}>
+                {x === 0 ? "no" : x}
+              </option>
+            ))}
+          </select>
+          {retries > 0 && (
+            <>
+              time{retries === 1 ? "" : "s"},
+              <input
+                type="number"
+                min={1}
+                max={1440}
+                value={t.retryWait || 5}
+                aria-label="Minutes between retries"
+                onChange={(e) => {
+                  t.retryWait = Math.max(1, Math.min(1440, +e.target.value || 5));
+                  changed();
+                }}
+              />
+              minutes apart
+            </>
+          )}
+        </span>
+      </div>
+    </details>
+  );
+}
+
 const OUTCOMES = [
   ["done", "completes"],
   ["failed", "fails"],
@@ -620,6 +698,17 @@ function FilesFields({ t }) {
           })}
         </div>
       </div>
+      <label className="check">
+        <input
+          type="checkbox"
+          checked={!!w.whileClosed}
+          onChange={(e) => {
+            w.whileClosed = e.target.checked || undefined;
+            changed();
+          }}
+        />{" "}
+        Also count changes made while SpecWright was closed (they start a run when the project opens again)
+      </label>
       <label className="field">
         <span className="muted">Wait for quiet (seconds), so a burst of saves runs it once</span>
         <input
@@ -648,7 +737,7 @@ const TRIGGER_VARS = {
 };
 
 // TAG: the tag of a run a trigger started (Run flows, Run History)
-export const TAG = { schedule: "scheduled", flow: "after flow", files: "file change" };
+export const TAG = { schedule: "scheduled", flow: "after flow", files: "file change", agent: "by an agent" };
 
 // the chip on the Inputs step's card: what starts the flow by itself
 export function triggerChip(flow) {

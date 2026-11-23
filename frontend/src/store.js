@@ -75,10 +75,15 @@ export const S = {
   secretInfo: {}, // name -> { source, env, envSet, via: session|env|ask|missing }
   permAsks: [], // pending "permission.request" events (the AI asks to use a tool)
   secretAsks: [], // pending "secret.request" events (a tool waits for the user)
+  questionAsks: [], // pending "question.request" events (ask_user waits for the user)
   flowRuns: {}, // flow run id → latest state (from "flow.state" events)
   results: {}, // run id → its results folder (RunResults), loaded on demand
   threads: {}, // run id → the conversation it continues (RunThread)
   history: { runs: [], sel: "", pos: 0, playing: false },
+  // tool reliability: name → latest calls' numbers (toolStats.js)
+  toolStats: null,
+  // the flow lists' search and tag filters, per list (flowLists.jsx)
+  flowFilter: {},
   metrics: null,
   wizSection: "w-lang",
   toast: "",
@@ -132,6 +137,9 @@ export const S = {
 
 let version = 0;
 const subs = new Set();
+// afterUpdate: called after every update, before the screen redraws (the
+// Back / Forward history records where you are: navigation.js)
+export const afterUpdate = new Set();
 export const savePrefsNow = () => savePrefs();
 // update() after changing S. Several calls in one task (an event handler, a
 // burst of streamed events) share one notification, sent in a microtask: it
@@ -163,6 +171,7 @@ export function update() {
   queueMicrotask(() => {
     pending = false;
     savePrefs();
+    afterUpdate.forEach((f) => f());
     subs.forEach((f) => f());
   });
 }
@@ -358,11 +367,16 @@ export function onHubEvent(e) {
     if (!S.events[e.run_id]) pruneEvents();
     touchRun(e.run_id);
     const arr = (S.events[e.run_id] ||= []);
-    if (!arr.length || arr[arr.length - 1].seq < e.seq) arr.push(e);
+    // an event without a number (a permission or secret request) is never a repeat
+    if (!e.seq || !arr.length || arr[arr.length - 1].seq < e.seq) arr.push(e);
     else if (!arr.some((x) => x.seq === e.seq)) {
       arr.push(e);
       arr.sort((a, b) => a.seq - b.seq);
     }
+    // a run the Playground list does not have yet (a trigger's or an
+    // agent's): it reads the list again
+    if ((e.type === "run.start" || e.type === "run.end") && S.pg && !S.pg.runs.some((x) => x.id === e.run_id))
+      S.pgStale = true;
   }
   switch (e.type) {
     case "workflow.changed":
@@ -417,6 +431,21 @@ export function onHubEvent(e) {
     case "flow.state":
       if (e.state) S.flowRuns[e.run_id] = e.state;
       break;
+    case "question.request":
+      if (!S.questionAsks.some((r) => r.id === e.id))
+        S.questionAsks.push({
+          id: e.id,
+          title: e.title || "",
+          intro: e.intro || "",
+          questions: e.questions || [],
+          deadline: e.deadline,
+          step: e.step || "",
+          run: e.run_id || "",
+        });
+      break;
+    case "question.resolved":
+      S.questionAsks = S.questionAsks.filter((r) => r.id !== e.id);
+      break;
     case "secret.request":
       if (!S.secretAsks.some((r) => r.id === e.id))
         S.secretAsks.push({
@@ -429,6 +458,19 @@ export function onHubEvent(e) {
           at: Date.now(),
         });
       break;
+    case "notify": // the notify tool: also shown in the app (the OS shows its own notification)
+      toast((e.title || e.summary) + (e.message ? ": " + e.message : ""), "info");
+      break;
+    case "trigger.queued": // a run waits for its turn (or was cancelled): Run flows shows it
+      if (S.frun)
+        backend
+          .TriggerQueue()
+          .then((q) => {
+            S.frun.queue = q || [];
+            update();
+          })
+          .catch(() => {});
+      break;
     case "trigger.fired": // a trigger started a run: Run flows and History list it
       if (S.frun)
         backend
@@ -439,6 +481,10 @@ export function onHubEvent(e) {
           })
           .then((t) => {
             S.frun.triggers = t || [];
+            return backend.TriggerQueue();
+          })
+          .then((q) => {
+            S.frun.queue = q || [];
             update();
           })
           .catch(() => {});

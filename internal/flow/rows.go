@@ -162,6 +162,8 @@ type Branch struct {
 	ID    string `json:"id"`
 	Label string `json:"label,omitempty"`
 	When  *Cond  `json:"when,omitempty"`
+	// Hint: when the AI should take this path (a Decision the AI decides)
+	Hint string `json:"hint,omitempty"`
 }
 
 // ElseBranch is the path a Decision takes when no branch matches.

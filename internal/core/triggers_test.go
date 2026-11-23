@@ -45,6 +45,11 @@ func TestScheduleTrigger(t *testing.T) {
 	if strings.Contains(string(b), "s3cret-value") || !strings.Contains(string(b), `"token"`) {
 		t.Fatalf("secrets must be stored encrypted: %s", b)
 	}
+	// and in the history database, where the state is kept
+	vals, ok, _ := h.Store.LoadState(h.triggers(ws).ns)
+	if !ok || len(vals) == 0 || strings.Contains(string(vals["notes/hourly"]), "s3cret-value") || !strings.Contains(string(vals["notes/hourly"]), `"token"`) {
+		t.Fatalf("database state: %s", vals["notes/hourly"])
+	}
 
 	// the first check only works out the next run
 	h.checkTriggers(ws)

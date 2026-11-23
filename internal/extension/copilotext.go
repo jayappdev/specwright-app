@@ -112,7 +112,7 @@ func scanCopilotExts(dir, source string) []CopilotExt {
 	}
 	var out []CopilotExt
 	for _, e := range ents {
-		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
+		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") || e.Name() == SelfCopilotExt { // SpecWright's own (copilotself.go)
 			continue
 		}
 		if x, ok := readCopilotExt(filepath.Join(dir, e.Name()), source); ok {

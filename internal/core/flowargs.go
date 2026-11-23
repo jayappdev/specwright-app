@@ -49,7 +49,7 @@ func (h *Hub) aiToolArgs(ctx context.Context, root string, fr *flowRun, n *flow.
 	if err != nil {
 		return nil, "", u, err
 	}
-	prompt := aiArgsPrompt(e, request, fixed, d) + h.aiSuffix(fr.flow, d)
+	prompt := aiArgsPrompt(e, request, fixed, d) + h.aiSuffix(fr.flow, n, d)
 	h.flowPublish(fr, "flow.args", "Working out the arguments for "+e.Name, map[string]any{"_step": n.ID, "tool": e.Name, "request": request})
 	ans, u, err := h.flowAgent(ctx, root, fr, n.ID, prompt, fr.st.Options.Model)
 	if err != nil {

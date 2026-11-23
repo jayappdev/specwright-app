@@ -10,6 +10,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -203,5 +204,48 @@ func ListFiles(root string, limit int) []string {
 		}
 		return nil
 	})
+	return out
+}
+
+// Stamp is what a scan knows of a file, enough to tell a later scan what
+// changed (kept between app starts: file triggers see changes made while
+// the app was closed).
+type Stamp struct {
+	Mod  int64 `json:"m"` // modification time, Unix nanoseconds
+	Size int64 `json:"s"`
+}
+
+// Stamps is the last scan (nil before the first).
+func (w *Watcher) Stamps() map[string]Stamp {
+	w.mu.Lock()
+	defer w.mu.Unlock()
+	if w.snap == nil {
+		return nil
+	}
+	out := make(map[string]Stamp, len(w.snap))
+	for p, e := range w.snap {
+		out[p] = Stamp{Mod: e.mod.UnixNano(), Size: e.size}
+	}
+	return out
+}
+
+// DiffStamps lists what changed from an older scan to a newer one.
+func DiffStamps(old, cur map[string]Stamp) []Change {
+	var out []Change
+	for p, n := range cur {
+		o, ok := old[p]
+		switch {
+		case !ok:
+			out = append(out, Change{Path: p, Op: "created"})
+		case o != n:
+			out = append(out, Change{Path: p, Op: "modified"})
+		}
+	}
+	for p := range old {
+		if _, ok := cur[p]; !ok {
+			out = append(out, Change{Path: p, Op: "deleted"})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
 	return out
 }

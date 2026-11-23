@@ -26,6 +26,7 @@ import (
 
 	"codegen/internal/extension"
 	"codegen/internal/flow"
+	"codegen/internal/store"
 )
 
 // ToolInspect is what InspectTool found.
@@ -86,8 +87,9 @@ type ToolRefine struct {
 }
 
 // RefineToolWithAI has the AI read the tool and propose its parameters,
-// output shape and test cases.
-func (h *Hub) RefineToolWithAI(e extension.Extension, model string) (ToolRefine, error) {
+// output shape and test cases. ask is what the developer wants changed
+// (and what went wrong when they ran it); empty: the AI's own reading.
+func (h *Hub) RefineToolWithAI(e extension.Extension, model, ask string) (ToolRefine, error) {
 	root, err := h.need()
 	if err != nil {
 		return ToolRefine{}, err
@@ -98,6 +100,9 @@ func (h *Hub) RefineToolWithAI(e extension.Extension, model string) (ToolRefine,
 	fmt.Fprintf(&b, "You document a tool so it can be called and tested reliably. Read how it is run and its source, then give its exact parameters, its output and a few test cases.\n\nTOOL: %s\nDESCRIPTION: %s\nKIND: %s\nCOMMAND: %s\n", e.Name, e.Desc, firstNonEmpty(e.Kind, "script"), e.Command)
 	b.WriteString("\nWHAT IT DECLARES NOW:\n" + string(cur) + "\n")
 	b.WriteString("\nSOURCE:\n" + src + "\n")
+	if ask = strings.TrimSpace(ask); ask != "" {
+		b.WriteString("\nTHE DEVELOPER ASKS (do this first; it overrides what the tool declares now):\n" + clipText(ask, 4000) + "\n")
+	}
 	b.WriteString(`
 Give every parameter the tool really reads (from the command's {{placeholders}}, the arguments or options the source reads, the JSON it is given): its name exactly as the tool expects it, its type (string | integer | number | boolean | json | object | array), whether it is required, a short description, the values it accepts when it is a fixed set ("enum"), its format when it is a string (path | file | directory | url | date | date-time | multiline | email | password; "" otherwise), its default when the tool has one, and a realistic example. Do not invent parameters the tool does not read. Passwords, tokens and keys are secrets (environment variables), not parameters: leave them out.
 Give the output's shape as JSON Schema when the tool prints JSON ({"type": "object", "properties": {...}, "required": [...]}); null when it prints text.
@@ -382,6 +387,10 @@ func (h *Hub) RunToolWith(e extension.Extension, args map[string]any, secrets ma
 	}
 	run.Command = show(res.Command)
 	run.Output, run.Error, run.OK = show(res.Output), show(res.Error), res.OK
+	if e.Name != "" { // a saved tool (or a draft of one): its reliability (toolstats.go)
+		h.recordToolCall(store.ToolCall{Workspace: root, Tool: e.Name, Source: "test", OK: res.OK, DurationMS: run.DurationMS, Args: checked,
+			Error: firstNonEmpty(run.Error, map[bool]string{true: "", false: fmt.Sprintf("exit code %d", res.ExitCode)}[res.OK])})
+	}
 	x := extension.ToolExpect{}
 	if expect != nil {
 		x = *expect
@@ -422,5 +431,28 @@ func (h *Hub) RunToolTests(e extension.Extension, tests []extension.ToolTest, se
 		}
 		out = append(out, ToolTestResult{Name: t.Name, Pass: pass, Run: run})
 	}
+	// a saved tool, run as saved: its test cases are its last test, so a
+	// tool whose cases pass is "tested" (in Tools and for flows)
+	if saved, err := h.exts.Get(e.Name); err == nil && saved.Fingerprint() == e.Fingerprint() && saved.Kind != extension.KindCopilot {
+		_ = h.exts.SetTest(e.Name, CasesResult(out))
+	}
 	return out, nil
+}
+
+// CasesResult is a test-case run as a tool's test result: it passes when
+// every case passes.
+func CasesResult(rs []ToolTestResult) extension.TestResult {
+	tr := extension.TestResult{Pass: len(rs) > 0, At: time.Now(), Checks: []extension.Check{}, Steps: []extension.TestStep{}}
+	n := 0
+	for _, r := range rs {
+		tr.Checks = append(tr.Checks, extension.Check{Label: "Test case: " + r.Name, OK: r.Pass})
+		if r.Pass {
+			n++
+		} else {
+			tr.Pass = false
+			tr.Steps = append(tr.Steps, extension.TestStep{K: "out", V: r.Name + ": " + clipText(firstNonEmpty(r.Run.Error, r.Run.Output), 600)})
+		}
+	}
+	tr.Summary = fmt.Sprintf("%d of %d test cases passed (run with arguments, no AI)", n, len(rs))
+	return tr
 }

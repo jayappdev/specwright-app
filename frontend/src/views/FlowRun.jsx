@@ -5,6 +5,9 @@
 //            edit, change settings and retry), outputs and activity
 //   sidebar  progress and metrics: steps, elapsed time, tokens, credits, tools
 import { TAG } from "./flows/Triggers.jsx";
+import { registerPlace } from "../navigation.js";
+import { FlowFilterBar, FlowGroup, FlowTagChips, flowFilter, groupFlows } from "../flowLists.jsx";
+import { dragProps, loadLayout } from "../listLayout.jsx";
 import { dateDefault } from "../dates.js";
 import { useEffect, useState } from "react";
 import { FLOW_STATUS_LABEL as STATUS_LABEL } from "../labels.js";
@@ -76,6 +79,7 @@ async function loadAll() {
   r.flows = await backend.Flows().catch(() => []);
   r.runs = await backend.FlowRuns(100).catch(() => []);
   r.triggers = (await backend.FlowTriggers("").catch(() => [])) || [];
+  r.queue = (await backend.TriggerQueue().catch(() => [])) || [];
   r.keychain = await backend.KeychainAvailable().catch(() => false);
   if (!r.flowId && r.flows.length) await loadFlow(r.flows[0].id);
   update();
@@ -232,11 +236,15 @@ async function approveCommands(steps) {
   }
 }
 
-// Commands: a flow's "Run a command" steps must be approved for the project before it runs
+// Commands: a flow's "Run a command" steps, and its steps that send data out
+// of the computer (an HTTP POST, a Slack message), must be approved for the
+// project before it runs
 export function Commands() {
   const r = frs(),
     cmds = r.cmds || [],
-    todo = cmds.filter((c) => !c.approved);
+    todo = cmds.filter((c) => !c.approved),
+    sends = cmds.some((c) => c.kind === "sends"),
+    shell = cmds.some((c) => c.kind !== "sends");
   if (!cmds.length) return null;
   return (
     <div
@@ -246,7 +254,13 @@ export function Commands() {
     >
       <div className="card-head">
         <Icon.warn />
-        <h3>Commands this flow runs</h3>
+        <h3>
+          {sends && !shell
+            ? "What this flow sends out"
+            : sends
+              ? "Commands and what this flow sends out"
+              : "Commands this flow runs"}
+        </h3>
         {todo.length ? (
           <span className="badge badge-warn">{todo.length} not approved</span>
         ) : (
@@ -254,15 +268,20 @@ export function Commands() {
         )}
       </div>
       <p className="wf-desc">
-        These steps run shell commands in the project folder. Flows can come from files, pasted steps or the
-        AI, so each command must be approved for this project before the flow runs; a changed command needs a
-        new approval.
+        {shell && "Some steps run shell commands in the project folder. "}
+        {sends &&
+          "Some steps send data out of this computer (an HTTP request that changes things, a message to Slack, Teams or a webhook). "}
+        Flows can come from files, pasted steps or the AI, so each must be approved for this project before
+        the flow runs; a changed step needs a new approval.
       </p>
       <ul className="fr-cmd-list">
         {cmds.map((c) => (
           <li key={c.step}>
             <b>{c.title}</b>
-            <code className="fr-cmd">$ {c.command}</code>
+            <code className="fr-cmd">
+              {c.kind === "sends" ? "↗ " : "$ "}
+              {c.command}
+            </code>
             {c.approved ? (
               <span className="badge badge-ok">approved</span>
             ) : (
@@ -374,6 +393,7 @@ export function FlowRun() {
     if (S.ws) {
       loadAll();
       refreshExtensions();
+      loadLayout();
     }
   }, [S.ws?.root]);
   usePoll(() => S.ws && loadAll(), FLOWRUN_POLL * 1000, [S.ws?.root]);
@@ -403,70 +423,116 @@ export function FlowRun() {
             onRefresh={loadAll}
           />
         </h1>
-        {(r.flows || []).map((f) => (
-          <div key={f.id} className="fr-flow">
-            <button
-              className={"run-item" + (r.flowId === f.id && !r.runId ? " active" : "")}
-              onClick={() => {
-                r.runId = "";
-                loadFlow(f.id);
-              }}
+        <FlowFilterBar area="runner" list={r.flows} />
+        {(() => {
+          const groups = groupFlows(r.flows, flowFilter("runner"));
+          if ((r.flows || []).length && !groups.length)
+            return (
+              <p className="muted" style={{ padding: "4px 8px" }}>
+                No flow matches.
+              </p>
+            );
+          return groups.map((g) => (
+            <FlowGroup
+              key={g.key}
+              area="runner"
+              name={g.name}
+              heading={g.heading}
+              count={g.items.length}
+              groups={groups.length}
             >
-              <span className="run-item-top">
-                <b>{f.name}</b>
-              </span>
-              <small>
-                {f.steps} steps · {f.outputs} outputs
-              </small>
-              {(() => {
-                const next = (r.triggers || [])
-                  .filter((t) => t.flowId === f.id && t.trigger.enabled && t.upcoming?.length)
-                  .map((t) => new Date(t.upcoming[0]))
-                  .sort((a, b) => a - b)[0];
-                return next ? (
-                  <small className="fr-next">
-                    <span className="badge badge-sched">scheduled</span> next{" "}
-                    {next.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}
-                  </small>
-                ) : null;
-              })()}
-            </button>
-            {runsOf(f.id).map((x) => {
-              const live = S.flowRuns[x.id]?.status || x.state;
-              return (
-                <button
-                  key={x.id}
-                  className={"run-item fr-run-item" + (r.runId === x.id ? " active" : "")}
-                  onClick={() => openRun(x.id)}
-                >
-                  <span className="run-item-top">
-                    <span title={new Date(x.started).toLocaleString()}>
-                      {ago(x.started)}
-                      {(x.kind === "flow-trial" || S.flowRuns[x.id]?.trial) && (
-                        <span className="badge badge-info" style={{ marginLeft: 6 }}>
-                          trial
-                        </span>
-                      )}
-                      {(x.trigger || S.flowRuns[x.id]?.options?.trigger) && (
-                        <span
-                          className="badge badge-sched"
-                          style={{ marginLeft: 6 }}
-                          title={
-                            "Started by " +
-                            (x.triggerName || S.flowRuns[x.id]?.options?.trigger?.name || "a trigger")
-                          }
-                        >
-                          {x.trigger || TAG[S.flowRuns[x.id]?.options?.trigger?.kind] || "trigger"}
-                        </span>
-                      )}
+              {g.items.map((f) => (
+                <div key={f.id} className="fr-flow" {...dragProps("flows", f.id)}>
+                  <button
+                    className={"run-item" + (r.flowId === f.id && !r.runId ? " active" : "")}
+                    onClick={() => {
+                      r.runId = "";
+                      loadFlow(f.id);
+                    }}
+                  >
+                    <span className="run-item-top">
+                      <b>{f.name}</b>
                     </span>
-                    <Pill s={pill(live)} label={STATUS_LABEL[live] || live} />
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        ))}
+                    <small>
+                      {f.steps} steps · {f.outputs} outputs
+                    </small>
+                    <FlowTagChips tags={f.tags} area="runner" />
+                    {(() => {
+                      const next = (r.triggers || [])
+                        .filter((t) => t.flowId === f.id && t.trigger.enabled && t.upcoming?.length)
+                        .map((t) => new Date(t.upcoming[0]))
+                        .sort((a, b) => a - b)[0];
+                      return next ? (
+                        <small className="fr-next">
+                          <span className="badge badge-sched">scheduled</span> next{" "}
+                          {next.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}
+                        </small>
+                      ) : null;
+                    })()}
+                    {(r.queue || [])
+                      .filter((q) => q.flow === f.id)
+                      .map((q) => (
+                        <small key={q.id} className="fr-queued">
+                          <span className="badge">waiting</span>{" "}
+                          <span title={q.why}>
+                            {q.triggerName}
+                            {q.attempt ? ` · retry ${q.attempt}` : ""}
+                            {q.notBefore && new Date(q.notBefore) > new Date()
+                              ? ` · at ${new Date(q.notBefore).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                              : " · when the flow is free"}
+                          </span>{" "}
+                          <button
+                            className="link"
+                            onClick={async (e) => {
+                              e.stopPropagation();
+                              await backend.CancelQueued(q.id).catch((x) => toast(errMsg(x), "error"));
+                              loadAll();
+                            }}
+                          >
+                            Cancel
+                          </button>
+                        </small>
+                      ))}
+                  </button>
+                  {runsOf(f.id).map((x) => {
+                    const live = S.flowRuns[x.id]?.status || x.state;
+                    return (
+                      <button
+                        key={x.id}
+                        className={"run-item fr-run-item" + (r.runId === x.id ? " active" : "")}
+                        onClick={() => openRun(x.id)}
+                      >
+                        <span className="run-item-top">
+                          <span title={new Date(x.started).toLocaleString()}>
+                            {ago(x.started)}
+                            {(x.kind === "flow-trial" || S.flowRuns[x.id]?.trial) && (
+                              <span className="badge badge-info" style={{ marginLeft: 6 }}>
+                                trial
+                              </span>
+                            )}
+                            {(x.trigger || S.flowRuns[x.id]?.options?.trigger) && (
+                              <span
+                                className="badge badge-sched"
+                                style={{ marginLeft: 6 }}
+                                title={
+                                  "Started by " +
+                                  (x.triggerName || S.flowRuns[x.id]?.options?.trigger?.name || "a trigger")
+                                }
+                              >
+                                {x.trigger || TAG[S.flowRuns[x.id]?.options?.trigger?.kind] || "trigger"}
+                              </span>
+                            )}
+                          </span>
+                          <Pill s={pill(live)} label={STATUS_LABEL[live] || live} />
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+              ))}
+            </FlowGroup>
+          ));
+        })()}
         {r.flows && !r.flows.length && (
           <EmptyState
             compact
@@ -495,3 +561,14 @@ export function FlowRun() {
     </div>
   );
 }
+
+// Back / Forward: the run open in Run flows, or the flow chosen there (navigation.js)
+registerPlace("flowrun", {
+  key: () => (S.frun?.runId ? "run:" + S.frun.runId : S.frun?.flowId ? "flow:" + S.frun.flowId : ""),
+  restore: (k) => {
+    const [kind, id] = [k.slice(0, k.indexOf(":")), k.slice(k.indexOf(":") + 1)];
+    if (kind === "run") return openRun(id);
+    frs().runId = "";
+    return loadFlow(id);
+  },
+});

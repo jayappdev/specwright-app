@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 
@@ -42,6 +43,9 @@ func (h *Hub) newToolbox() *builtin.Box {
 			}
 			return ""
 		},
+		Secret: h.secretByName, // http_request, notify (desktop.go)
+		Notify: h.desktopNotify,
+		Ask:    h.askQuestions, // ask_user (questions.go)
 		Problems: func(ctx context.Context) (string, string, error) {
 			res, err := h.Compile()
 			if err != nil {
@@ -77,22 +81,38 @@ func (h *Hub) BuiltinTools() []BuiltinTool {
 	for _, t := range builtin.Tools() {
 		out = append(out, BuiltinTool{BuiltinInfo: extension.BuiltinInfo{Name: t.Name, Title: t.Title, Description: t.Desc, InputSchema: t.Schema, ReadOnly: t.ReadOnly, Group: t.Group}, Enabled: !off[t.Name]})
 	}
+	for _, t := range h.appTools() {
+		out = append(out, BuiltinTool{BuiltinInfo: t, Enabled: !off[t.Name]})
+	}
+	return out
+}
+
+// appTools are SpecWright's own agent tools: how agents change, schedule
+// and run flows, read the run history and propose tools. They are offered
+// as their own MCP tools and through extension_managed.
+func (h *Hub) appTools() []extension.BuiltinInfo {
+	out := []extension.BuiltinInfo{
+		saveFlowInfo(),     // flowsave_agent.go
+		scheduleFlowInfo(), // flowschedule_agent.go
+		runFlowInfo(),      // runflow_agent.go
+		saveToolInfo(),     // toolsave_agent.go
+	}
+	if h.Store.HasDB() {
+		out = append(out, historySearchInfo()) // history_search.go
+	}
+	for i := range out {
+		out[i].App = true
+	}
 	return out
 }
 
 // Builtins implements extension.Provider: the enabled tools for agents.
 func (h *Hub) Builtins() []extension.BuiltinInfo {
 	var out []extension.BuiltinInfo
-	for _, t := range h.BuiltinTools() {
+	for _, t := range h.BuiltinTools() { // the built-ins and SpecWright's own (appTools)
 		if t.Enabled {
 			out = append(out, t.BuiltinInfo)
 		}
-	}
-	if !h.disabledBuiltins()[SaveFlowTool] {
-		out = append(out, saveFlowInfo()) // how agents change flows (flowsave_agent.go)
-	}
-	if !h.disabledBuiltins()[ScheduleFlowTool] {
-		out = append(out, scheduleFlowInfo()) // how agents schedule flows (flowschedule_agent.go)
 	}
 	return out
 }
@@ -106,11 +126,20 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 	start := time.Now()
 	var out string
 	var err error
+	if e := h.agentOutwardAllowed(ctx, name, args); e != nil { // outward.go: a person approves what sends data out
+		return "", e
+	}
 	switch name {
 	case SaveFlowTool:
 		out, err = h.agentSaveFlow(args)
 	case ScheduleFlowTool:
 		out, err = h.agentScheduleFlow(args)
+	case HistorySearchTool:
+		out, err = h.agentHistorySearch(args)
+	case RunFlowTool:
+		out, err = h.agentRunFlow(ctx, args)
+	case SaveToolTool:
+		out, err = h.agentSaveTool(args)
 	default:
 		out, err = h.tools.Call(ctx, name, args)
 	}
@@ -118,8 +147,7 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 	ev := bus.Event{Type: "builtin.result", Summary: name + map[bool]string{true: " ok", false: " failed"}[err == nil],
 		Data: map[string]any{"name": name, "args": args, "ok": err == nil, "duration_ms": time.Since(start).Milliseconds(), "output": trunc(firstNonEmpty(out, errText(err)), 2000)}}
 	if a := h.activeRun(); a != nil {
-		ev.RunID, ev.Step = a.Session.ID, a.Session.Step
-		_ = h.Store.Append(h.Bus.Publish(ev))
+		h.emitRun(a, ev)
 	} else {
 		h.Bus.Publish(ev)
 	}
@@ -157,4 +185,65 @@ func errText(err error) string {
 		return ""
 	}
 	return strings.TrimSpace(err.Error())
+}
+
+// AgentTool is a tool an agent is offered, as the Prompt Playground lists it.
+type AgentTool struct {
+	Name     string `json:"name"`
+	Title    string `json:"title"`
+	Group    string `json:"group"`
+	Desc     string `json:"desc"`
+	App      bool   `json:"app,omitempty"`
+	ReadOnly bool   `json:"readOnly,omitempty"`
+}
+
+// AgentTools are the built-in and SpecWright tools agents get here (the
+// project's own tools are listed with the tools), for the Playground.
+func (h *Hub) AgentTools() []AgentTool {
+	out := []AgentTool{}
+	for _, b := range h.Builtins() {
+		d := b.Description
+		if i := strings.IndexAny(d, "\n"); i >= 0 {
+			d = d[:i]
+		}
+		out = append(out, AgentTool{Name: b.Name, Title: b.Title, Group: b.Group, Desc: clipText(d, 260), App: b.App, ReadOnly: b.ReadOnly})
+	}
+	return out
+}
+
+// ChartPNG saves a PNG of a chart the chart tool drew (its SVG, which holds
+// the chart's data) in the project, and returns where (workspace path).
+// path "" saves it next to the SVG's name in out/charts.
+func (h *Hub) ChartPNG(svg, path string) (string, error) {
+	root, err := h.need()
+	if err != nil {
+		return "", err
+	}
+	spec, err := builtin.ChartFromSVG(svg)
+	if err != nil {
+		return "", err
+	}
+	data, err := builtin.ChartPNG(spec)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(path) == "" {
+		name := strings.Trim(regexp.MustCompile(`[^a-z0-9]+`).ReplaceAllString(strings.ToLower(firstNonEmpty(spec.Title, "chart")), "-"), "-")
+		path = "out/charts/" + firstNonEmpty(name, "chart") + "-" + time.Now().Format("20060102-150405") + ".png"
+	}
+	if !strings.HasSuffix(strings.ToLower(path), ".png") {
+		path += ".png"
+	}
+	abs := filepath.Join(root, filepath.FromSlash(path))
+	if rel, err := filepath.Rel(root, abs); err != nil || strings.HasPrefix(rel, "..") {
+		return "", errors.New("save the PNG inside the project")
+	}
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(abs, data, 0o644); err != nil {
+		return "", err
+	}
+	rel, _ := filepath.Rel(root, abs)
+	return filepath.ToSlash(rel), nil
 }

@@ -5,7 +5,7 @@ import { S, update } from "../store.js";
 import { resolveTheme, applyAppearance, ALL_THEMES, ALL_SKINS } from "../theme.js";
 import { FAMILIES, ANDROID_SEEDS, UI_FONTS, CODE_FONTS } from "../palettes.js";
 import { agentLabel } from "./Setup.jsx";
-import { HousekeepingCard } from "../RunHousekeeping.jsx";
+import { HousekeepingCard, HistoryDBCard } from "../RunHousekeeping.jsx";
 import { PackagesCard } from "./Packages.jsx";
 import { RunSettings } from "../components/RunSettings.jsx";
 
@@ -321,6 +321,7 @@ export function Appearance() {
         {tab === "runs" && (
           <>
             <HousekeepingCard />
+            <HistoryDBCard />
             <div className="card">
               <h3>Spec workflow runs</h3>
               {S.wf ? (

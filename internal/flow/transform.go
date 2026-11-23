@@ -16,14 +16,14 @@ import (
 
 // patterns compiled once (not on every call)
 var (
-	htmlStart    = regexp.MustCompile(`(?i)^\s*(<!doctype|<html|<(div|p|h[1-6]|table|ul|ol|section|article|body)\b)`) // text that starts as HTML
-	mdHeading    = regexp.MustCompile(`^#{1,6}\s`)                                                                    // a Markdown heading
-	mdTableRule  = regexp.MustCompile(`^\|?\s*:?-{3,}`)                                                               // a Markdown table's header rule
-	mdBullet     = regexp.MustCompile(`^[-*+]\s`)                                                                     // a bullet list item
-	mdNumbered   = regexp.MustCompile(`^\d+[.)]\s`)                                                                   // a numbered list item
-	startsDigit  = regexp.MustCompile(`^\d`)                                                                          // starts with a digit
-	mdListMarker = regexp.MustCompile(`^([-*+]|\d+[.)])\s+`)                                                          // a list item's marker
-	safeHref     = regexp.MustCompile(`^(https?:|mailto:|#|/|\./)`)                                                   // links that may stay links
+	htmlStart    = regexp.MustCompile(`(?i)^\s*(<!doctype|<html|<(div|p|h[1-6]|table|ul|ol|section|article|body|svg)\b)`) // text that starts as HTML
+	mdHeading    = regexp.MustCompile(`^#{1,6}\s`)                                                                        // a Markdown heading
+	mdTableRule  = regexp.MustCompile(`^\|?\s*:?-{3,}`)                                                                   // a Markdown table's header rule
+	mdBullet     = regexp.MustCompile(`^[-*+]\s`)                                                                         // a bullet list item
+	mdNumbered   = regexp.MustCompile(`^\d+[.)]\s`)                                                                       // a numbered list item
+	startsDigit  = regexp.MustCompile(`^\d`)                                                                              // starts with a digit
+	mdListMarker = regexp.MustCompile(`^([-*+]|\d+[.)])\s+`)                                                              // a list item's marker
+	safeHref     = regexp.MustCompile(`^(https?:|mailto:|#|/|\./)`)                                                       // links that may stay links
 )
 
 // --- templates ----------------------------------------------------------------
@@ -389,28 +389,30 @@ type Op struct {
 
 // Ops lists the transformations by id.
 var Ops = map[string]Op{
-	"template":       {Name: "Fill a template", Group: "Text", Help: "Write the result with {{input}} and any other variable.", Tpl: true, check: needTemplate, apply: func(in string, n Node, d Data) (string, error) { d.Input = in; return Render(n.Template, d), nil }},
-	"trim":           {Name: "Trim whitespace", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.TrimSpace(in), nil }},
-	"uppercase":      {Name: "UPPERCASE", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.ToUpper(in), nil }},
-	"lowercase":      {Name: "lowercase", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.ToLower(in), nil }},
-	"truncate":       {Name: "Keep the first N characters", Group: "Text", Expr: "N", check: needInt, apply: truncate},
-	"filter-lines":   {Name: "Keep matching lines", Group: "Text", Expr: "Regular expression", check: needRegex, apply: filterLines},
-	"regex-extract":  {Name: "Extract with a pattern", Group: "Text", Help: "Every match on its own line (the first group if the pattern has one).", Expr: "Regular expression", check: needRegex, apply: regexExtract},
-	"regex-replace":  {Name: "Find and replace", Group: "Text", Help: "$1, $2 … refer to groups.", Expr: "Regular expression", Repl: true, check: needRegex, apply: regexReplace},
-	"split-lines":    {Name: "Lines → JSON array", Group: "Convert", apply: splitLines},
-	"json-path":      {Name: "Pick a JSON value", Group: "JSON", Help: "A path like items[0].name, items[*].id or $.data.total.", Expr: "Path", check: needExpr, apply: jsonPath},
-	"json-pick":      {Name: "Keep JSON fields", Group: "JSON", Help: "Comma-separated field names; works on an object or an array of objects.", Expr: "Fields", check: needExpr, apply: jsonPick},
-	"json-template":  {Name: "JSON → JSON (template)", Group: "JSON", Help: "Write the JSON to produce. {{this.<path>}} reads the input JSON; a placeholder that is a whole string value (\"{{this.total}}\") keeps its type (number, list, object). For nested lists, an object whose only key is \"{{#each this.lines}}\" repeats its template for each element; inside it {{parent.<path>}} is the level above, {{root.<path>}} the whole input and {{this_index}} the position. Set a list path to apply the whole template to each element and get a JSON array.", Expr: "For each element of (optional list path, e.g. items)", Tpl: true, check: checkJSONTemplate, apply: jsonTemplate},
-	"json-pretty":    {Name: "Format JSON", Group: "JSON", apply: jsonPretty},
-	"json-minify":    {Name: "Minify JSON", Group: "JSON", apply: jsonMinify},
-	"json-stringify": {Name: "JSON → string (stringify)", Group: "JSON", Help: "Turns JSON into a JSON string: {\"a\":1} becomes \"{\\\"a\\\":1}\" — for an API or tool that wants JSON inside a string field. With a field path, only that field is turned into a string (items[*].payload: in every element); the rest stays as it is.", Expr: "Field (optional: empty is the whole input)", apply: jsonStringify},
-	"json-parse":     {Name: "String → JSON (destringify)", Group: "Text", Help: "Turns a JSON string back into JSON: \"{\\\"a\\\":1}\" becomes {\"a\":1} (strings encoded twice are undone too). With a field path, only that field is parsed (items[*].payload: in every element); the rest stays as it is.", Expr: "Field (optional: empty is the whole input)", apply: jsonParse},
-	"csv-to-json":    {Name: "CSV → JSON", Group: "Convert", apply: csvToJSON},
-	"json-to-csv":    {Name: "JSON → CSV", Group: "Convert", apply: jsonToCSV},
-	"md-to-html":     {Name: "Markdown → HTML", Group: "Convert", apply: func(in string, _ Node, _ Data) (string, error) { return MarkdownToHTML(in), nil }},
-	"html-to-text":   {Name: "HTML → text", Group: "Convert", apply: func(in string, _ Node, _ Data) (string, error) { return HTMLToText(in), nil }},
-	"command":        {Name: "Run a command", Group: "Command", Help: "A shell command run in the project; the data arrives on stdin and stdout is the result (e.g. jq '.items', sort -u).", Expr: "Command", Exec: true, check: needExpr},
-	"ai":             {Name: "Ask AI to transform", Group: "AI", Help: "Describe the change; {{input}} is the data. Runs with the agent when the flow runs.", Tpl: true, AI: true, check: needTemplate},
+	"template":        {Name: "Fill a template", Group: "Text", Help: "Write the result with {{input}} and any other variable.", Tpl: true, check: needTemplate, apply: func(in string, n Node, d Data) (string, error) { d.Input = in; return Render(n.Template, d), nil }},
+	"trim":            {Name: "Trim whitespace", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.TrimSpace(in), nil }},
+	"uppercase":       {Name: "UPPERCASE", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.ToUpper(in), nil }},
+	"lowercase":       {Name: "lowercase", Group: "Text", apply: func(in string, _ Node, _ Data) (string, error) { return strings.ToLower(in), nil }},
+	"truncate":        {Name: "Keep the first N characters", Group: "Text", Expr: "N", check: needInt, apply: truncate},
+	"filter-lines":    {Name: "Keep matching lines", Group: "Text", Expr: "Regular expression", check: needRegex, apply: filterLines},
+	"regex-extract":   {Name: "Extract with a pattern", Group: "Text", Help: "Every match on its own line (the first group if the pattern has one).", Expr: "Regular expression", check: needRegex, apply: regexExtract},
+	"regex-replace":   {Name: "Find and replace", Group: "Text", Help: "$1, $2 … refer to groups.", Expr: "Regular expression", Repl: true, check: needRegex, apply: regexReplace},
+	"split-lines":     {Name: "Lines → JSON array", Group: "Convert", apply: splitLines},
+	"json-path":       {Name: "Pick a JSON value", Group: "JSON", Help: "A path like items[0].name, items[*].id or $.data.total.", Expr: "Path", check: needExpr, apply: jsonPath},
+	"json-pick":       {Name: "Keep JSON fields", Group: "JSON", Help: "Comma-separated field names; works on an object or an array of objects.", Expr: "Fields", check: needExpr, apply: jsonPick},
+	"json-template":   {Name: "JSON → JSON (template)", Group: "JSON", Help: "Write the JSON to produce. {{this.<path>}} reads the input JSON; a placeholder that is a whole string value (\"{{this.total}}\") keeps its type (number, list, object). For nested lists, an object whose only key is \"{{#each this.lines}}\" repeats its template for each element; inside it {{parent.<path>}} is the level above, {{root.<path>}} the whole input and {{this_index}} the position. Set a list path to apply the whole template to each element and get a JSON array.", Expr: "For each element of (optional list path, e.g. items)", Tpl: true, check: checkJSONTemplate, apply: jsonTemplate},
+	"json-md-table":   {Name: "JSON array → Markdown table", Group: "JSON", Help: "One row per element, one column per field, in the order the JSON has them. Name the columns to choose and order them: paths into each element, with a header after \"as\" (name, user.email as Email, tags[0]). An object that holds the list ({\"items\": [...]}) gives the list's table.", Expr: "Columns (optional: empty is every field)", apply: jsonToMDTable},
+	"json-html-table": {Name: "JSON array → HTML table", Group: "JSON", Help: "A <table> with a header row, one row per element, one column per field (in the order the JSON has them), values escaped. Name the columns to choose and order them: paths with an optional header after \"as\" (name, user.email as Email). An object that holds the list ({\"items\": [...]}) gives the list's table.", Expr: "Columns (optional: empty is every field)", apply: jsonToHTMLTable},
+	"json-pretty":     {Name: "Format JSON", Group: "JSON", apply: jsonPretty},
+	"json-minify":     {Name: "Minify JSON", Group: "JSON", apply: jsonMinify},
+	"json-stringify":  {Name: "JSON → string (stringify)", Group: "JSON", Help: "Turns JSON into a JSON string: {\"a\":1} becomes \"{\\\"a\\\":1}\" — for an API or tool that wants JSON inside a string field. With a field path, only that field is turned into a string (items[*].payload: in every element); the rest stays as it is.", Expr: "Field (optional: empty is the whole input)", apply: jsonStringify},
+	"json-parse":      {Name: "String → JSON (destringify)", Group: "Text", Help: "Turns a JSON string back into JSON: \"{\\\"a\\\":1}\" becomes {\"a\":1} (strings encoded twice are undone too). With a field path, only that field is parsed (items[*].payload: in every element); the rest stays as it is.", Expr: "Field (optional: empty is the whole input)", apply: jsonParse},
+	"csv-to-json":     {Name: "CSV → JSON", Group: "Convert", apply: csvToJSON},
+	"json-to-csv":     {Name: "JSON → CSV", Group: "Convert", apply: jsonToCSV},
+	"md-to-html":      {Name: "Markdown → HTML", Group: "Convert", apply: func(in string, _ Node, _ Data) (string, error) { return MarkdownToHTML(in), nil }},
+	"html-to-text":    {Name: "HTML → text", Group: "Convert", apply: func(in string, _ Node, _ Data) (string, error) { return HTMLToText(in), nil }},
+	"command":         {Name: "Run a command", Group: "Command", Help: "A shell command run in the project; the data arrives on stdin and stdout is the result (e.g. jq '.items', sort -u).", Expr: "Command", Exec: true, check: needExpr},
+	"ai":              {Name: "Ask AI to transform", Group: "AI", Help: "Describe the change; {{input}} is the data. Runs with the agent when the flow runs.", Tpl: true, AI: true, check: needTemplate},
 }
 
 func needTemplate(n Node) error {
@@ -842,9 +844,16 @@ func Convert(content, format string) (string, error) {
 		return b.String(), nil
 	case "html":
 		switch {
+		case isHTML && strings.HasPrefix(strings.ToLower(t), "<svg"): // a chart: on a page of its own
+			return htmlDoc(t), nil
 		case isHTML:
 			return content, nil
 		case isJSON:
+			if isJSONList(t) { // a list of records: a table, as the run view shows it
+				if tbl, err := jsonToHTMLTable(t, Node{}, Data{}); err == nil {
+					return htmlDoc(tbl), nil
+				}
+			}
 			return htmlDoc("<pre><code>" + html.EscapeString(t) + "</code></pre>"), nil
 		default:
 			return htmlDoc(MarkdownToHTML(content)), nil
@@ -878,32 +887,43 @@ func looksCSV(t string) bool {
 	return err == nil && len(rows) > 1 && len(rows[0]) > 1
 }
 
+// jsonToMarkdownTable is a list of records as a Markdown table (columns in
+// the JSON's order), or "" when t is not one.
 func jsonToMarkdownTable(t string) string {
-	c, err := Convert(t, "csv")
+	if !isJSONList(t) {
+		return ""
+	}
+	tbl, err := jsonToMDTable(t, Node{}, Data{})
 	if err != nil {
 		return ""
 	}
-	rows, err := csv.NewReader(strings.NewReader(c)).ReadAll()
-	if err != nil || len(rows) < 2 || len(rows) > 500 {
-		return ""
+	return tbl
+}
+
+// isJSONList: t is a list of records (objects), or an object holding one
+// ({"rows": [...]}): what Output writes as a table.
+func isJSONList(t string) bool {
+	v, err := decodeOrdered(t)
+	if err != nil {
+		return false
 	}
-	var b strings.Builder
-	cell := func(s string) string { return strings.ReplaceAll(s, "|", `\|`) }
-	for i, r := range rows {
-		cs := make([]string, len(r))
-		for j, x := range r {
-			cs[j] = cell(x)
-		}
-		b.WriteString("| " + strings.Join(cs, " | ") + " |\n")
-		if i == 0 {
-			b.WriteString("|" + strings.Repeat(" --- |", len(r)) + "\n")
+	rows, err := tableRowsOf(v)
+	if err != nil || len(rows) == 0 {
+		return false
+	}
+	if o, single := v.(*Obj); single && len(rows) == 1 && rows[0] == any(o) {
+		return false // one object: not a list
+	}
+	for _, r := range rows {
+		if _, ok := r.(*Obj); !ok {
+			return false
 		}
 	}
-	return b.String()
+	return true
 }
 
 func htmlDoc(body string) string {
-	return "<!doctype html>\n<html><head><meta charset=\"utf-8\"><style>body{font:15px/1.55 -apple-system,Segoe UI,sans-serif;max-width:860px;margin:2rem auto;padding:0 1rem}pre{background:#f6f8fa;padding:12px;overflow:auto}code{font-family:ui-monospace,Menlo,monospace}table{border-collapse:collapse}td,th{border:1px solid #d0d7de;padding:4px 8px}</style></head><body>\n" + body + "\n</body></html>\n"
+	return "<!doctype html>\n<html><head><meta charset=\"utf-8\"><style>body{font:15px/1.55 -apple-system,Segoe UI,sans-serif;max-width:860px;margin:2rem auto;padding:0 1rem}pre{background:#f6f8fa;padding:12px;overflow:auto}code{font-family:ui-monospace,Menlo,monospace}table{border-collapse:collapse}td,th{border:1px solid #d0d7de;padding:4px 8px;vertical-align:top}th{background:#f6f8fa;text-align:left}</style></head><body>\n" + body + "\n</body></html>\n"
 }
 
 // MarkdownToHTML renders the common Markdown subset: headings, paragraphs,

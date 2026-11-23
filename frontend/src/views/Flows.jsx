@@ -4,6 +4,17 @@
 //   canvas    steps as cards; drag a card to move it, drag from its ● port to another card to connect
 //   inspector the selected step, or the flow (name, context, skills) when nothing is selected
 // Flows are saved to .codegen/flows/<id>.json (autosave). Running them comes with the executor.
+import { registerPlace } from "../navigation.js";
+import {
+  FlowFilterBar,
+  FlowGroup,
+  FlowTagChips,
+  TagEditor,
+  allTags,
+  flowFilter,
+  groupFlows,
+} from "../flowLists.jsx";
+import { dragProps, loadLayout } from "../listLayout.jsx";
 import { stepRef, toolRef, isBuiltin, loopInfo, uniqueTitle } from "../flowNames.js";
 import { useEffect, useRef } from "react";
 import { openFlowRunner } from "./FlowRun.jsx";
@@ -34,6 +45,11 @@ export const STEP_TYPES = [
     type: "improve",
     name: "Improve until done",
     help: "Pairs with a tool: fixes its run, or has it check the AI's result, round after round until done",
+  },
+  {
+    type: "context",
+    name: "Context",
+    help: "Gather files, notes, past runs and steps' results; keep what matters within a budget; the AI steps after it get it",
   },
   { type: "merge", name: "Merge", help: "Combine several steps' outputs" },
   { type: "transform", name: "Transform", help: "Reshape data: JSON, CSV, text, Markdown → HTML, AI" },
@@ -155,6 +171,18 @@ const sv = (d) =>
     );
   };
 const TYPE_ICON = {
+  context: {
+    color: "--ansi-cyan",
+    Icon: sv(
+      <>
+        <path d="M4 5h11" />
+        <path d="M4 10h8" />
+        <path d="M4 15h5" />
+        <circle cx="16.5" cy="15.5" r="3.5" />
+        <path d="M19 18l2.5 2.5" />
+      </>,
+    ),
+  },
   start: {
     color: "--ok",
     Icon: sv(
@@ -412,6 +440,9 @@ export async function save() {
     if (s) {
       s.name = f.flow.name;
       s.updated = st.flow.updated;
+      s.group = st.flow.group || ""; // as saved (tidied: flow/tags.go)
+      s.tags = st.flow.tags || [];
+      s.description = f.flow.description;
     }
   } catch (e) {
     if (/flow changed on disk/.test(errMsg(e))) {
@@ -566,6 +597,31 @@ async function deleteFlow() {
   }
 }
 
+// renameFlow: a new name, and with it a new id: the flow's file and what
+// refers to it follow (core/rename.go).
+async function renameFlow() {
+  const f = fl();
+  if (f.dirty) await save();
+  const old = f.flow;
+  const name = (
+    await askText(`Rename ${old.name}`, {
+      value: old.name,
+      ok: "Rename",
+      message: `Its file (.codegen/flows/${old.id}.json) is renamed to match, and the flows that refer to it (after-flow triggers, versions, run_flow steps) are updated; past runs keep the old name.`,
+    })
+  )?.trim();
+  if (!name || name === old.name) return;
+  try {
+    const st = await backend.RenameFlow(old.id, name);
+    await loadList();
+    await loadLayout(true);
+    await openFlow(st.flow.id);
+    toast((st.notes || [])[0] || `Renamed to ${st.flow.name}.`);
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+}
+
 async function duplicateFlow() {
   const f = fl();
   if (f.dirty) await save();
@@ -606,6 +662,7 @@ const BUILTIN_GROUPS = [
   ["edit", "Edit files"],
   ["execute", "Run"],
   ["web", "Web"],
+  ["chart", "Charts"],
 ];
 export const toolLabel = (name) => (isBuiltin(name) ? toolRef(name) + " · built-in" : name);
 async function loadBuiltins() {
@@ -684,6 +741,8 @@ export function addNode(spec, x, y) {
       n.args[p.name] = "";
     });
     if (spec.tool === "builtin:fetch_webpage") n.args.format = "raw";
+    if (spec.args) Object.assign(n.args, spec.args); // a preset (Visualization: a chart)
+    if (spec.title) n.title = uniqueTitle(flow, spec.title, id);
   } // in a flow, the response is data for the next steps
   if (spec.type === "ai") n.prompt = "";
   if (spec.type === "improve") {
@@ -692,6 +751,11 @@ export function addNode(spec, x, y) {
     n.goal = "";
     n.rounds = 5;
     n.approve = "done";
+  }
+  if (spec.type === "context") {
+    n.goal = "";
+    n.sources = [];
+    n.budget = 8000;
   }
   if (spec.type === "merge") {
     n.mode = "concat";
@@ -1113,6 +1177,7 @@ export function Flows() {
       loadList();
       refreshExtensions();
       loadBuiltins();
+      loadLayout();
     }
   }, [S.ws?.root]);
   useEffect(() => {
@@ -1176,29 +1241,54 @@ export function Flows() {
             </button>
           )}
         </div>
-        {(f.list || []).map((x) => (
-          <button
-            key={x.id}
-            className={"run-item" + (x.id === f.flow?.id ? " active" : "")}
-            onClick={() => openFlow(x.id)}
-          >
-            <span className="run-item-top">
-              <b>{x.name}</b>
-              {x.revision > 1 && (
-                <span
-                  className="badge"
-                  title={"A version of " + ((f.list || []).find((y) => y.id === x.parent)?.name || x.parent)}
+        <FlowFilterBar area="designer" list={f.list} />
+        {(() => {
+          const groups = groupFlows(f.list, flowFilter("designer"));
+          if ((f.list || []).length && !groups.length)
+            return (
+              <p className="muted" style={{ padding: "4px 8px" }}>
+                No flow matches.
+              </p>
+            );
+          return groups.map((g) => (
+            <FlowGroup
+              key={g.key}
+              area="designer"
+              name={g.name}
+              heading={g.heading}
+              count={g.items.length}
+              groups={groups.length}
+            >
+              {g.items.map((x) => (
+                <button
+                  key={x.id}
+                  {...dragProps("flows", x.id)}
+                  className={"run-item" + (x.id === f.flow?.id ? " active" : "")}
+                  onClick={() => openFlow(x.id)}
                 >
-                  v{x.revision}
-                </span>
-              )}
-            </span>
-            <small>
-              {x.steps} step{x.steps === 1 ? "" : "s"} · {x.outputs} output{x.outputs === 1 ? "" : "s"}
-              {x.updated ? " · " + new Date(x.updated).toLocaleDateString() : ""}
-            </small>
-          </button>
-        ))}
+                  <span className="run-item-top">
+                    <b>{x.name}</b>
+                    {x.revision > 1 && (
+                      <span
+                        className="badge"
+                        title={
+                          "A version of " + ((f.list || []).find((y) => y.id === x.parent)?.name || x.parent)
+                        }
+                      >
+                        v{x.revision}
+                      </span>
+                    )}
+                  </span>
+                  <small>
+                    {x.steps} step{x.steps === 1 ? "" : "s"} · {x.outputs} output{x.outputs === 1 ? "" : "s"}
+                    {x.updated ? " · " + new Date(x.updated).toLocaleDateString() : ""}
+                  </small>
+                  <FlowTagChips tags={x.tags} area="designer" />
+                </button>
+              ))}
+            </FlowGroup>
+          ));
+        })()}
         {f.list && !f.list.length && (
           <p className="muted" style={{ padding: "4px 8px" }}>
             No flows yet. A flow strings tools together: inputs → tools, AI, merges and transforms → outputs.
@@ -1313,12 +1403,24 @@ export function Flows() {
               label="More flow actions"
               items={[
                 ["Export…", exportFlow],
+                ["Rename…", renameFlow],
                 ["Duplicate", duplicateFlow],
                 ["Import a flow…", () => imp.current?.click()],
                 ["Delete flow…", deleteFlow, { danger: true }],
               ]}
             />
           </header>
+          <div className="fl-tagrow">
+            <span className="muted">Tags</span>
+            <TagEditor
+              tags={f.flow.tags || []}
+              suggestions={allTags(f.list)}
+              onChange={(t) => {
+                f.flow.tags = t;
+                changed();
+              }}
+            />
+          </div>
           {f.repairs && (
             <div className="banner fl-conflict" role="status">
               <span>
@@ -1442,3 +1544,6 @@ export function Flows() {
 }
 
 // --- the AI designer ---------------------------------------------------------------
+
+// Back / Forward: the flow open in the designer (navigation.js)
+registerPlace("flows", { key: () => S.fl?.flow?.id || "", restore: (id) => openFlow(id) });

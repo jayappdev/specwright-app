@@ -317,6 +317,22 @@ export function ToolTester({ tb, d }) {
           >
             Fill with examples
           </button>
+          {d.name && (
+            <button
+              className="link"
+              title="The arguments of its latest successful runs in this project"
+              onClick={async () => {
+                const ex = await backend.ToolArgExamples(d.name).catch(() => []);
+                if (!ex?.length) return toast("No successful run of this tool recorded yet.");
+                t.exIndex = ((t.exIndex ?? -1) + 1) % ex.length;
+                for (const p of params) t.vals[p.name] = ex[t.exIndex][p.name] ?? "";
+                toast(`Arguments of a run that worked (${t.exIndex + 1} of ${ex.length}).`);
+                update();
+              }}
+            >
+              Arguments that worked
+            </button>
+          )}
         </div>
         {t.running && (
           <AiProgress phases={["Checking the arguments", "Running the tool", "Checking the output"]} />
@@ -430,6 +446,8 @@ function SaveCase({ tb, d, args, r }) {
               tests: [...(d.tests || []).filter((x) => x.name !== test.name), test],
             });
             setOpen(false);
+            // run them all, so the tool's status follows its cases
+            await runCases(tb, d);
           }}
         >
           Save the test case
@@ -443,6 +461,45 @@ function SaveCase({ tb, d, args, r }) {
 }
 
 // Cases lists the saved test cases and runs them.
+// casesResult: a test-case run as the tool's test result (as the backend
+// records it for a saved tool): it passes when every case passes.
+export function casesResult(res) {
+  const n = res.filter((x) => x.pass).length;
+  return {
+    pass: res.length > 0 && n === res.length,
+    summary: `${n} of ${res.length} test cases passed (run with arguments, no AI)`,
+    checks: res.map((x) => ({ label: "Test case: " + x.name, ok: x.pass })),
+    steps: res
+      .filter((x) => !x.pass)
+      .map((x) => ({ k: "out", v: x.name + ": " + (x.run?.error || x.run?.output || "") })),
+    at: new Date().toISOString(),
+    cases: true,
+  };
+}
+
+// runCases: run the tool's test cases; their result becomes the tool's
+// last test (status "tested" when all pass), in the draft and, for a saved
+// tool, on disk.
+export async function runCases(tb, d) {
+  const t = tt(tb, d);
+  const tests = d.tests || [];
+  if (!tests.length) return;
+  t.casesRunning = true;
+  update();
+  try {
+    t.results = await backend.RunToolTests(d, tests, t.secrets);
+    tb.direct = true;
+    tb.caseTest = casesResult(t.results);
+    d.lastTest = tb.caseTest;
+    if (d.status !== "in review") d.status = tb.caseTest.pass ? "tested" : "untested";
+    if (tb.editing) await refreshExtensions();
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+  t.casesRunning = false;
+  update();
+}
+
 function Cases({ tb, d }) {
   const t = tt(tb, d);
   const tests = d.tests || [];
@@ -453,6 +510,9 @@ function Cases({ tb, d }) {
     <div className="card">
       <div className="card-head">
         <h3>Test cases</h3>
+        {res.length > 0 && passed === res.length && (
+          <span className="muted">· the tool counts as tested</span>
+        )}
         {res.length > 0 && (
           <span className={"badge " + (passed === res.length ? "badge-ok" : "badge-warn")}>
             {passed} of {res.length} passed
@@ -503,23 +563,14 @@ function Cases({ tb, d }) {
           );
         })}
       </ul>
+      {!tb.editing && !tb.ro && (
+        <div className="banner">
+          This tool is a draft: its test cases are kept with it, but flows and agents can use it only once it
+          is saved. Use <b>Next: save</b> below.
+        </div>
+      )}
       <div className="row-actions">
-        <button
-          className="btn primary"
-          disabled={t.casesRunning}
-          onClick={async () => {
-            t.casesRunning = true;
-            update();
-            try {
-              t.results = await backend.RunToolTests(d, tests, t.secrets);
-              tb.direct = true;
-            } catch (e) {
-              toast(errMsg(e), "error");
-            }
-            t.casesRunning = false;
-            update();
-          }}
-        >
+        <button className="btn primary" disabled={t.casesRunning} onClick={() => runCases(tb, d)}>
           {t.casesRunning ? "Running…" : `Run all ${tests.length} test case${tests.length === 1 ? "" : "s"}`}
         </button>
       </div>
@@ -542,13 +593,33 @@ async function infer(tb, d) {
   update();
 }
 
+// refineAsk: what the developer typed, plus the last run when it failed,
+// so the AI can see what went wrong.
+function refineAsk(t) {
+  let ask = (t.ask || "").trim();
+  const r = t.run;
+  if (ask && r && !r.ok) {
+    const failed = (r.checks || []).filter((c) => !c.ok).map((c) => c.label);
+    ask +=
+      "\n\nThe last run with these arguments failed:\n" +
+      JSON.stringify(argsOf(t.params || [], t.vals)) +
+      (r.error ? "\nError: " + r.error : "") +
+      (failed.length ? "\nFailed checks: " + failed.join("; ") : "") +
+      (r.output ? "\nOutput:\n" + String(r.output).slice(0, 3000) : "");
+  }
+  return ask;
+}
+
 async function refine(tb, d, model) {
   const t = tt(tb, d);
-  t.meta = { busy: "ai" };
+  t.params = d.params || [];
+  const ask = refineAsk(t);
+  t.meta = { busy: "ai", ask: (t.ask || "").trim() };
   update();
   try {
-    const r = await backend.RefineToolWithAI(d, model || "");
-    t.meta = { kind: "ai", ...r };
+    const r = await backend.RefineToolWithAI(d, model || "", ask);
+    t.meta = { kind: "ai", ask: (t.ask || "").trim(), ...r };
+    t.ask = "";
   } catch (e) {
     t.meta = { error: errMsg(e) };
   }
@@ -570,6 +641,27 @@ function Meta({ tb, d }) {
           : "no parameters declared"}
         {d.output?.type ? ` → output: ${d.output.type}` : " → output: text"}
       </p>
+      {!tb.ro && !managed && (
+        <label className="field tt-ask">
+          <span className="muted">
+            Tell the AI what to change (optional) · it reads the tool&apos;s source; a failed run above goes
+            along
+          </span>
+          <textarea
+            rows={2}
+            value={t.ask || ""}
+            disabled={!!m?.busy}
+            placeholder="e.g. path should default to the project root; tags is a list, not one text; add a case for an empty folder"
+            onChange={(e) => {
+              t.ask = e.target.value;
+              update();
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) refine(tb, d, model);
+            }}
+          />
+        </label>
+      )}
       {!tb.ro && !managed && (
         <div className="row-actions">
           <button
@@ -607,6 +699,11 @@ function Meta({ tb, d }) {
             {m.kind === "ai" ? "The AI proposes" : "Found"}
             {m.source ? ` (from ${m.source})` : ""}:
           </div>
+          {m.ask && (
+            <p className="muted">
+              You asked: <i>{m.ask}</i>
+            </p>
+          )}
           {(m.changes || []).length ? (
             <ul className="ai-changes">
               {m.changes.map((c, i) => (

@@ -187,6 +187,8 @@ func (f *Flow) Shapes(h ShapeHints) map[string]StepShape {
 			default:
 				s.Out = &Schema{Type: "string"}
 			}
+		case "context":
+			s.Out = &Schema{Type: "string", Description: "the context pack (Markdown, one section per source)"}
 		case "decision":
 			s.Out = in
 		case "filter":

@@ -1,6 +1,7 @@
 package core
 
 import (
+	"codegen/internal/builtin"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -104,6 +105,27 @@ type FlowState struct {
 	Flow   *flow.Flow   `json:"flow"`
 	Issues []flow.Issue `json:"issues"`
 	Notes  []string     `json:"notes,omitempty"`
+}
+
+// SetFlowTags replaces a flow's tags (tidied as saving does) without
+// touching the rest of it, and returns them.
+func (h *Hub) SetFlowTags(id string, tags []string) ([]string, error) {
+	root, err := h.need()
+	if err != nil {
+		return nil, err
+	}
+	f, err := flow.Load(root, id)
+	if err != nil {
+		return nil, err
+	}
+	f.Tags = tags
+	if err := flow.Save(root, f); err != nil {
+		return nil, err
+	}
+	if f.Tags == nil {
+		f.Tags = []string{}
+	}
+	return f.Tags, nil
 }
 
 // DeleteFlow removes a flow.
@@ -280,7 +302,13 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 			out, err = flow.Aggregate(*n, in, sample)
 		default:
 			var bs []string
-			if bs, err = flow.Decide(*n, in, sample); err == nil {
+			if flow.AIDecides(*n) {
+				var names []string
+				for _, b := range n.Branches {
+					names = append(names, flow.BranchLabel(*n, b.ID))
+				}
+				out = "→ the AI decides when the flow runs: " + strings.Join(append(names, "Otherwise"), ", ")
+			} else if bs, err = flow.Decide(*n, in, sample); err == nil {
 				var lines []string
 				for _, b := range bs {
 					to := []string{}
@@ -300,6 +328,27 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 				out = strings.Join(lines, "\n")
 			}
 		}
+	case "tool":
+		// a chart has no effects to fear: drawn, not saved. Other tools run
+		// only when the flow runs.
+		if n.Tool != BuiltinPrefix+"chart" {
+			return FlowPreview{Error: "tools and AI steps run when the flow runs; enter sample output for this step instead"}
+		}
+		e, ferr := h.flowBuiltin(n.Tool)
+		if ferr != nil {
+			return FlowPreview{Error: ferr.Error()}
+		}
+		raw := map[string]any{}
+		for k, v := range n.Args {
+			raw[k] = flow.Render(v, sample)
+		}
+		typed, terr := builtinArgs(e, raw)
+		if terr != nil {
+			return FlowPreview{Error: terr.Error()}
+		}
+		out, err = builtin.PreviewChart(typed)
+	case "context":
+		out = flow.ContextPreview(&f, *n, parents, sample)
 	case "merge":
 		titles := map[string]string{}
 		for _, p := range parents {
@@ -319,7 +368,7 @@ func (h *Hub) PreviewFlowStep(f flow.Flow, nodeID string, sample flow.Data) Flow
 			content = flow.Render(n.Template, sample)
 		}
 		out, err = flow.Convert(content, n.Format)
-	case "tool", "ai", "improve":
+	case "ai", "improve":
 		err = errors.New("tools and AI steps run when the flow runs; enter sample output for this step instead")
 	default:
 		err = errors.New("nothing to preview for this step")

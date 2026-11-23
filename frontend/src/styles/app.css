@@ -1308,3 +1308,271 @@
 .bt-item code {
   font-size: 0.9em;
 }
+
+/* Tools › Test: say what the AI should change or fix */
+.fix-ask {
+  margin-top: 12px;
+  border-top: 1px solid var(--border);
+  padding-top: 12px;
+}
+.fix-ask textarea {
+  width: 100%;
+  margin-top: 6px;
+}
+.tt-ask textarea {
+  width: 100%;
+  margin-top: 4px;
+}
+
+/* Tools: How it was decided */
+.dl-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dl-turn {
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+}
+.dl-head {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  width: 100%;
+  background: none;
+  border: 0;
+  padding: 0;
+  text-align: left;
+  color: inherit;
+  cursor: pointer;
+}
+.dl-title {
+  flex: 1;
+  min-width: 0;
+}
+.dl-n {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--border);
+  font-size: 11px;
+}
+.dl-ask,
+.dl-why {
+  margin: 4px 0 0 28px;
+}
+.dl-detail {
+  margin: 6px 0 0 28px;
+}
+.dl-sec {
+  margin-top: 6px;
+}
+.dl-body {
+  position: relative;
+}
+.dl-body .copy-btn,
+.dl-body button:first-child {
+  position: absolute;
+  right: 4px;
+  top: 4px;
+}
+.dl-pre,
+.dl-diff {
+  font-family: var(--font-mono);
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  max-height: 360px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px;
+  margin: 4px 0 0;
+}
+.dl-add {
+  color: var(--ok);
+}
+.dl-del {
+  color: var(--error);
+}
+.pg-toolapply {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-top: 10px;
+  padding-top: 10px;
+  border-top: 1px solid var(--border);
+}
+.pg-toolapply > span {
+  flex: 1;
+  min-width: 200px;
+}
+
+/* Playground: tools the agent can use */
+.pg-agenttools {
+  margin-top: 8px;
+}
+.pg-agenttools-body {
+  margin-top: 6px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 8px 10px;
+}
+.pg-agenttools-list {
+  list-style: none;
+  margin: 2px 0 8px;
+  padding: 0;
+}
+.pg-agenttools-list li {
+  padding: 2px 0;
+}
+
+/* Headings in the Tools and Flows lists (listLayout.jsx) */
+.drop-zone.drop-on {
+  outline: 2px dashed var(--accent, #c96a3b);
+  outline-offset: 2px;
+  border-radius: 6px;
+}
+.lh-actions {
+  display: inline-flex;
+  gap: 2px;
+  margin-left: 6px;
+  opacity: 0.55;
+}
+.tree-folder:hover .lh-actions,
+.fls-group-row:hover .lh-actions,
+.lh-actions:focus-within {
+  opacity: 1;
+}
+.lh-actions .icon-btn {
+  min-width: 22px;
+  height: 22px;
+  padding: 0 4px;
+  font-size: 12px;
+}
+.fls-group-row {
+  display: flex;
+  align-items: center;
+}
+.fls-group-row .fls-group-head {
+  flex: 1;
+  min-width: 0;
+}
+.fls-empty {
+  margin: 2px 14px 8px;
+  font-size: 12px;
+}
+.fls-addhead {
+  font-size: 12px;
+}
+.lh-picker {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.lh-picker select {
+  max-width: 200px;
+}
+[draggable="true"] {
+  cursor: grab;
+}
+
+/* a flow's tags, under its name (designer and Run flows) */
+.fl-tagrow {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  padding: 4px 12px 6px;
+  font-size: 13px;
+}
+.fl-tagrow > .muted {
+  font-size: 12px;
+}
+
+/* ask_user: questions for you (QuestionPrompt.jsx) */
+.question-modal {
+  width: min(680px, calc(100vw - 32px));
+  max-height: 86vh;
+  overflow: auto;
+}
+.qp-list {
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  margin: 8px 0;
+}
+.qp-q {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px 10px;
+  margin: 0;
+}
+.qp-q legend {
+  font-weight: 600;
+  padding: 0 4px;
+}
+.qp-n {
+  display: inline-grid;
+  place-items: center;
+  width: 20px;
+  height: 20px;
+  border-radius: 50%;
+  background: var(--border);
+  font-size: 11px;
+  margin-right: 4px;
+}
+.qp-opt {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.qp-opt.on {
+  background: color-mix(in srgb, var(--accent, #c96a3b) 10%, transparent);
+}
+.qp-opt input[type="text"] {
+  flex: 1;
+  min-width: 0;
+}
+.qp-why {
+  margin: 4px 6px 0;
+  font-size: 12px;
+}
+
+/* an AI step's own guidance (StepGuidance.jsx) */
+.fl-guidance {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 6px 10px 8px;
+  margin: 8px 0;
+}
+.fl-guidance-head {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 600;
+}
+.fl-guidance textarea {
+  width: 100%;
+}
+
+/* charts from the chart tool (ContentView.jsx) */
+.cv-chart {
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px;
+  overflow: auto;
+}
+.cv-chart img {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}

@@ -34,6 +34,9 @@ type FlowCommand struct {
 	Title    string `json:"title"`
 	Command  string `json:"command"`
 	Approved bool   `json:"approved"`
+	// Kind: "" a shell command; "sends" a built-in call that sends data out
+	// of the computer (outward.go)
+	Kind string `json:"kind,omitempty"`
 }
 
 // ErrCommandsNotApproved starts the error of a run refused for unapproved commands.
@@ -110,6 +113,10 @@ func (h *Hub) flowCommands(root string, f *flow.Flow) []FlowCommand {
 			continue
 		}
 		out = append(out, FlowCommand{Step: n.ID, Title: firstNonEmpty(n.Title, n.ID), Command: n.Expr, Approved: ok[commandHash(n.Expr)]})
+	}
+	for _, e := range outwardEntries(f) { // built-ins that send data out (outward.go)
+		e.Approved = ok[commandHash(e.Command)]
+		out = append(out, e)
 	}
 	return out
 }

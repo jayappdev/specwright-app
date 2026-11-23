@@ -44,12 +44,15 @@ export const GUIDE = [
       "Write the prompt. Use the Insert buttons to add variables: {{inputs.<name>}} for an input, {{<step id>.buffer_output}} for an earlier step's result, {{context}} and {{skills}}.",
       "Whatever is connected into the step is added to the prompt automatically when the prompt does not mention it, under “Input from the previous step”.",
       "The flow's custom context and skills are always added, and files given as inputs (images, PDFs) are opened by the agent.",
+      "Guidance for this step: instructions written for this step alone (tone, format, what to include or avoid; variables work) and skill files only it follows, on top of the flow's. Untick “Also follow the flow's skills” to leave the flow's skills out of this step. Improve, AI decisions and AI transforms have the same section.",
       "The step's result is the agent's answer. Ask for “only JSON” when a later step should read it as data.",
       "AI steps pause for your review when the run asks for it: accept, edit, refine with AI or stop.",
     ],
     settings: [
       ["Prompt", "What to ask; variables are filled in when the step runs."],
       ["Model", "A model for this step only; empty uses the one chosen for the run."],
+      ["Instructions", "Guidance for this step: how to answer (tone, format, limits)."],
+      ["Skills for this step", "Skill files this step follows, with or without the flow's."],
       ["Pause for review", "Stop after this step so you can check or refine the answer."],
     ],
     examples: [
@@ -217,6 +220,114 @@ export const GUIDE = [
         focus: "config",
         result:
           '{\n  "name": "orders",\n  "url": "https://orders.internal/health",\n  "interval_seconds": 30,\n  "timeout_seconds": 5,\n  "alerts": [\n    {"channel": "#orders-oncall", "after_failures": 3}\n  ]\n}',
+      },
+    ],
+  },
+  {
+    type: "context",
+    name: "Context",
+    summary:
+      "Gathers what the AI steps after it should know — files, notes, inputs, past runs, lessons, web pages and the results of the steps connected into it — keeps what matters for its purpose within a budget, and hands it over.",
+    when: [
+      "An AI step has to decide or write something and needs the project's rules, docs or history, not just the data.",
+      "Several tools produced material and only the parts about one question matter.",
+      "Large files would overflow the AI's context window: give it the relevant parts only.",
+    ],
+    how: [
+      "Say what the context is for: its words rank every part. Parts that say nothing about it are left out; each source keeps its start.",
+      "Add sources: files (patterns, read in full), text, the flow's inputs, past runs (history search), lessons from reviews, a web page. Steps connected into it are sources too.",
+      "Each source gets a share of the budget by its priority (high, normal, low); what one does not need goes to the others. Repeated parts are dropped, secrets removed.",
+      "The pack has one section per source, labelled [S1], [S2] …, so the AI can say where a fact came from.",
+      "Condense (optional) asks the AI for a short brief for the purpose, keeping the labels: one AI call.",
+      "The AI and Improve steps after it get the pack in their prompt by themselves; the run shows what each source gave and what was cut.",
+    ],
+    settings: [
+      ["What is it for", "The purpose; its words decide what is relevant. Can use {{inputs.x}}."],
+      [
+        "Sources",
+        "Files, text, inputs, past runs, lessons, web page; each with a name, a priority and words to focus on.",
+      ],
+      ["Budget", "Tokens for the whole pack (about 4 characters each); default 8,000."],
+      ["Condense", "One AI call that turns the pack into a short brief."],
+    ],
+    examples: [
+      {
+        title: "A whole flow: handle a refund request",
+        text: "The ticket, the refund policy, the support docs, past runs and lessons go into one context; only what is about the refund is kept, within 4,000 tokens. The AI decides between approving and escalating (asking you when it is less than 70% sure), and the AI step on the path taken writes the reply or the note. Both get the context by themselves, because it comes before them. In your own flow, replace the sample ticket with a Jira tool or an input. Try it in the designer to see the whole flow.",
+        nodes: [
+          sample(
+            "ticket",
+            "Ticket",
+            "BILL-7: Customer asks for a refund of 620 EUR for a double charge on 3 Nov.\n\nThe customer also asked about the new invoice layout.",
+          ),
+          {
+            id: "ctx",
+            type: "context",
+            title: "Refund context",
+            goal: "decide the refund for this ticket, and who may approve it",
+            budget: 4000,
+            sources: [
+              {
+                kind: "text",
+                label: "Refund policy",
+                priority: "high",
+                text: "Refunds up to 500 EUR are approved by support.\n\nRefunds over 500 EUR need a manager's approval.\n\nDouble charges are always refunded in full.\n\nInvoices are sent on the 1st of each month.",
+              },
+              {
+                kind: "files",
+                label: "Support docs",
+                paths: ["docs/support/**/*.md"],
+                query: "refund approval",
+              },
+              { kind: "history", label: "Past refund runs", query: "refund", priority: "low" },
+              { kind: "lessons", priority: "low" },
+            ],
+          },
+          {
+            id: "decide",
+            type: "decision",
+            title: "Approve or escalate",
+            decide: "ai",
+            prompt: "Can support approve this refund, or does a manager need to?",
+            confidence: 70,
+            branches: [
+              {
+                id: "approve",
+                label: "Approve",
+                hint: "the policy allows it and the amount is within what support may approve",
+              },
+              {
+                id: "escalate",
+                label: "Escalate to a manager",
+                hint: "the amount is over the limit, or the policy is unclear",
+              },
+            ],
+          },
+          {
+            id: "reply",
+            type: "ai",
+            title: "Reply to the customer",
+            prompt:
+              "Write a short, friendly reply to the customer confirming the refund in {{steps.ticket}}: the amount, when it arrives, and that we are sorry. Follow the refund policy in the context.",
+          },
+          {
+            id: "note",
+            type: "ai",
+            title: "Note for the manager",
+            prompt:
+              "Write a short note asking the finance manager to approve the refund in {{steps.ticket}}: the amount, the reason, and the policy that needs their approval (cite the context's [S] labels).",
+          },
+          out("customer", "Reply"),
+          out("manager", "Approval request"),
+        ],
+        edges: [
+          ...chain("start", "ticket", "ctx", "decide"),
+          { from: "decide", to: "reply", branch: "approve" },
+          { from: "decide", to: "note", branch: "escalate" },
+          { from: "reply", to: "customer" },
+          { from: "note", to: "manager" },
+        ],
+        focus: "ctx",
       },
     ],
   },
@@ -590,6 +701,37 @@ export const GUIDE = [
       ["Input › Use instead", "Check a variable instead of the connected output."],
     ],
     examples: [
+      {
+        title: "Let the AI decide, and ask when unsure",
+        text: "The AI reads the test summary and chooses Ship it or Hold, with a reason and how sure it is. Below 70% sure it asks you to choose; your choice is kept as a lesson for later runs.",
+        nodes: [
+          sample(
+            "tests",
+            "Test summary",
+            "Tests: 412 passed, 2 failed (flaky: PaymentRetryTest)\nLint: clean\nCoverage: 81%",
+          ),
+          {
+            id: "go",
+            type: "decision",
+            title: "Ship or hold",
+            decide: "ai",
+            prompt: "Can this build be released today?",
+            confidence: 70,
+            branches: [
+              { id: "ship", label: "Ship it", hint: "every check passed, or only known-flaky tests failed" },
+              { id: "hold", label: "Hold", hint: "a real failure, or not enough information" },
+            ],
+          },
+          out("ship", "Release notes"),
+          out("hold", "Why we hold"),
+        ],
+        edges: [
+          ...chain("start", "tests", "go"),
+          { from: "go", to: "ship", branch: "ship" },
+          { from: "go", to: "hold", branch: "hold" },
+        ],
+        focus: "go",
+      },
       {
         title: "Errors found, or all clear",
         text: "A quality gate's summary decides between asking AI for fixes and an “all clear” output.",
@@ -988,17 +1130,273 @@ export const GUIDE = [
     ],
   },
   {
+    type: "visualization",
+    name: "Visualization",
+    icon: { type: "tool", tool: "builtin:chart" },
+    summary:
+      "Draws data as a chart: bar, horizontal bar, stacked bar, line, multi-line, area, stacked area, scatter, pie, donut or heatmap, from the rows a tool, a query or an Aggregate returned. It is a tool step with the built-in chart tool (builtin:chart); the chart shows as a picture, with Export PNG.",
+    when: [
+      "Show the rows a tool or a query returned as a bar chart (test results by suite, revenue by region).",
+      "Show a trend over time as a line, one line per series (orders per month by region).",
+      "Show shares of a whole as a pie or donut (failures by cause, spend by team).",
+      "Find patterns: a scatter of two numbers (size against defects), a heatmap of a grid (failed builds by day and hour).",
+      "Save a chart as SVG and PNG for a report, an email or a slide.",
+    ],
+    how: [
+      "Add a Tool step and choose builtin:chart (in the Charts group). Its parameters show as fields; fill them with text and variables, such as {{<step id>.buffer_output}} for an earlier step's rows.",
+      "builtin:chart takes rows (a JSON array of objects) with x (the label field) and y (the number fields; empty: every number field), or labels and series. type: bar, line, multiline or stacked_bar. It saves the chart in out/charts (or path) and returns it as SVG, shown as a picture with Export PNG; format png or both also saves a PNG.",
+      "pie and donut draw the first series, a slice per label, with the share on each slice and the values in the legend (a donut shows the total in its hole). hbar puts the labels down the side, for long names. scatter needs numbers on x: name the x field. heatmap takes rows with x (the columns), y (the rows) and value (repeated cells are added up).",
+      "show_values writes each value on its bar, point, slice or cell, so a PNG reads without the grid.",
+      "Connect an Output step with HTML format to put the chart on a page of its own, saved where you like.",
+    ],
+    settings: [
+      [
+        "type",
+        "bar, hbar, stacked_bar, line or multiline, area, stacked_area, scatter, pie, donut, heatmap.",
+      ],
+      ["show_values", "Write each value on the chart."],
+      ["value", "heatmap with rows: the number field (y is the row field)."],
+      ["rows, x, y", "The data as a JSON array of objects, the label field, and the number field(s)."],
+      [
+        "labels, series / data",
+        "Or the labels and the series ([{name, values}]), or both in one JSON object.",
+      ],
+      ["title, x_label, y_label", "The chart's title and axis captions."],
+      ["format, path", "svg (default), png or both; where to save (default out/charts)."],
+    ],
+    examples: [
+      {
+        title: "Bar chart: test results by suite",
+        text: "Rows from a test run become a grouped bar chart: x is the label field, and every number field (passed, failed) is a bar colour.",
+        nodes: [
+          sample(
+            "suites",
+            "Test results",
+            '[{"suite": "api", "passed": 120, "failed": 3}, {"suite": "billing", "passed": 80, "failed": 12}, {"suite": "orders", "passed": 95, "failed": 0}, {"suite": "ui", "passed": 60, "failed": 7}]',
+          ),
+          {
+            id: "chart",
+            type: "tool",
+            title: "Results chart",
+            tool: "builtin:chart",
+            args: {
+              type: "bar",
+              title: "Test results by suite",
+              rows: "{{suites.buffer_output}}",
+              x: "suite",
+            },
+          },
+        ],
+        edges: chain("start", "suites", "chart"),
+        focus: "chart",
+      },
+      {
+        title: "Multi-line chart: orders per month by region",
+        text: "One line per region: y names the series to draw, x_label and y_label caption the axes.",
+        nodes: [
+          sample(
+            "orders",
+            "Orders by month",
+            '[{"month": "Jan", "EU": 120, "US": 80, "APAC": 40}, {"month": "Feb", "EU": 135, "US": 95, "APAC": 52}, {"month": "Mar", "EU": 128, "US": 110, "APAC": 61}, {"month": "Apr", "EU": 150, "US": 104, "APAC": 75}, {"month": "May", "EU": 171, "US": 120, "APAC": 70}, {"month": "Jun", "EU": 160, "US": 131, "APAC": 88}]',
+          ),
+          {
+            id: "trend",
+            type: "tool",
+            title: "Orders trend",
+            tool: "builtin:chart",
+            args: {
+              type: "multiline",
+              title: "Orders per month",
+              rows: "{{orders.buffer_output}}",
+              x: "month",
+              y: "EU, US, APAC",
+              x_label: "Month",
+              y_label: "Orders",
+            },
+          },
+        ],
+        edges: chain("start", "orders", "trend"),
+        focus: "trend",
+      },
+      {
+        title: "Donut: failures by cause",
+        text: "Shares of a whole: one slice per cause, the share on each slice, the count and share in the legend, the total in the middle.",
+        nodes: [
+          sample(
+            "causes",
+            "Failures by cause",
+            '[{"cause": "Assertion", "n": 22}, {"cause": "Timeout", "n": 14}, {"cause": "Network", "n": 9}, {"cause": "Setup", "n": 5}, {"cause": "Other", "n": 2}]',
+          ),
+          {
+            id: "donut",
+            type: "tool",
+            title: "Causes donut",
+            tool: "builtin:chart",
+            args: {
+              type: "donut",
+              title: "Failures by cause",
+              rows: "{{causes.buffer_output}}",
+              x: "cause",
+              y: "n",
+              y_label: "failures",
+            },
+          },
+        ],
+        edges: chain("start", "causes", "donut"),
+        focus: "donut",
+      },
+      {
+        title: "Horizontal bars with values: the slowest tests",
+        text: "Long names read best down the side; show_values writes each duration at the end of its bar.",
+        nodes: [
+          sample(
+            "slow",
+            "Slowest tests",
+            '[{"test": "OrderServiceIntegrationTest.placesOrder", "seconds": 41.2}, {"test": "InvoiceExportTest.exportsPdf", "seconds": 30.8}, {"test": "ui/checkout.spec.ts", "seconds": 22.1}, {"test": "BillingRoundingTest.roundsHalfEven", "seconds": 12.5}]',
+          ),
+          {
+            id: "hbar",
+            type: "tool",
+            title: "Slowest tests chart",
+            tool: "builtin:chart",
+            args: {
+              type: "hbar",
+              title: "Slowest tests (s)",
+              rows: "{{slow.buffer_output}}",
+              x: "test",
+              show_values: "true",
+            },
+          },
+        ],
+        edges: chain("start", "slow", "hbar"),
+        focus: "hbar",
+      },
+      {
+        title: "Scatter: file size against defects",
+        text: "Two numbers per row: x is lines of code, y the defects found; each point is a file.",
+        nodes: [
+          sample(
+            "files",
+            "Files",
+            '[{"file": "Order.java", "loc": 120, "defects": 1}, {"file": "Billing.java", "loc": 480, "defects": 4}, {"file": "Invoice.java", "loc": 900, "defects": 9}, {"file": "Cart.java", "loc": 300, "defects": 2}, {"file": "Checkout.java", "loc": 1500, "defects": 11}, {"file": "Money.java", "loc": 60, "defects": 0}]',
+          ),
+          {
+            id: "scatter",
+            type: "tool",
+            title: "Size vs. defects",
+            tool: "builtin:chart",
+            args: {
+              type: "scatter",
+              title: "File size vs. defects",
+              rows: "{{files.buffer_output}}",
+              x: "loc",
+              y: "defects",
+              x_label: "Lines of code",
+              y_label: "Defects",
+            },
+          },
+        ],
+        edges: chain("start", "files", "scatter"),
+        focus: "scatter",
+      },
+      {
+        title: "Heatmap: failed builds by day and hour",
+        text: "x is the columns (hour), y the rows (day), value the number; darker is more. Rows for the same cell are added up.",
+        nodes: [
+          sample(
+            "builds",
+            "Failed builds",
+            '[{"day": "Mon", "hour": "09", "fails": 2}, {"day": "Mon", "hour": "12", "fails": 5}, {"day": "Mon", "hour": "17", "fails": 1}, {"day": "Tue", "hour": "09", "fails": 0}, {"day": "Tue", "hour": "12", "fails": 3}, {"day": "Tue", "hour": "17", "fails": 7}, {"day": "Wed", "hour": "09", "fails": 1}, {"day": "Wed", "hour": "12", "fails": 8}, {"day": "Wed", "hour": "17", "fails": 4}]',
+          ),
+          {
+            id: "heat",
+            type: "tool",
+            title: "Failures heatmap",
+            tool: "builtin:chart",
+            args: {
+              type: "heatmap",
+              title: "Failed builds",
+              rows: "{{builds.buffer_output}}",
+              x: "hour",
+              y: "day",
+              value: "fails",
+              show_values: "true",
+            },
+          },
+        ],
+        edges: chain("start", "builds", "heat"),
+        focus: "heat",
+      },
+      {
+        title: "Totals by region, saved as PNG too",
+        text: "Rows that an Aggregate step (or a query) returns, one per region, become a bar chart; with format both a PNG is saved next to the SVG, for an email or a slide.",
+        nodes: [
+          sample(
+            "totals",
+            "Totals by region",
+            '[{"region": "EU", "revenue": 360.5, "orders": 3}, {"region": "US", "revenue": 390, "orders": 2}, {"region": "APAC", "revenue": 212, "orders": 2}]',
+          ),
+          {
+            id: "png",
+            type: "tool",
+            title: "Region chart",
+            tool: "builtin:chart",
+            args: {
+              type: "bar",
+              title: "Revenue by region",
+              rows: "{{totals.buffer_output}}",
+              x: "region",
+              y: "revenue",
+              format: "both",
+              path: "out/charts/revenue-by-region",
+            },
+          },
+        ],
+        edges: chain("start", "totals", "png"),
+        focus: "png",
+      },
+      {
+        title: "A chart on its own page (Output, HTML)",
+        text: "labels and series given as one JSON object (data). The chart step's SVG then goes into an Output step with HTML format: a page with the chart, saved as out/burn-up.html and shown in the run (with Export PNG).",
+        nodes: [
+          sample(
+            "sprint",
+            "Sprint",
+            '{"labels": ["Mon", "Tue", "Wed", "Thu", "Fri"], "series": [{"name": "done", "values": [2, 5, 9, 12, 16]}, {"name": "planned", "values": [3, 6, 9, 12, 15]}]}',
+          ),
+          {
+            id: "burn",
+            type: "tool",
+            title: "Burn-up chart",
+            tool: "builtin:chart",
+            args: { type: "line", title: "Sprint burn-up", data: "{{sprint.buffer_output}}" },
+          },
+          {
+            id: "page",
+            type: "output",
+            title: "Burn-up (html)",
+            format: "html",
+            actions: [{ type: "save", path: "out/burn-up.html" }, { type: "show" }],
+          },
+        ],
+        edges: chain("start", "sprint", "burn", "page"),
+        focus: "burn",
+      },
+    ],
+  },
+  {
     type: "output",
     name: "Output",
     summary:
       "The end of a path: formats the result as Markdown, text, HTML, CSV or JSON, then saves it, passes it to a tool, copies it or shows it.",
     when: [
       "Save a report into the project (out/report-{{date}}.md).",
-      "Turn JSON rows into a CSV file.",
+      "Turn JSON rows into a CSV file, or an HTML or Markdown table.",
       "Show the result in Run flows, or copy it to the clipboard.",
     ],
     how: [
       "Choose the format. Content is converted: a JSON array becomes a CSV table, Markdown becomes HTML, and so on.",
+      'A list of records (a JSON array of objects, or an object holding one, like a Gather\'s {"rows": [...]}) becomes a table in HTML and Markdown, its columns in the order the JSON has them; other JSON stays a code block. To choose or rename the columns, put a Transform › JSON array → HTML table (or → Markdown table) before it.',
       "Content (optional) is a template; empty uses the output of the steps connected into it.",
       "Actions: Save (a project path; variables allowed), Call a tool with the content ({{output}}), Copy to the clipboard, Show in the run.",
       "Each Output appears in Run flows with its saved files; a flow can have several outputs.",
@@ -1041,6 +1439,26 @@ export const GUIDE = [
         ],
         edges: chain("start", "rows", "csv"),
         focus: "csv",
+      },
+      {
+        title: "Gathered rows as an HTML table",
+        text: 'The rows a Gather collects ({"rows": [...]}) are saved as an HTML page with a table: one row per record, the columns in the order the JSON has them, nested values as compact JSON. The run view shows the same table.',
+        nodes: [
+          sample(
+            "gather-rows",
+            "Gathered rows",
+            '{"rows": [\n  {"id": "A-1001", "customer": "Ana", "status": "open", "total": 120.5},\n  {"id": "A-1002", "customer": "Bob", "status": "closed", "total": 80},\n  {"id": "A-1005", "customer": "Dee", "status": "open", "total": 310, "items": [{"sku": "HD-12", "qty": 2}]}\n]}',
+          ),
+          {
+            id: "table",
+            type: "output",
+            title: "Orders (html)",
+            format: "html",
+            actions: [{ type: "save", path: "out/orders-{{date}}.html" }, { type: "show" }],
+          },
+        ],
+        edges: chain("start", "gather-rows", "table"),
+        focus: "table",
       },
       {
         title: "Markdown shown as HTML",

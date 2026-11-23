@@ -6,13 +6,22 @@ import { S, update, toast, errMsg } from "../../store.js";
 import { builtinsVisible, selectBuiltin } from "../Builtins.jsx";
 import { ToolTile, ToolGrid } from "../../ToolTile.jsx";
 import { newTool, openTool } from "../Tools.jsx";
+import {
+  HeadingActions,
+  addHeading,
+  dragProps,
+  dropProps,
+  headingOf,
+  headingsOf,
+  loadLayout,
+} from "../../listLayout.jsx";
 
 // --- finding tools: search, tags, grouping --------------------------------------------
 
 const tf = () => (S.tf ||= { q: "", tag: "", groupBy: "source" });
 export const finding = () => {
   const f = tf();
-  return !!(f.q.trim() || f.tag || f.groupBy === "tag");
+  return !!(f.q.trim() || f.tag || f.groupBy === "tag" || f.groupBy === "heading");
 };
 
 export async function loadToolTags() {
@@ -44,14 +53,28 @@ export function ToolFinder() {
         <span className="muted">Group by</span>
         <div className="seg" role="group" aria-label="Group by">
           {[
+            ["heading", "Heading"],
             ["source", "Source"],
             ["tag", "Tag"],
           ].map(([v, l]) => (
-            <button key={v} type="button" aria-pressed={f.groupBy === v} onClick={() => set("groupBy", v)}>
+            <button
+              key={v}
+              type="button"
+              aria-pressed={f.groupBy === v}
+              onClick={() => {
+                if (v === "heading") loadLayout();
+                set("groupBy", v);
+              }}
+            >
               {l}
             </button>
           ))}
         </div>
+        {f.groupBy === "heading" && (
+          <button type="button" className="link" onClick={() => addHeading("tools")}>
+            + Heading
+          </button>
+        )}
       </div>
       {tags.length > 0 && (
         <div className="tf-tags">
@@ -112,8 +135,13 @@ export function FoundTools({ exts }) {
     ["project", "Project tools"],
     ["global", "Global tools"],
   ];
-  const groups =
-    f.groupBy === "tag"
+  const byHeading = f.groupBy === "heading";
+  const groups = byHeading
+    ? [
+        ...headingsOf("tools").map((h) => [h, items.filter((x) => headingOf("tools", x.key) === h)]),
+        ["Not under a heading", items.filter((x) => !headingOf("tools", x.key))],
+      ]
+    : f.groupBy === "tag"
       ? [
           ...allTags()
             .filter((t) => !f.tag || t === f.tag)
@@ -124,7 +152,10 @@ export function FoundTools({ exts }) {
           ...SRC.map(([s, l]) => [l, items.filter((x) => x.scope === s)]),
           ["Other", items.filter((x) => !SRC.some(([s]) => s === x.scope))],
         ];
-  const shown = groups.filter(([, l]) => l.length);
+  // headings show even when empty (a place to drop tools on)
+  const shown = groups.filter(
+    ([l, list]) => list.length || (byHeading && (headingsOf("tools").includes(l) || !q)),
+  );
   return (
     <>
       {shown.map(([l, list]) => (
@@ -133,8 +164,14 @@ export function FoundTools({ exts }) {
           title={l}
           compact
           tools={list}
+          empty={byHeading ? "Drag tools here" : undefined}
+          zone={byHeading ? dropProps("tools", headingsOf("tools").includes(l) ? l : "") : undefined}
+          actions={
+            byHeading && headingsOf("tools").includes(l) ? <HeadingActions list="tools" name={l} /> : null
+          }
           render={(t) => (
             <ToolTile
+              drag={byHeading ? dragProps("tools", t.key) : undefined}
               key={t.key}
               t={t}
               compact

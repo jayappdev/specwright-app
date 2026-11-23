@@ -151,6 +151,7 @@ function ActivityRow({ e, evs }) {
           {e.summary || "Rejected. The workflow stops here."}
         </Act>
       );
+    case "tools.unreachable":
     case "loop.detected":
     case "budget.exceeded":
     case "error":

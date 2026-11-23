@@ -1,4 +1,4 @@
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { RUN_KIND, runKind } from "../labels.js";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
@@ -10,7 +10,8 @@ import { continueInPlayground } from "./Playground.jsx";
 import { ago } from "../time.js";
 import { register } from "../shortcuts.js";
 import { CopyButton } from "../CopyButton.jsx";
-import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHousekeeping.jsx";
+import { registerPlace } from "../navigation.js";
+import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns, hk } from "../RunHousekeeping.jsx";
 
 let timer;
 function stop() {
@@ -103,6 +104,75 @@ function useReplayKeys(evCount) {
 
 // loadRuns reads the run list again (and the open run's events, which grow
 // while it runs); it is also the list's Refresh button.
+// a search snippet: the matched words (between \x01 and \x02) marked
+function Snippet({ text }) {
+  // "a \x01b\x02 c" → ["a ", "b", " c"]: odd parts are the matches
+  const parts = String(text || "")
+    .split(String.fromCharCode(1))
+    .flatMap((p, i) => (i ? p.split(String.fromCharCode(2)) : [p]));
+  return (
+    <span className="hist-snippet">
+      {parts.map((p, i) => (i % 2 ? <mark key={i}>{p}</mark> : <span key={i}>{p}</span>))}
+    </span>
+  );
+}
+
+// "Found inside runs": the search box also looks through what runs did
+// (their inputs, steps, tool output, reviews), in the history database
+function ContentHits({ q }) {
+  const [res, setRes] = useState({ q: "", hits: [], error: "" });
+  const query = q.trim();
+  useEffect(() => {
+    if (query.length < 2) return;
+    const t = setTimeout(
+      () =>
+        backend
+          .SearchHistory(query, 30)
+          .then((hits) => setRes({ q: query, hits: hits || [], error: "" }))
+          .catch((e) => setRes({ q: query, hits: [], error: errMsg(e) })),
+      300,
+    );
+    return () => clearTimeout(t);
+  }, [query, S.history.runs.length]);
+  if (query.length < 2 || res.q !== query) return null;
+  if (res.error) return <p className="muted hist-hits-none">{res.error}</p>;
+  if (!res.hits.length)
+    return <p className="muted hist-hits-none">Nothing inside the runs matches “{query}”.</p>;
+  const h = S.history;
+  return (
+    <div className="hist-hits" role="group" aria-label="Found inside runs">
+      <div className="hist-hits-head muted">
+        Found inside {res.hits.length} run{res.hits.length === 1 ? "" : "s"}
+      </div>
+      {res.hits.map(({ run: r, snippet, matches, field }) => (
+        <button
+          key={r.id}
+          className={"run-item" + (r.id === h.sel ? " active" : "")}
+          onClick={() => {
+            if (!h.runs.some((x) => x.id === r.id)) h.runs = [...h.runs, r]; // older than the list shows
+            select(r.id);
+          }}
+        >
+          <span className="run-item-top">
+            <span className="hist-title">
+              <span className={"pg-turn-kind k-" + runKind(r)}>{RUN_KIND[runKind(r)]}</span>{" "}
+              <b>{r.title || (runKind(r) === "flow" ? r.workflow : r.step)}</b>
+            </span>
+            <Pill s={r.state} />
+          </span>
+          <small>
+            <Snippet text={snippet} />
+          </small>
+          <small className="muted">
+            {ago(r.started)} · {matches} match{matches === 1 ? "" : "es"}
+            {field && field !== "run" ? ` · in ${field}` : ""}
+          </small>
+        </button>
+      ))}
+    </div>
+  );
+}
+
 // how often the list refreshes by itself (seconds)
 const HISTORY_POLL = 30;
 
@@ -174,6 +244,7 @@ export function History() {
           </div>
         )}
         {h.runs.length > 0 && <RunListBar area="history" runs={h.runs} />}
+        <ContentHits q={hk("history").q || ""} />
         {visibleRuns(
           "history",
           h.runs,
@@ -328,3 +399,6 @@ export function History() {
     </div>
   );
 }
+
+// Back / Forward: the run being replayed (navigation.js)
+registerPlace("history", { key: () => S.history?.sel || "", restore: (id) => select(id) });

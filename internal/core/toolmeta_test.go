@@ -52,6 +52,27 @@ func TestToolMetaInspectRunAndTestCases(t *testing.T) {
 	if err != nil || len(res) != 2 || !res[0].Pass || !res[1].Pass {
 		t.Fatalf("%+v %v", res, err)
 	}
+	// passing cases make the saved tool "tested", for Tools and for flows
+	if x, _ := h.exts.Get("greet-n"); x.Status != "tested" || x.LastTest == nil || !x.LastTest.Pass || !strings.Contains(x.LastTest.Summary, "2 of 2") {
+		t.Fatalf("after passing cases: %s %+v", x.Status, x.LastTest)
+	}
+	seen := ""
+	for _, d := range h.designTools() {
+		if d.Name == "greet-n" {
+			seen = d.Desc
+		}
+	}
+	if !strings.Contains(seen, "tested: 2 of 2") {
+		t.Fatalf("flow design does not see it tested: %q", seen)
+	}
+	// a failing case makes it untested again
+	bad := []extension.ToolTest{{Name: "wrong", Args: map[string]any{"who": "Ada", "count": "1", "mode": "x"}, Expect: extension.ToolExpect{Contains: []string{"nobody"}}}}
+	if res, _ := h.RunToolTests(got, bad, nil); len(res) != 1 || res[0].Pass {
+		t.Fatalf("%+v", res)
+	}
+	if x, _ := h.exts.Get("greet-n"); x.Status != "untested" || x.LastTest.Pass {
+		t.Fatalf("after a failing case: %s", x.Status)
+	}
 	// agents are told too: the bridge refuses arguments that do not fit
 	if _, probs := extension.CheckArgs(got, map[string]any{"who": "x", "count": "many", "mode": "m"}); len(probs) != 1 {
 		t.Fatal(probs)

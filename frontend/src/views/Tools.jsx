@@ -1,11 +1,15 @@
+import { registerPlace } from "../navigation.js";
 import { ToolTester } from "./tools/ToolTester.jsx";
+import { DecisionLog, openToolInPlayground } from "./tools/DecisionLog.jsx";
+import { genTurns, testText } from "./tools/toolHistory.js";
 import { useEffect } from "react";
 import { ShareMenu, exportTools } from "./tools/Share.jsx";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { ContentView } from "../ContentView.jsx";
-import { confirmDialog } from "../Dialog.jsx";
+import { confirmDialog, askText } from "../Dialog.jsx";
+import { HeadingPicker, loadLayout } from "../listLayout.jsx";
 import { S, update, toast, errMsg, refreshExtensions, refreshSecrets, refreshAdmin } from "../store.js";
 import { Icon, Chip, Pill } from "../ui.jsx";
 import { NeedWorkspace, StatusBadge } from "./Wizard.jsx";
@@ -94,6 +98,7 @@ const tbDefaults = () => ({
   gen: null,
   draft: null,
   refine: "",
+  fixAsk: "",
   testPrompt: "",
   attachments: [],
   test: null,
@@ -149,6 +154,7 @@ export function openTool(t) {
   if (S.cx) S.cx.sel = "";
   const admin = !!t.managed && !!S.admin?.unlocked;
   S.tb = {
+    history: S.toolHist?.[t.name] || [],
     ...tbDefaults(),
     editing: t.name,
     draft: clone(t),
@@ -206,6 +212,139 @@ export function newManagedTool(manual) {
   update();
 }
 
+// histOf: this tool's history (kept per tool name for the session, so
+// reopening the tool keeps it).
+function histOf(tb) {
+  tb.history ||= [];
+  const name = tb.draft?.name || tb.editing;
+  if (name) (S.toolHist ||= {})[name] = tb.history;
+  return tb.history;
+}
+
+// revise: ask the agent for a new draft (or revision) and record how it
+// came about in the history; the request carries the history so far.
+async function revise(req, kind, extra = {}) {
+  const tb = S.tb;
+  const before = tb.draft?.script || tb.draft?.command || "";
+  const tr = await backend.GenerateExtensionTrace({
+    ...req,
+    model: tb.genModel || "",
+    history: req.draft ? genTurns(histOf(tb)) : [],
+  });
+  const d = tr.tool;
+  d.scope = tb.scope;
+  tb.draft = d;
+  histOf(tb).push({
+    kind,
+    at: new Date().toISOString(),
+    revision: d.revision,
+    ask: extra.ask || "",
+    prompt: tr.prompt,
+    reply: tr.reply,
+    why: tr.why || "",
+    model: tr.model || "",
+    ms: tr.ms || 0,
+    before,
+    after: d.script || d.command || "",
+    attempt: extra.attempt || 0,
+  });
+  return d;
+}
+
+// noteTest: the test after the latest revision goes into the history.
+function noteTest(tb) {
+  const t = tb.test;
+  if (!t || t.running) return;
+  const h = histOf(tb),
+    last = h[h.length - 1];
+  const entry = { test: t, testText: testText(t), question: tb.testPrompt };
+  if (last && last.kind !== "test" && !last.test) Object.assign(last, entry);
+  else h.push({ kind: "test", at: new Date().toISOString(), revision: tb.draft?.revision || 0, ...entry });
+}
+
+// applyToolRevision: a revision the AI gave in the Prompt Playground
+// becomes the draft (of the tool that conversation is about), goes into
+// its history and is tested again.
+export async function applyToolRevision(tr, name, runId) {
+  let tb = S.tb;
+  if (!tb?.draft || (tb.draft.name !== name && tb.editing !== name)) {
+    const t = (S.ws?.extensions || []).find((x) => x.name === name);
+    if (!t) return toast(`Open the tool ${name} in Tools first.`, "error");
+    openTool(t);
+    tb = S.tb;
+  }
+  const before = tb.draft.script || tb.draft.command || "";
+  const d = tr.tool;
+  d.scope = tb.scope;
+  tb.draft = d;
+  histOf(tb).push({
+    kind: "playground",
+    at: new Date().toISOString(),
+    revision: d.revision,
+    ask: "",
+    reply: tr.reply,
+    why: tr.why || "",
+    before,
+    after: d.script || d.command || "",
+    run: runId,
+  });
+  tb.fix = null;
+  tb.direct = false;
+  tb.stage = "test";
+  tb.testTab = "ai";
+  S.view = "tools";
+  update();
+  if (tb.testPrompt.trim()) await runTest();
+}
+
+// reloadTool: read a saved tool again from its files (after the Playground
+// agent edited them), keeping this session's history.
+export async function reloadTool(name) {
+  await refreshExtensions();
+  const t = (S.ws?.extensions || []).find((x) => x.name === name);
+  if (!t) return toast(`${name} is not a saved tool of this project.`, "error");
+  const before = S.tb?.draft?.name === name ? S.tb.draft.script || S.tb.draft.command || "" : null;
+  openTool(t);
+  const tb = S.tb;
+  if (before !== null && before !== (t.script || t.command || ""))
+    histOf(tb).push({
+      kind: "playground",
+      at: new Date().toISOString(),
+      revision: t.revision,
+      why: "Reloaded from the tool's files after the Prompt Playground changed them.",
+      before,
+      after: t.script || t.command || "",
+    });
+  tb.stage = "test";
+  tb.testTab = "ai";
+  update();
+  toast(`Reloaded ${name} from its files.`);
+}
+
+// renameTool: a new name for a saved project tool; its script, the flows
+// that call it, its tags and its heading follow (core/rename.go).
+async function renameTool(old) {
+  const name = (
+    await askText(`Rename ${old}`, {
+      value: old,
+      ok: "Rename",
+      message:
+        "Lowercase letters, digits, - and _. Its script file is renamed and the flows that call it are updated; past runs keep the old name.",
+    })
+  )?.trim();
+  if (!name || name === old) return;
+  try {
+    const t = await backend.RenameTool(old, name);
+    await refreshExtensions();
+    await loadLayout(true);
+    if (S.toolTags) S.toolTags = null;
+    openTool(t);
+    toast(`Renamed ${old} to ${t.name}.`);
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+}
+
 async function generate(refining) {
   const tb = S.tb;
   if (!refining && !tb.prompt.trim()) return toast("Describe what the tool should do.");
@@ -213,13 +352,24 @@ async function generate(refining) {
   tb.gen = { lines: [refining ? "Reading your change request" : "Understanding the request"] };
   update();
   try {
-    const d = await backend.GenerateExtension(
+    if (!refining) {
+      tb.history = [];
+      tb.draft = null;
+    }
+    const d = await revise(
       refining
-        ? { draft: tb.draft, change: tb.refine }
+        ? {
+            draft: tb.draft,
+            change: tb.refine,
+            // a failed test goes along, so the change can also fix it
+            ...(tb.test && !tb.test.pass && !tb.test.running
+              ? { failure: tb.test, question: tb.testPrompt, attachments: attPaths(tb) }
+              : {}),
+          }
         : { prompt: tb.prompt, runsIn: tb.runsIn, connects: tb.connects },
+      refining ? "change" : "generate",
+      { ask: refining ? tb.refine : tb.prompt },
     );
-    d.scope = tb.scope;
-    tb.draft = d;
     tb.refine = "";
     tb.test = null;
     tb.direct = false;
@@ -250,31 +400,39 @@ async function runTest() {
       summary: errMsg(e),
     };
   }
+  noteTest(tb);
   update();
 }
 
 // Ask the agent to fix the draft from the failed test, then test again;
-// repeat until it passes or MAX_FIX attempts are used.
+// repeat until it passes or MAX_FIX attempts are used. What the developer
+// typed under the test result (tb.fixAsk) goes with every attempt.
 async function autoFix() {
   const tb = S.tb;
-  tb.fix = { running: true, log: [] };
+  const ask = (tb.fixAsk || "").trim();
+  tb.fix = { running: true, log: [], ask };
+  tb.fixAsk = "";
   update();
   const say = (l) => {
     tb.fix.log.push(l);
     update();
   };
   for (let a = 1; a <= MAX_FIX; a++) {
-    say(`Attempt ${a} of ${MAX_FIX}: sending the failed test to the agent`);
+    say(
+      `Attempt ${a} of ${MAX_FIX}: sending the failed test${ask ? " and your instructions" : ""} to the agent`,
+    );
     try {
-      const d = await backend.GenerateExtension({
-        draft: tb.draft,
-        failure: tb.test,
-        question: tb.testPrompt,
-        attachments: attPaths(tb),
-        change: "Fix the tool so the test passes.",
-      });
-      d.scope = tb.scope;
-      tb.draft = d;
+      await revise(
+        {
+          draft: tb.draft,
+          failure: tb.test,
+          question: tb.testPrompt,
+          attachments: attPaths(tb),
+          change: ask ? ask + "\nAnd fix the tool so the test passes." : "",
+        },
+        "fix",
+        { ask, attempt: a },
+      );
     } catch (e) {
       say("The agent could not fix it: " + errMsg(e));
       break;
@@ -287,11 +445,38 @@ async function autoFix() {
     }
     if (a === MAX_FIX)
       say(
-        `Still failing after ${MAX_FIX} attempts. Review the script, or describe the fix under Review › Ask AI to change something.`,
+        `Still failing after ${MAX_FIX} attempts. Tell the AI what to change in the box above and try again, or review the script.`,
       );
   }
   tb.fix.running = false;
   update();
+}
+
+// The test passed but the developer wants a change: revise the draft with
+// their words, then test it again.
+async function refineAndTest() {
+  const tb = S.tb;
+  const ask = (tb.fixAsk || "").trim();
+  if (!ask) return toast("Say what to change.");
+  tb.fix = { running: true, log: [], ask };
+  tb.fixAsk = "";
+  update();
+  const say = (l) => {
+    tb.fix.log.push(l);
+    update();
+  };
+  say("Sending your change to the agent");
+  try {
+    await revise({ draft: tb.draft, change: ask }, "change", { ask });
+    say(`Revision ${tb.draft.revision} written. Testing again…`);
+    await runTest();
+    say(tb.test.pass ? "Changed, and the test still passes." : "Changed, but the test fails now.");
+  } catch (e) {
+    say("The agent could not change it: " + errMsg(e));
+  }
+  tb.fix.running = false;
+  update();
+  if (tb.test && !tb.test.pass && tb.autoFix !== false && !tb.ro) autoFix();
 }
 
 // Run the test; when it fails and "fix automatically" is on, start autoFix.
@@ -301,6 +486,14 @@ async function testAndMaybeFix() {
   await runTest();
   const missing = (tb.draft?.secrets || []).some((s) => S.secretInfo[s.name]?.via === "missing");
   if (tb.test && !tb.test.pass && tb.autoFix !== false && !missing && !tb.ro) autoFix();
+}
+
+// lastTestOf: the tool's latest test, the AI test or its test cases,
+// whichever ran last (or what it had); a passing one makes it "tested".
+function lastTestOf(tb, d) {
+  const xs = [tb.test, tb.caseTest, d.lastTest].filter((x) => x && !x.running);
+  if (!xs.length) return null;
+  return xs.reduce((a, b) => (String(b.at || "") > String(a.at || "") ? b : a));
 }
 
 async function saveTool() {
@@ -341,8 +534,8 @@ async function saveTool() {
             testPrompt: tb.testPrompt,
             testFiles: attPaths(tb),
             prompt: tb.prompt || d.prompt,
-            lastTest: tb.test && !tb.test.running ? tb.test : null,
-            status: tb.test?.pass ? "tested" : "untested",
+            lastTest: lastTestOf(tb, d),
+            status: lastTestOf(tb, d)?.pass ? "tested" : "untested",
           });
     toast(
       rec.status === "in review"
@@ -385,7 +578,10 @@ function TestTabs({ tb }) {
 export function Tools() {
   useEffect(() => {
     loadToolTags();
-  }, []);
+  }, [S.toolTags === null]);
+  useEffect(() => {
+    loadLayout();
+  }, [S.ws?.root]);
   if (!S.ws) return <NeedWorkspace what="tools" />;
   if (!S.tb) S.tb = tbDefaults();
   const tb = S.tb,
@@ -482,6 +678,12 @@ export function Tools() {
           <button className="btn primary" disabled={!!tb.gen} onClick={() => generate(false)}>
             {tb.gen ? "Generating…" : "Generate tool with AI"}
           </button>
+          <ModelPicker
+            value={tb.genModel || ""}
+            onChange={(v) => set("genModel", v)}
+            label="Model for writing the tool"
+            disabled={!!tb.gen}
+          />
           <button
             className="btn secondary"
             onClick={() => {
@@ -784,6 +986,12 @@ export function Tools() {
                     <button className="btn secondary" disabled={!!tb.gen} onClick={() => generate(true)}>
                       {tb.gen ? "Updating…" : "Update"}
                     </button>
+                    <ModelPicker
+                      value={tb.genModel || ""}
+                      onChange={(v) => set("genModel", v)}
+                      label="Model for changing the tool"
+                      disabled={!!tb.gen}
+                    />
                   </div>
                 </label>
               )}
@@ -818,6 +1026,12 @@ export function Tools() {
             {tb.editing && !tb.ro && !tb.admin && (
               <>
                 <span className="status-spacer" />
+                <HeadingPicker list="tools" id={tb.editing} />
+                {d?.kind === "script" && d?.scope === "project" && d?.approved && (
+                  <button className="btn secondary" onClick={() => renameTool(tb.editing)}>
+                    Rename…
+                  </button>
+                )}
                 {d?.kind !== "npm" && d?.scope !== "global" && (
                   <button className="btn danger" onClick={() => archiveTool(d)}>
                     <Icon.x /> Delete tool
@@ -827,6 +1041,7 @@ export function Tools() {
             )}
           </div>
         </fieldset>
+        <DecisionLog tb={tb} />
       </>
     );
   } else if (tb.stage === "test" && d && (tb.testTab || "args") === "args") {
@@ -988,28 +1203,67 @@ export function Tools() {
             <p className="muted">
               <Linkify text={t.summary} />
             </p>
-            {!t.pass && !tb.fix?.running && (
-              <div className="sub-row">
-                <span>
-                  {missing.length ? (
-                    <>
-                      Give {missing.map((s) => s.name).join(", ")} a value first (environment variable,
-                      session value or “Ask me”): the AI cannot supply secrets.
-                    </>
-                  ) : (
-                    <>
-                      <b>Let the AI fix it</b>{" "}
-                      <span className="muted">
-                        · sends the failed checks and output to the agent, applies its fix and tests again (up
-                        to {MAX_FIX} attempts)
+            {!tb.fix?.running && !tb.ro && (
+              <div className="fix-ask">
+                {!t.pass && missing.length > 0 ? (
+                  <p className="muted">
+                    Give {missing.map((s) => s.name).join(", ")} a value first (environment variable, session
+                    value or “Ask me”): the AI cannot supply secrets.
+                  </p>
+                ) : (
+                  <>
+                    <label className="field">
+                      <span>
+                        <b>{t.pass ? "Change something" : "Let the AI fix it"}</b>{" "}
+                        <span className="muted">
+                          {t.pass
+                            ? "· say what to change; the AI revises the tool and tests it again"
+                            : `· say what is wrong or what to do (optional); it also gets the failed checks and output, applies its fix and tests again (up to ${MAX_FIX} attempts)`}
+                        </span>
                       </span>
-                    </>
-                  )}
-                </span>
-                {!tb.ro && (
-                  <button className="btn primary" disabled={missing.length > 0} onClick={autoFix}>
-                    Fix with AI
-                  </button>
+                      <textarea
+                        rows={3}
+                        value={tb.fixAsk || ""}
+                        placeholder={
+                          t.pass
+                            ? "e.g. also return the file count; sort the results by size"
+                            : "e.g. the API wants the token in an Authorization header; dates are YYYY-MM-DD"
+                        }
+                        onChange={(e) => set("fixAsk", e.target.value)}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter" && (e.metaKey || e.ctrlKey))
+                            t.pass ? refineAndTest() : autoFix();
+                        }}
+                      />
+                    </label>
+                    <div className="row-actions">
+                      {t.pass ? (
+                        <button
+                          className="btn secondary"
+                          disabled={!(tb.fixAsk || "").trim()}
+                          onClick={refineAndTest}
+                        >
+                          <Icon.spark /> Change and test again
+                        </button>
+                      ) : (
+                        <button className="btn primary" onClick={autoFix}>
+                          <Icon.spark /> Fix with AI
+                        </button>
+                      )}
+                      <ModelPicker
+                        value={tb.genModel || ""}
+                        onChange={(v) => set("genModel", v)}
+                        label="Model for changing the tool"
+                      />
+                      <button
+                        className="btn secondary"
+                        onClick={() => openToolInPlayground()}
+                        title="Talk it through with the AI in the Prompt Playground: it gets this tool, what was tried and the last test, and can read the project and try commands"
+                      >
+                        <Icon.playground /> Discuss in Prompt Playground
+                      </button>
+                    </div>
+                  </>
                 )}
               </div>
             )}
@@ -1018,15 +1272,24 @@ export function Tools() {
         {tb.fix && (
           <div className="card">
             <div className="card-head">
-              <h3>Automatic fix</h3>
+              <h3>{tb.fix.ask ? "AI change" : "Automatic fix"}</h3>
               {tb.fix.running ? (
                 <span className="spinner" />
               ) : (
                 <span className={"badge " + (t?.pass ? "badge-ok" : "badge-warn")}>
-                  {t?.pass ? "fixed" : "not fixed"}
+                  {t?.pass
+                    ? tb.fix.ask && !tb.fix.log.some((l) => l.startsWith("Attempt"))
+                      ? "done"
+                      : "fixed"
+                    : "not fixed"}
                 </span>
               )}
             </div>
+            {tb.fix.ask && (
+              <p className="muted">
+                You asked: <i>{tb.fix.ask}</i>
+              </p>
+            )}
             <ul className="lib-list">
               {tb.fix.log.map((l, k) => (
                 <li key={k}>{l}</li>
@@ -1041,6 +1304,7 @@ export function Tools() {
             )}
           </div>
         )}
+        <DecisionLog tb={tb} />
         <div className="row-actions">
           <button className="btn secondary" onClick={() => set("stage", "review")}>
             Back to review
@@ -1338,3 +1602,12 @@ export function Tools() {
     </div>
   );
 }
+
+// Back / Forward: the tool open on the Tools screen (navigation.js)
+registerPlace("tools", {
+  key: () => S.tb?.editing || "",
+  restore: (name) => {
+    const t = (S.ws?.extensions || []).find((x) => x.name === name);
+    if (t) openTool(t);
+  },
+});

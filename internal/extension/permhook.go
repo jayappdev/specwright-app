@@ -32,7 +32,7 @@ func PermissionHook(in io.Reader, out io.Writer) error {
 	// project tools the user approved): allowed, as they are for Claude
 	// (--allowedTools mcp__agentbridge). Copilot's --allow-tool agentbridge
 	// does not match them, so every call used to ask the user.
-	if ownTool(tool) {
+	if ownTool(tool) || ownToolCommand(tool, input) { // the same tools, run with the shell (toolcli.go)
 		return json.NewEncoder(out).Encode(map[string]any{"behavior": "allow"})
 	}
 	describeCopilotTool(tool, input)
@@ -103,7 +103,8 @@ func hookRequest(raw []byte) (string, map[string]any) {
 // agentbridge tools ("agentbridge/read_file" in hooks, "agentbridge-…" in
 // events).
 func ownTool(tool string) bool {
-	return strings.HasPrefix(tool, "agentbridge/") || strings.HasPrefix(tool, "agentbridge-")
+	return strings.HasPrefix(tool, "agentbridge/") || strings.HasPrefix(tool, "agentbridge-") ||
+		strings.HasPrefix(tool, "specwright_") // the same tools, as SpecWright's Copilot extension (copilotself.go)
 }
 
 // describeCopilotTool says in words what Copilot's own extension tools

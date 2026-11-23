@@ -43,12 +43,24 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 	}
 	id := fmt.Sprintf("%s-%d", step, time.Now().UnixNano())
 	h.flowPublish(fr, "tool.call", name+" "+argSummary(args), map[string]any{"_step": step, "tool": name, "args": args, "id": id})
+	called := time.Now()
+	flowID := ""
+	if fr.flow != nil {
+		flowID = fr.flow.ID
+	}
+	record := func(ok bool, ms int64, msg string) { // tool reliability (toolstats.go)
+		h.recordToolCall(store.ToolCall{Workspace: root, Tool: name, Source: "flow", OK: ok, DurationMS: ms, Error: msg, Args: args, RunID: fr.st.ID, Flow: flowID, Step: strings.TrimSuffix(step, "-out")})
+	}
 	fail := func(err error) (string, error) {
 		h.flowPublish(fr, "tool.result", name+" failed", map[string]any{"_step": step, "tool": name, "id": id, "ok": false, "output": err.Error()})
+		record(false, time.Since(called).Milliseconds(), err.Error())
 		return "", err
 	}
 	var res extension.RunResult
 	if builtinTool {
+		if err := h.outwardAllowed(root, fr, strings.TrimSuffix(step, "-out"), name, args); err != nil { // outward.go
+			return fail(err)
+		}
 		// built-ins take their data through their fields; the connected
 		// steps' output is still saved for {{input_file}}
 		res = h.runFlowBuiltin(ctx, e, args, timeout)
@@ -147,6 +159,7 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 		data[k] = v
 	}
 	h.flowPublish(fr, "tool.result", fmt.Sprintf("%s %s · %dms", name, map[bool]string{true: "ok", false: "failed"}[res.OK], res.DurationMS), data)
+	record(res.OK, res.DurationMS, firstNonEmpty(res.Error, map[bool]string{true: "", false: fmt.Sprintf("exit code %d", res.ExitCode)}[res.OK]))
 	if !res.OK {
 		msg := firstNonEmpty(res.Error, fmt.Sprintf("exit code %d", res.ExitCode))
 		if t := strings.TrimSpace(res.Output); t != "" {

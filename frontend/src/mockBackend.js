@@ -23,6 +23,64 @@ import { BUILTINS } from "./builtins.generated.js";
 
 // built-in tools as flow tools ("builtin:<name>"), shaped like project tools (mirrors core.FlowBuiltinTools)
 const NOT_IN_FLOWS = new Set(["todo_list", "get_command_output"]);
+// a Context step in the browser preview (flow/context.go, simplified):
+// sources in order, each cut to its share of the budget; files, past runs,
+// lessons and pages are named (the app reads them)
+function mockContext(f, n, parents, d, R) {
+  const budget = n.budget || 8000;
+  const pieces = [
+    ...parents.map((p) => ({
+      label: f.nodes.find((x) => x.id === p)?.title || p,
+      kind: "step",
+      text: d.steps?.[p] ?? "",
+    })),
+    ...(n.sources || []).map((s) => ({
+      label:
+        s.label ||
+        {
+          files: "Files " + (s.paths || []).join(", "),
+          text: "Notes",
+          inputs: "The flow's inputs",
+          history: "Past runs: " + (s.query || ""),
+          lessons: "Lessons from reviews",
+          url: s.url,
+        }[s.kind] ||
+        s.kind,
+      kind: s.kind,
+      priority: s.priority || "normal",
+      text:
+        s.kind === "text"
+          ? R(s.text || "")
+          : s.kind === "inputs"
+            ? JSON.stringify(d.inputs || {}, null, 2)
+            : `(${s.kind === "files" ? "the contents of " + (s.paths || []).join(", ") : s.kind === "url" ? s.url : s.kind}: read by the app when the flow runs)`,
+    })),
+  ];
+  const w = { high: 3, normal: 2, low: 1 },
+    total = pieces.reduce((a, p) => a + (w[p.priority] || 2), 0) || 1;
+  const report = { budget, used: 0, sources: [] };
+  let pack = `# Context: ${n.title || n.id}\n` + (n.goal ? `Purpose: ${R(n.goal)}\n` : "");
+  pieces.forEach((p, i) => {
+    const share = Math.floor(((budget * (w[p.priority] || 2)) / total) * 4),
+      kept = p.text.slice(0, share),
+      tokens = Math.ceil(p.text.length / 4),
+      keptT = Math.ceil(kept.length / 4);
+    report.sources.push({
+      id: "S" + (i + 1),
+      label: p.label,
+      kind: p.kind,
+      tokens,
+      kept: keptT,
+      chunks: 1,
+      keptChunks: kept ? 1 : 0,
+      note: kept.length < p.text.length ? "cut to its share of the budget" : "",
+    });
+    report.used += keptT;
+    if (kept) pack += `\n## [S${i + 1}] ${p.label}\n${kept}\n`;
+  });
+  return { pack, report };
+}
+
 function flowBuiltins() {
   return BUILTINS.filter((t) => !NOT_IN_FLOWS.has(t.name)).map((t) => {
     const props = t.inputSchema?.properties || {},
@@ -1680,6 +1738,20 @@ export function createMockBackend(methods) {
       expr: "Field (optional: empty is the whole input)",
       exprOptional: true,
     },
+    "json-md-table": {
+      name: "JSON array → Markdown table",
+      group: "JSON",
+      help: 'One row per element, one column per field, in the order the JSON has them. Name the columns to choose and order them: paths into each element, with a header after "as" (name, user.email as Email, tags[0]). An object that holds the list ({"items": [...]}) gives the list\'s table.',
+      expr: "Columns (optional: empty is every field)",
+      exprOptional: true,
+    },
+    "json-html-table": {
+      name: "JSON array → HTML table",
+      group: "JSON",
+      help: 'A <table> with a header row, one row per element, one column per field (in the order the JSON has them), values escaped. Name the columns to choose and order them: paths with an optional header after "as" (name, user.email as Email). An object that holds the list ({"items": [...]}) gives the list\'s table.',
+      expr: "Columns (optional: empty is every field)",
+      exprOptional: true,
+    },
     "json-pretty": { name: "Format JSON", group: "JSON" },
     "json-minify": { name: "Minify JSON", group: "JSON" },
     "csv-to-json": { name: "CSV → JSON", group: "Convert" },
@@ -1817,6 +1889,8 @@ export function createMockBackend(methods) {
         }
         case "ai":
           return [mock(n, n.outputSchema, "answer"), true];
+        case "context":
+          return [mockContext(f, n, live, d, (t) => render(t, dd)).pack, false];
         case "transform": {
           const src = n.source ? render(n.source, dd) : input;
           if (n.op === "ai" || n.op === "command") return [mock(n, null, "result"), true];
@@ -1952,7 +2026,9 @@ export function createMockBackend(methods) {
         try {
           const [out, mocked] = exec(n, d, live);
           if (n.type === "decision") {
-            const bs = decide(n, out, (m) => render(m, d));
+            // the AI decides when the flow runs: the dry run follows the first path
+            const bs =
+              n.decide === "ai" ? [(n.branches || [])[0]?.id || "else"] : decide(n, out, (m) => render(m, d));
             d.branches = { ...d.branches, [id]: bs };
             st.path = bs.map((b) => branchLabel(n, b)).join(", ");
           }
@@ -2756,6 +2832,17 @@ export function createMockBackend(methods) {
     updated: f.updated,
     parent: f.parent,
     revision: f.revision,
+    group: f.group || "",
+    tags: f.tags || [],
+    // the steps' names and tools, for searching (flow/tags.go)
+    keywords: [
+      ...new Set(
+        f.nodes
+          .filter((n) => n.type !== "start")
+          .flatMap((n) => [n.title, (n.tool || "").replace(/^builtin:/, "")])
+          .filter(Boolean),
+      ),
+    ],
   });
   const slug = (n) =>
     (n || "flow")
@@ -2989,10 +3076,21 @@ export function createMockBackend(methods) {
             add(n.id, "error", `${label}: the path "${name}" needs an id other than "else".`);
           else if (bids.has(b.id)) add(n.id, "error", `${label}: two paths have the id "${b.id}".`);
           bids.add(b.id);
+          if (n.decide === "ai") {
+            if (!(b.label || "").trim())
+              add(n.id, "error", `${label}: give the path ${b.id} a name the AI can choose.`);
+            continue;
+          }
           const e = condCheck(b.when);
           if (e) add(n.id, "error", `${label} › ${name}: ${e}`);
           condTemplates(b.when).forEach((t) => check(n, label + " › " + name, t));
         }
+        if (n.decide === "ai" && !(n.prompt || "").trim())
+          add(
+            n.id,
+            "error",
+            `${label}: write the question the AI decides (e.g. Can this release go out today?).`,
+          );
         const used = new Set();
         for (const e of f.edges.filter((x) => x.from === n.id)) {
           const to = f.nodes.find((x) => x.id === e.to)?.title || e.to;
@@ -3308,6 +3406,48 @@ export function createMockBackend(methods) {
     }
     return wild ? cur : cur[0];
   };
+  // JSON array → table (as internal/flow/tables.go): columns in the JSON's
+  // order, or the ones named ("user.email as Email").
+  const jsonTable = (input, expr = "") => {
+    let v = JSON.parse(input);
+    if (v && !Array.isArray(v) && typeof v === "object") {
+      const lists = Object.keys(v).filter(
+        (k) => Array.isArray(v[k]) && v[k][0] && typeof v[k][0] === "object",
+      );
+      v = lists.length === 1 ? v[lists[0]] : [v];
+    }
+    if (!Array.isArray(v)) throw new Error("a table needs a JSON array (or an object holding one)");
+    const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
+    let cols = (expr || "")
+      .split(",")
+      .map((x) => x.trim())
+      .filter(Boolean)
+      .map((x) => {
+        const m = x.match(/^(.+?)\s+as\s+(.+)$/i);
+        return m ? { path: m[1].trim(), head: m[2].trim() } : { path: x, head: x };
+      });
+    if (!cols.length) {
+      const seen = new Set();
+      for (const r of v) if (isObj(r)) for (const k of Object.keys(r)) seen.add(k);
+      cols = [...seen].map((k) => ({ path: k, head: k }));
+      if (v.some((r) => !isObj(r))) cols.push({ path: "", head: "value" });
+    }
+    if (!cols.length) throw new Error("the array is empty: there is no table to make");
+    const at = (o, p) =>
+      p
+        .replace(/\[(\d+)\]/g, ".$1")
+        .split(".")
+        .filter(Boolean)
+        .reduce((a, k) => (a == null ? undefined : a[k]), o);
+    const cell = (x) =>
+      x == null ? "" : typeof x === "string" ? x : typeof x === "object" ? JSON.stringify(x) : String(x);
+    return {
+      head: cols.map((c) => c.head),
+      rows: v.map((r) =>
+        cols.map((c) => (c.path === "" ? (isObj(r) ? "" : cell(r)) : isObj(r) ? cell(at(r, c.path)) : "")),
+      ),
+    };
+  };
   const toCsv = (v) => {
     const rows = (Array.isArray(v) ? v : [v]).map((r) => (r && typeof r === "object" ? r : { value: r }));
     const head = [...new Set(rows.flatMap((r) => Object.keys(r)))];
@@ -3355,9 +3495,15 @@ export function createMockBackend(methods) {
     }
     if (fmt === "json") return js ? JSON.stringify(js, null, 2) : JSON.stringify({ content: c }, null, 2);
     if (fmt === "csv") return js ? toCsv(js) : "line\n" + t.split("\n").join("\n") + "\n";
+    // a list of records (or an object holding one) is a table, as in the app
+    const isObj = (x) => x && typeof x === "object" && !Array.isArray(x);
+    const lists = isObj(js) ? Object.keys(js).filter((k) => Array.isArray(js[k]) && isObj(js[k][0])) : [];
+    const list = Array.isArray(js) ? js : lists.length === 1 ? js[lists[0]] : null;
+    const isList = !!list && list.length > 0 && list.every(isObj);
     if (fmt === "html")
-      return `<!doctype html><html><body style="font:15px/1.5 sans-serif;margin:1.5rem">${js ? `<pre>${t.replace(/</g, "&lt;")}</pre>` : /^\s*</.test(t) ? t : mdHtml(t)}</body></html>`;
-    if (fmt === "md" && js) return "```json\n" + t + "\n```\n";
+      return `<!doctype html><html><head><style>table{border-collapse:collapse}td,th{border:1px solid #d0d7de;padding:4px 8px;vertical-align:top}th{background:#f6f8fa;text-align:left}</style></head><body style="font:15px/1.5 sans-serif;margin:1.5rem">${js ? (isList ? transform({ op: "json-html-table", expr: "" }, t) : `<pre>${t.replace(/</g, "&lt;")}</pre>`) : /^\s*</.test(t) ? t : mdHtml(t)}</body></html>`;
+    if (fmt === "md" && js)
+      return isList ? transform({ op: "json-md-table", expr: "" }, t) : "```json\n" + t + "\n```\n";
     return c;
   };
   const transform = (n, input, d) => {
@@ -3464,6 +3610,34 @@ export function createMockBackend(methods) {
         };
         return JSON.stringify(walk(v, 0), null, 2);
       }
+      case "json-md-table":
+      case "json-html-table": {
+        const { head, rows } = jsonTable(input, n.expr);
+        if (n.op === "json-md-table") {
+          const c = (x) => String(x).trim().replace(/\n/g, "<br>").replace(/\|/g, "\\|");
+          return (
+            [
+              "| " + head.map(c).join(" | ") + " |",
+              "|" + " --- |".repeat(head.length),
+              ...rows.map((r) => "| " + r.map(c).join(" | ") + " |"),
+            ].join("\n") + "\n"
+          );
+        }
+        const e = (x) =>
+          String(x).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&#34;");
+        return (
+          "<table>\n<thead><tr>" +
+          head.map((h) => "<th>" + e(h) + "</th>").join("") +
+          "</tr></thead>\n<tbody>\n" +
+          rows
+            .map(
+              (r) =>
+                "<tr>" + r.map((x) => "<td>" + e(x).replace(/\n/g, "<br>") + "</td>").join("") + "</tr>\n",
+            )
+            .join("") +
+          "</tbody>\n</table>\n"
+        );
+      }
       case "json-pretty":
         return JSON.stringify(JSON.parse(input), null, 2);
       case "json-minify":
@@ -3481,6 +3655,8 @@ export function createMockBackend(methods) {
     }
     throw new Error(`unknown transformation "${n.op}"`);
   };
+
+  const pendingQs = {}; // ask_user questions waiting (browser preview)
 
   // --- flow runs (browser preview: simulated executor with the same events and decisions) ---
   const kcStore = {};
@@ -4073,6 +4249,16 @@ export function createMockBackend(methods) {
           return ai(n.id, R(n.prompt, d) + (f.context?.text ? "\n\n## Context\n" + f.context.text : ""));
         case "improve":
           return improveStep(n, d);
+        case "context": {
+          const { pack, report } = mockContext(f, n, parents, d, (t) => R(t, d));
+          Object.assign(stepOf(n.id), { context: report });
+          pub(
+            "flow.context",
+            `${n.title || n.id}: ${report.used} of ${report.budget} tokens from ${report.sources.length} sources`,
+            { step: n.id },
+          );
+          return pack;
+        }
         case "gather":
           return gatherItems(n, gathered[n.id] || [], d);
         case "merge": {
@@ -4091,8 +4277,59 @@ export function createMockBackend(methods) {
             rnd = (m) => R(m, d);
           if (n.type === "filter") return filterRows(n, src, rnd);
           if (n.type === "aggregate") return aggregateRows(n, src, rnd);
-          const bs = decide(n, src, rnd),
-            path = bs.map((b) => branchLabel(n, b)).join(", ");
+          let bs = n.decide === "ai" ? null : decide(n, src, rnd);
+          if (n.decide === "ai") {
+            // the AI decides (core/flowrun_decide.go, simplified): the path whose name
+            // the data mentions, else the first; "unsure" in the data: 40% sure
+            await wait(400);
+            const low = String(src).toLowerCase(),
+              hit =
+                (n.branches || []).find((b) => b.label && low.includes(b.label.toLowerCase())) ||
+                (n.branches || [])[0];
+            const pick = hit?.id || "else",
+              conf = low.includes("unsure") ? 40 : 90,
+              why = `The data points to ${hit?.label || "none of the paths"}.`;
+            Object.assign(stepOf(n.id), { why, confidence: conf });
+            bs = [pick];
+            if (
+              conf < (n.confidence || 70) &&
+              (n.unsure || "ask") === "ask" &&
+              o.review !== "none" &&
+              !lr.noReview
+            ) {
+              const s = stepOf(n.id);
+              st.status = "review";
+              st.review = {
+                step: n.id,
+                title: s.title,
+                type: n.type,
+                output: String(src).slice(0, 24000),
+                verdict: `The AI suggests "${branchLabel(n, pick)}", ${conf}% sure (below ${n.confidence || 70}%)`,
+                reason: why,
+                suggested: pick,
+                choices: [
+                  ...(n.branches || []).map((b) => ({ id: b.id, label: b.label || b.id, hint: b.hint })),
+                  { id: "else", label: "Otherwise" },
+                ],
+              };
+              s.status = "review";
+              state();
+              pub("flow.review", "Waiting for you: choose the path at " + s.title, {
+                step: n.id,
+                node: n.id,
+              });
+              const dec = await new Promise((res) => {
+                lr.decide = res;
+              });
+              lr.decide = null;
+              st.status = "running";
+              st.review = null;
+              s.status = "running";
+              if (dec.action === "stop") throw Object.assign(new Error("stopped by you"), { stopped: true });
+              if (dec.action === "choose" && dec.branch) bs = [dec.branch];
+            } else if (conf < (n.confidence || 70) && n.unsure === "else") bs = ["else"];
+          }
+          const path = bs.map((b) => branchLabel(n, b)).join(", ");
           Object.assign(stepOf(n.id), { branches: bs, path });
           pub("flow.decision", `${n.title || n.id} → ${path}`, { step: n.id, branches: bs });
           return src;
@@ -4384,6 +4621,25 @@ export function createMockBackend(methods) {
               : dec.prompt + "\n\nData:\n```\n" + out + "\n```",
           );
           note = "Refined with AI: " + dec.prompt;
+          if (!dec.save) {
+            // kept as a lesson for later runs of this step (core/lessons.go)
+            (db.lessons ||= []).unshift({
+              id: Date.now(),
+              workspace: db.root,
+              flow: f.id,
+              step: n.id,
+              text: dec.prompt,
+              source: "refine",
+              runId: id,
+              created: now(),
+              used: 0,
+            });
+            pub("flow.lesson", "Kept for later runs of this step: " + dec.prompt, {
+              step: n.id,
+              text: dec.prompt,
+            });
+            persist();
+          }
           if (dec.save) {
             const fl = db.flows[f.id],
               cur = fl.nodes.find((x) => x.id === n.id);
@@ -5385,6 +5641,79 @@ export function createMockBackend(methods) {
       const q = prompt.trim(),
         req = (q.match(/\nRequest: (.*)/) || [])[1] || q,
         short = req.length > 80 ? req.slice(0, 80) + "…" : req;
+      if (/ask_user|ask me/i.test(q)) {
+        // the agent asks you multiple-choice questions (ask_user)
+        const id = "q" + Date.now();
+        const questions = [
+          {
+            id: "scope",
+            question: "What should the refactor cover?",
+            options: ["Only the billing module", "Billing and invoices", "The whole order service"],
+            recommended: ["Only the billing module"],
+            why: "Smallest change that fixes the bug; the rest can follow.",
+          },
+          {
+            id: "tests",
+            question: "Which tests should I run afterwards?",
+            options: ["Unit tests", "Integration tests", "Contract tests"],
+            multiple: true,
+            recommended: ["Unit tests", "Integration tests"],
+          },
+          {
+            id: "branch",
+            question: "Branch name?",
+            options: ["fix/billing-rounding", "refactor/billing"],
+            recommended: ["fix/billing-rounding"],
+            allowOther: true,
+          },
+        ];
+        pendingQs[id] = {
+          id,
+          title: "Before I refactor billing",
+          intro: "Three quick decisions; the recommendations are chosen already.",
+          questions,
+          deadline: new Date(Date.now() + 900000).toISOString(),
+        };
+        setTimeout(() => emit({ type: "question.request", ...pendingQs[id] }), 300);
+      }
+      if (/^Help me improve the SpecWright tool "/.test(q)) {
+        const js = (q.match(/```json\n([\s\S]*?)\n```/) || [])[1];
+        let d = {};
+        try {
+          d = JSON.parse(js);
+        } catch {
+          /* no tool in the prompt */
+        }
+        const c = d.lang === "Bash" ? "#" : "//";
+        const want = (q.split("## What I want\n")[1] || "").trim();
+        const rev = {
+          name: d.name,
+          desc: d.desc,
+          lang: d.lang,
+          command: d.command,
+          script: (d.script || "") + `\n${c} reads paths with spaces: arguments passed as an array`,
+          params: d.params,
+          secrets: d.secrets,
+          deps: d.deps,
+          why: "The path was split at a space; it is now passed as one argument.",
+        };
+        return startRunP({
+          id: "playground",
+          title: "Playground",
+          input: q,
+          rawPrompt: q,
+          gate: false,
+          status: "pending",
+          lastRun: "",
+          script: [
+            ["Read", d.scriptPath || "package.json"],
+            [
+              "say",
+              `I read the tool and its last test. You asked: “${want.split("\n")[0]}”.\n\nThe cause: the script splits the path argument at spaces. I pass it as one argument now.\n\n\`\`\`json\n${JSON.stringify(rev, null, 2)}\n\`\`\`\n\n(Browser preview: the desktop app runs the real agent.)`,
+            ],
+          ],
+        });
+      }
       if (
         /^You are helping in SpecWright's file browser/.test(q) &&
         /packages|dependenc|build errors|Compile the project/i.test(req)
@@ -5535,6 +5864,156 @@ export function createMockBackend(methods) {
     async Runs(limit) {
       return clone(db.runs.filter((r) => r.workspace === db.root).slice(0, limit || 50));
     },
+    // the history database (store/backup.go) and the trigger queue (core/trigger_queue.go)
+    async HistoryDBInfo() {
+      return {
+        open: true,
+        path: "~/Library/Application Support/codegen/history.db",
+        bytes: 3485696,
+        runs: db.runs.length,
+        lessons: (db.lessons || []).length,
+        toolCalls: 42,
+        queued: (db.trigQueue || []).length,
+        backups: clone(db.backups || []),
+        folder: "~/Library/Application Support/codegen/backups",
+      };
+    },
+    async BackupHistoryNow() {
+      await wait(300);
+      const name = "history-" + new Date().toISOString().slice(0, 10) + ".db";
+      db.backups = [
+        { name, path: "~/Library/Application Support/codegen/backups/" + name, bytes: 3407872, at: now() },
+        ...(db.backups || []).filter((b) => b.name !== name),
+      ].slice(0, 7);
+      persist();
+      return clone(db.backups[0]);
+    },
+    async TriggerQueue() {
+      return clone(db.trigQueue || []);
+    },
+    async CancelQueued(id) {
+      db.trigQueue = (db.trigQueue || []).filter((q) => q.id !== id);
+      persist();
+      setTimeout(() => emit({ type: "trigger.queued", summary: "A waiting run was cancelled" }), 20);
+    },
+    // lessons from reviews (core/lessons.go)
+    async FlowLessons(flowID) {
+      return clone((db.lessons || []).filter((l) => l.flow === flowID && l.workspace === db.root));
+    },
+    async AddFlowLesson(flowID, step, text) {
+      text = String(text || "").trim();
+      if (!text) throw new Error("a lesson needs some text");
+      const same = (db.lessons ||= []).find(
+        (l) => l.flow === flowID && l.step === step && l.text.toLowerCase() === text.toLowerCase(),
+      );
+      if (same) return clone(Object.assign(same, { off: false }));
+      const l = {
+        id: Date.now(),
+        workspace: db.root,
+        flow: flowID,
+        step,
+        text,
+        source: "manual",
+        created: now(),
+        used: 0,
+      };
+      db.lessons.unshift(l);
+      persist();
+      return clone(l);
+    },
+    async UpdateLesson(id, text, off) {
+      const l = (db.lessons || []).find((x) => x.id === id);
+      if (!l) throw new Error("no such lesson");
+      Object.assign(l, { text: String(text).trim() || l.text, off: !!off });
+      persist();
+    },
+    async DeleteLesson(id) {
+      db.lessons = (db.lessons || []).filter((x) => x.id !== id);
+      persist();
+    },
+    // tool reliability (core/toolstats.go): from the recorded tool results
+    async ToolStats() {
+      const calls = [];
+      for (const r of db.runs.filter((x) => x.workspace === db.root))
+        for (const e of db.events[r.id] || [])
+          if (e.type === "tool.result" && e.tool) calls.push({ ...e, at: e.ts });
+      calls.sort((a, b) => String(b.at).localeCompare(String(a.at)));
+      const out = {};
+      for (const c of calls) {
+        const s = (out[c.tool] ||= { tool: c.tool, calls: 0, failed: 0, recent: [], typicalMs: 0, ms: [] });
+        if (!s.lastAt) s.lastAt = c.at;
+        if (c.ok === false && !s.lastError)
+          Object.assign(s, { lastError: String(c.output || "failed").slice(0, 200), lastFailAt: c.at });
+        if (s.calls < 10) {
+          s.calls++;
+          s.recent.push(c.ok !== false);
+          if (c.ok === false) s.failed++;
+        }
+        if (c.ok !== false && c.duration_ms) s.ms.push(c.duration_ms);
+      }
+      for (const s of Object.values(out)) {
+        s.ms.sort((a, b) => a - b);
+        s.typicalMs = s.ms[Math.floor(s.ms.length / 2)] || 0;
+        delete s.ms;
+      }
+      return out;
+    },
+    async ToolArgExamples(tool) {
+      const seen = new Set(),
+        out = [];
+      for (const r of db.runs.filter((x) => x.workspace === db.root))
+        for (const e of db.events[r.id] || [])
+          if (e.type === "tool.call" && e.tool === tool && e.args && Object.keys(e.args).length) {
+            const k = JSON.stringify(e.args);
+            if (!seen.has(k) && out.length < 3) seen.add(k) && out.push(e.args);
+          }
+      return out;
+    },
+    // search inside runs (core: the history database's full-text index): all
+    // words must appear, the last may be the start of one; snippets mark
+    // the matches between \x01 and \x02
+    async SearchHistory(q, limit) {
+      await wait(80);
+      const words = String(q || "")
+        .toLowerCase()
+        .split(/[^\p{L}\p{N}_]+/u)
+        .filter(Boolean);
+      if (!words.length) return [];
+      const S1 = String.fromCharCode(1),
+        S2 = String.fromCharCode(2);
+      const has = (t) => words.every((w) => t.toLowerCase().includes(w));
+      const snip = (t) => {
+        const low = t.toLowerCase(),
+          at = Math.max(0, low.indexOf(words[0]) - 40);
+        let out = (at ? "…" : "") + t.slice(at, at + 160);
+        for (const w of words)
+          out = out.replace(
+            new RegExp("(" + w.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + ")", "i"),
+            S1 + "$1" + S2,
+          );
+        return out;
+      };
+      const hits = [];
+      for (const r of db.runs.filter((x) => x.workspace === db.root)) {
+        const texts = [
+          ["run", [r.title, r.ask, r.workflow, r.step, r.trigger].filter(Boolean).join("\n")],
+          ...(db.events[r.id] || []).map((e) => [
+            e.type,
+            [
+              e.summary,
+              ...["text", "output", "content", "prompt", "message", "error", "feedback"].map(
+                (k) => e[k] ?? e.data?.[k],
+              ),
+            ]
+              .filter((x) => typeof x === "string" && x)
+              .join("\n"),
+          ]),
+        ].filter(([, t]) => t && has(t));
+        if (texts.length)
+          hits.push({ run: clone(r), field: texts[0][0], snippet: snip(texts[0][1]), matches: texts.length });
+      }
+      return hits.slice(0, limit || 50);
+    },
     // (archived runs stay in Runs, with archived: true; the lists filter them)
     async RunEvents(id) {
       return clone(db.events[id] || []);
@@ -5544,6 +6023,25 @@ export function createMockBackend(methods) {
     },
     async FlowBuiltinTools() {
       return flowBuiltins();
+    },
+    async AgentTools() {
+      const app = [
+        ["save_flow", "flows", "Save a flow (Flow Designer format)"],
+        ["schedule_flow", "flows", "Schedule a flow"],
+        ["run_flow", "flows", "Run a flow"],
+        ["history_search", "flows", "Search the run history"],
+        ["save_tool", "tools", "Propose a tool revision"],
+      ].map(([name, group, title]) => ({ name, group, title, desc: title, app: true }));
+      return [
+        ...app,
+        ...BUILTINS.map((b) => ({
+          name: b.name,
+          title: b.title,
+          group: b.group,
+          desc: b.description,
+          readOnly: b.readOnly,
+        })),
+      ];
     },
     async BuiltinTools() {
       return unlocked ? clone(BUILTINS) : [];
@@ -5926,6 +6424,51 @@ export function createMockBackend(methods) {
           ". Run: .codegen/scripts/" +
           name +
           " --help",
+      };
+    },
+    async GenerateExtensionTrace(r) {
+      const t0 = Date.now();
+      const tool = await this.GenerateExtension(r);
+      const hist = (r.history || [])
+        .map(
+          (h) =>
+            `- revision ${h.revision}${h.ask ? ", asked: " + h.ask : ""}${h.test ? "; test: " + h.test : ""}`,
+        )
+        .join("\n");
+      return {
+        tool,
+        prompt:
+          (r.draft ? "Revise this tool.\n\n" : "Write a tool.\n\nDescription: " + (r.prompt || "") + "\n") +
+          (r.change ? "## The developer's instructions\n" + r.change + "\n" : "") +
+          (r.failure ? "\nThe test failed: " + (r.failure.summary || "") + "\n" : "") +
+          (hist ? "\n## What was tried before\n" + hist + "\n" : "") +
+          "\n(browser preview: the desktop app shows the whole prompt)",
+        reply: "```json\n" + JSON.stringify(tool, null, 2) + "\n```",
+        why: r.draft
+          ? r.failure
+            ? "Quoted the path argument and pinned the dependency."
+            : "Applied: " + (r.change || "")
+          : "",
+        model: r.model || "default",
+        ms: Date.now() - t0,
+      };
+    },
+    async ToolFromReply(text, draft) {
+      const m = text.match(/```json\s*(\{[\s\S]*?\})\s*```/);
+      if (!m)
+        throw new Error("no tool in this answer: ask the AI to end with the whole tool as one JSON object");
+      const d = JSON.parse(m[1]);
+      const { why, ...rest } = d;
+      return {
+        tool: {
+          ...clone(draft),
+          ...rest,
+          revision: (draft.revision || 1) + 1,
+          status: "untested",
+          lastTest: null,
+        },
+        reply: text,
+        why: why || "",
       };
     },
     async GenerateExtension(r) {
@@ -6323,6 +6866,28 @@ export function createMockBackend(methods) {
       delete f.rev;
       delete f.repairs;
       f.updated = new Date().toISOString();
+      // tags and group tidied as the app does (flow/tags.go)
+      f.group = String(f.group || "")
+        .split("/")
+        .map((x) => x.trim().replace(/\s+/g, " "))
+        .filter(Boolean)
+        .join(" / ");
+      f.tags = [
+        ...new Set(
+          (f.tags || [])
+            .map((t) =>
+              String(t)
+                .toLowerCase()
+                .trim()
+                .replace(/^#/, "")
+                .replace(/[^\p{L}\p{N}_./]+/gu, "-")
+                .replace(/^-+|-+$/g, ""),
+            )
+            .filter(Boolean),
+        ),
+      ].sort();
+      if (!f.group) delete f.group;
+      if (!f.tags.length) delete f.tags;
       db.flows[f.id] = f;
       persist();
       return { flow: { ...clone(f), rev: flowRev(f) }, issues: validateFlow(f) };
@@ -6330,6 +6895,133 @@ export function createMockBackend(methods) {
     async DeleteFlow(id) {
       delete db.flows[id];
       persist();
+    },
+    // list headings (core/layout.go): kept per project, nothing in the flows or tools
+    async ListLayout() {
+      const l = ((db.lists ||= {})[db.root] ||= {
+        tools: { headings: [], items: {} },
+        flows: { headings: [], items: {} },
+      });
+      return clone(l);
+    },
+    async SaveListLayout(l) {
+      const tidy = (s) => {
+        const headings = [];
+        for (const h of s?.headings || []) {
+          const x = String(h).split(/\s+/).filter(Boolean).join(" ").slice(0, 60);
+          if (x && !headings.some((y) => y.toLowerCase() === x.toLowerCase())) headings.push(x);
+        }
+        const items = {};
+        for (const [k, v] of Object.entries(s?.items || {})) if (headings.includes(v)) items[k] = v;
+        return { headings, items };
+      };
+      (db.lists ||= {})[db.root] = { tools: tidy(l.tools), flows: tidy(l.flows) };
+      persist();
+      return clone(db.lists[db.root]);
+    },
+    // chart (builtin/chart.go): a PNG of a chart, saved in the project
+    async ChartPNG(svg, path) {
+      if (!/data-specwright-chart="1"/.test(svg || ""))
+        throw new Error("this is not a SpecWright chart (no chart data in it)");
+      const title = ((svg.match(/<title>([^<]*)<\/title>/) || [])[1] || "chart")
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, "-")
+        .replace(/^-|-$/g, "");
+      return (
+        path ||
+        `out/charts/${title || "chart"}-${new Date().toISOString().slice(0, 19).replace(/[-:T]/g, "")}.png`
+      );
+    },
+    // ask_user (core/questions.go): questions waiting for the person
+    async PendingQuestions() {
+      return clone(Object.values(pendingQs));
+    },
+    async AnswerQuestions(id, answers, recommended) {
+      const q = pendingQs[id];
+      if (!q) throw new Error("these questions are no longer waiting (answered, timed out or stopped)");
+      delete pendingQs[id];
+      emit({
+        type: "question.resolved",
+        run_id: q.run_id,
+        id,
+        by: recommended ? "person (the recommendations)" : "person",
+      });
+      const lines = q.questions.map((x) => {
+        const a = (answers || []).find((y) => y.id === x.id) || {};
+        return `- ${x.question} → ${[...(a.selected || []), a.other ? "Other: " + a.other : ""].filter(Boolean).join(", ") || "(none)"}`;
+      });
+      emit({ type: "notify", title: "Your answers were sent", message: lines.join("\n") });
+    },
+    async SetFlowTags(id, tags) {
+      const f = db.flows[id];
+      if (!f) throw new Error(`no flow "${id}"`);
+      f.tags = [
+        ...new Set(
+          (tags || []).map((t) => String(t).trim().toLowerCase().split(/\s+/).join("-")).filter(Boolean),
+        ),
+      ].sort();
+      f.updated = new Date().toISOString();
+      persist();
+      return clone(f.tags);
+    },
+    async RenameFlow(id, name) {
+      const f = db.flows[id];
+      if (!f) throw new Error(`no flow "${id}"`);
+      name = String(name || "").trim();
+      if (!name) throw new Error("give the flow a name");
+      let nid = slug(name);
+      f.name = name;
+      if (nid !== id) {
+        nid = uniqueFlowId(nid);
+        delete db.flows[id];
+        f.id = nid;
+        db.flows[nid] = f;
+        for (const g of Object.values(db.flows)) {
+          for (const t of g.triggers || []) if (t.after?.flow === id) t.after.flow = nid;
+          if (g.parent === id) g.parent = nid;
+          for (const n of g.nodes || [])
+            if (/run_flow$/.test(n.tool || "") && n.args?.flow_id === id) n.args.flow_id = nid;
+        }
+        const l = (db.lists ||= {})[db.root];
+        if (l?.flows?.items?.[id]) {
+          l.flows.items[nid] = l.flows.items[id];
+          delete l.flows.items[id];
+        }
+      }
+      f.updated = new Date().toISOString();
+      persist();
+      return {
+        flow: clone(f),
+        issues: validateFlow(f),
+        notes: nid !== id ? [`Renamed: its file is now .codegen/flows/${nid}.json (was ${id}.json).`] : [],
+      };
+    },
+    async RenameTool(old, name) {
+      const e = db.exts.find((x) => x.name === old);
+      if (!e) throw new Error(`no extension named "${old}"`);
+      if (e.kind !== "script" || e.scope !== "project") throw new Error(`${old} cannot be renamed here`);
+      if (!/^[a-z][a-z0-9_-]{0,39}$/.test(name))
+        throw new Error("a tool name starts with a letter and uses lowercase letters, digits, - and _");
+      if (db.exts.some((x) => x.name === name)) throw new Error(`there is already a tool named ${name}`);
+      e.command = (e.command || "").split(old).join(name);
+      if (e.scriptPath) e.scriptPath = e.scriptPath.split(old).join(name);
+      e.name = name;
+      for (const g of Object.values(db.flows))
+        for (const n of g.nodes || []) {
+          if (n.tool === old) n.tool = name;
+          for (const a of n.actions || []) if (a.tool === old) a.tool = name;
+        }
+      if (db.toolTags?.[old]) {
+        db.toolTags[name] = db.toolTags[old];
+        delete db.toolTags[old];
+      }
+      const l = (db.lists ||= {})[db.root];
+      if (l?.tools?.items?.[old]) {
+        l.tools.items[name] = l.tools.items[old];
+        delete l.tools.items[old];
+      }
+      persist();
+      return clone(e);
     },
     async ValidateFlow(f) {
       return validateFlow(f);
@@ -6372,6 +7064,7 @@ export function createMockBackend(methods) {
         parents = f.edges.filter((e) => e.to === id).map((e) => e.from);
       const input = parents.map((p) => d.steps?.[p] ?? "").join("\n\n");
       try {
+        if (n.type === "context") return { output: mockContext(f, n, parents, d, (t) => render(t, d)).pack };
         if (n.type === "merge") {
           if (n.mode === "json-object")
             return {
@@ -6447,6 +7140,12 @@ export function createMockBackend(methods) {
             rnd = (m) => render(m, d);
           if (n.type === "filter") return { output: filterRows(n, src, rnd) };
           if (n.type === "aggregate") return { output: aggregateRows(n, src, rnd) };
+          if (n.decide === "ai")
+            return {
+              output:
+                "→ the AI decides when the flow runs: " +
+                [...(n.branches || []).map((b) => b.label || b.id), "Otherwise"].join(", "),
+            };
           return {
             output: decide(n, src, rnd)
               .map((b) => {
@@ -7026,7 +7725,7 @@ export function createMockBackend(methods) {
         });
       return { ...r, source, notes: [] };
     },
-    async RefineToolWithAI(d) {
+    async RefineToolWithAI(d, _model, ask) {
       await wait(1200);
       const { params } = inferParams(d);
       for (const p of params) {
@@ -7068,7 +7767,9 @@ export function createMockBackend(methods) {
         output: d.output || null,
         tests,
         changes,
-        why: `(browser preview) Read ${d.script ? "the script" : "the command"} of ${d.name}: what it reads, the values it accepts and what it prints.`,
+        why:
+          `(browser preview) Read ${d.script ? "the script" : "the command"} of ${d.name}: what it reads, the values it accepts and what it prints.` +
+          (ask ? ` It took your request into account: “${ask.split("\n")[0]}”.` : ""),
         notes: [],
       };
     },
@@ -7145,6 +7846,22 @@ export function createMockBackend(methods) {
         let pass = run.checks.length > 0 && run.checks.every((c) => c.ok);
         if (t.expect?.fail && run.problems?.length) pass = true;
         out.push({ name: t.name, pass, run });
+      }
+      // a saved tool's cases are its last test (as the desktop app records it)
+      const x = db.exts.find(
+        (e) => e.name === d.name && (e.script || "") === (d.script || "") && e.command === d.command,
+      );
+      if (x && x.kind !== "copilot") {
+        const n = out.filter((r) => r.pass).length;
+        x.lastTest = {
+          pass: n === out.length,
+          summary: `${n} of ${out.length} test cases passed (run with arguments, no AI)`,
+          checks: out.map((r) => ({ label: "Test case: " + r.name, ok: r.pass })),
+          steps: [],
+          at: now(),
+        };
+        if (x.status !== "in review") x.status = x.lastTest.pass ? "tested" : "untested";
+        persist();
       }
       return out;
     },

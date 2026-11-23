@@ -55,6 +55,7 @@ type Hub struct {
 	model     string
 	token     string              // session-only credential, never persisted
 	sec       secretsState        // session secrets, pending prompts, resolved values (secrets.go)
+	qs        questionsState      // ask_user questions waiting for a person (questions.go)
 	flowRuns  map[string]*flowRun // live flow runs
 	resultsWG sync.WaitGroup      // results folders being written
 	closing   bool                // Close has started: no new results writes
@@ -342,7 +343,8 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	h.exts = extension.NewStore(abs)
 	h.pkgs = extension.NewPackageStore(abs)
 	h.runner = &workflow.Runner{Bus: h.Bus, Store: h.Store, Agents: h.Agents, Workspace: abs,
-		Env: h.childEnv, MCPConfig: h.mcpConfig, OnStatus: h.onStepStatus}
+		Env: h.childEnv, MCPConfig: h.mcpConfig, OnStatus: h.onStepStatus,
+		ToolsReached: func(since time.Time) bool { return h.Bridge.LastContact().After(since) }}
 	h.tools.SetRoot(abs)
 	h.watcher = watch.New(abs, time.Second)
 	w0 := h.watcher
@@ -357,6 +359,13 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	h.mu.Unlock()
 	w.Poll() // take the baseline snapshot now
 	go w.Run(wctx, h.onFiles)
+	ts := h.triggers(abs)
+	ts.mu.Lock()
+	ts.projW = w // its scan is kept for files triggers that count changes made while closed
+	// this opening's scheduler is the current one from now, not from when
+	// its goroutine happens to run: a slower, older one must not take over
+	ts.ctx = wctx
+	ts.mu.Unlock()
 	h.sched.Add(1)
 	go func() { // the project's triggers (schedules, files, after flows); triggers.go
 		defer h.sched.Done()
@@ -684,6 +693,21 @@ func (h *Hub) onStepStatus(stepID, status, runID string) {
 	h.Bus.Publish(bus.Event{Type: "workflow.changed", RunID: runID, Step: stepID, Summary: status, Data: map[string]any{"status": status}})
 }
 
+// emitRun records e as an event of the run a, with the run's next sequence
+// number: the live view keeps a run's events by number, so an event without
+// one (0) was dropped once the run had another.
+func (h *Hub) emitRun(a *workflow.Run, e bus.Event) {
+	h.mu.RLock()
+	r := h.runner
+	h.mu.RUnlock()
+	if r == nil {
+		e.RunID, e.Step = a.Session.ID, a.Session.Step
+		_ = h.Store.Append(h.Bus.Publish(e))
+		return
+	}
+	r.Emit(a, e.Type, e.Summary, e.Data)
+}
+
 func (h *Hub) activeRun() *workflow.Run {
 	h.mu.RLock()
 	r := h.runner
@@ -810,6 +834,10 @@ type PromptOptions struct {
 	// by the app (Files › Ask AI); default: the prompt itself.
 	Title string `json:"title,omitempty"`
 	Ask   string `json:"ask,omitempty"`
+	// Interactive: you answer the agent's permission questions in the app
+	// (on by default in the Playground): Copilot asks before editing files
+	// outside the project or running commands, instead of refusing them.
+	Interactive bool `json:"interactive,omitempty"`
 }
 
 // RunPrompt sends a free-form prompt to the chosen agent in the workspace
@@ -834,7 +862,7 @@ func (h *Hub) RunPrompt(prompt string, o PromptOptions) (string, error) {
 	}
 	h.mu.RLock()
 	so := workflow.StartOptions{Agent: h.agentName, Model: firstNonEmpty(o.Model, h.model, h.wf.Model), Budget: h.wf.Budget, Prompt: prompt, NoTools: !o.Tools,
-		Title: firstNonEmpty(o.Title, firstLine(ask)), Ask: ask, Parents: o.Parents}
+		Title: firstNonEmpty(o.Title, firstLine(ask)), Ask: ask, Parents: o.Parents, Interactive: o.Interactive}
 	runner := h.runner
 	h.mu.RUnlock()
 	run, err := runner.Start(h.ctx, PlaygroundStep, PlaygroundStep, so)

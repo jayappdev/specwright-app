@@ -1,6 +1,7 @@
 package main
 
 import (
+	"codegen/internal/builtin"
 	"context"
 	"os"
 	"time"
@@ -172,6 +173,31 @@ func (a *App) CancelRun(runID string) error                { return a.hub.Cancel
 func (a *App) Live() *core.LiveRun                         { return val(a.hub.Live()) }
 func (a *App) Runs(limit int) ([]store.Run, error)         { return ok(a.hub.Runs(limit)) }
 func (a *App) RunEvents(runID string) ([]bus.Event, error) { return ok(a.hub.RunEvents(runID)) }
+func (a *App) SearchHistory(q string, limit int) ([]store.Hit, error) {
+	return ok(a.hub.SearchHistory(q, limit))
+}
+
+// lessons from reviews, and tool reliability (core/lessons.go, core/toolstats.go)
+func (a *App) FlowLessons(flowID string) ([]store.Lesson, error) {
+	return ok(a.hub.FlowLessons(flowID))
+}
+func (a *App) AddFlowLesson(flowID, step, text string) (store.Lesson, error) {
+	return ok(a.hub.AddFlowLesson(flowID, step, text))
+}
+func (a *App) UpdateLesson(id int64, text string, off bool) error {
+	return a.hub.UpdateLesson(id, text, off)
+}
+func (a *App) DeleteLesson(id int64) error                   { return a.hub.DeleteLesson(id) }
+func (a *App) ToolStats() (map[string]store.ToolStat, error) { return ok(a.hub.ToolStats()) }
+
+// the history database's size and copies; the trigger queue
+func (a *App) HistoryDBInfo() store.DBInfo                 { return a.hub.Store.Info() }
+func (a *App) BackupHistoryNow() (store.BackupFile, error) { return ok(a.hub.Store.Backup()) }
+func (a *App) TriggerQueue() ([]core.QueueView, error)     { return ok(a.hub.TriggerQueue()) }
+func (a *App) CancelQueued(id int64) error                 { return a.hub.CancelQueued(id) }
+func (a *App) ToolArgExamples(tool string) ([]map[string]any, error) {
+	return ok(a.hub.ToolArgExamples(tool))
+}
 
 // --- extensions ----------------------------------------------------------
 
@@ -185,6 +211,51 @@ func (a *App) ApproveExtension(name string) (extension.Extension, error) {
 func (a *App) DeleteExtension(name string) error { return a.hub.DeleteExtension(name) }
 func (a *App) GenerateExtension(r core.GenerateRequest) (extension.Extension, error) {
 	return ok(a.hub.GenerateExtension(r))
+}
+
+// ListLayout returns the headings of the Tools and Flows lists.
+func (a *App) ListLayout() (core.ListLayout, error) { return ok(a.hub.Layout()) }
+
+// SaveListLayout stores the headings of the Tools and Flows lists.
+func (a *App) SaveListLayout(l core.ListLayout) (core.ListLayout, error) {
+	return ok(a.hub.SaveLayout(l))
+}
+
+// ChartPNG saves a PNG of a chart (its SVG) in the project.
+func (a *App) ChartPNG(svg, path string) (string, error) { return ok(a.hub.ChartPNG(svg, path)) }
+
+// PendingQuestions are the ask_user questions waiting for you.
+func (a *App) PendingQuestions() []core.QuestionRequest { return val(a.hub.PendingQuestions()) }
+
+// AnswerQuestions sends your answers to waiting ask_user questions.
+func (a *App) AnswerQuestions(id string, answers []builtin.Answer, recommended bool) error {
+	return a.hub.AnswerQuestions(id, answers, recommended)
+}
+
+// SetFlowTags replaces a flow's tags.
+func (a *App) SetFlowTags(id string, tags []string) ([]string, error) {
+	return ok(a.hub.SetFlowTags(id, tags))
+}
+
+// RenameFlow renames a flow; its id (file) follows the name.
+func (a *App) RenameFlow(id, name string) (core.FlowState, error) {
+	return ok(a.hub.RenameFlow(id, name))
+}
+
+// RenameTool renames a project tool written in SpecWright.
+func (a *App) RenameTool(old, name string) (extension.Extension, error) {
+	return ok(a.hub.RenameTool(old, name))
+}
+
+// GenerateExtensionTrace writes or revises a tool and tells how: the
+// prompt, the agent's reply and what it says it changed.
+func (a *App) GenerateExtensionTrace(r core.GenerateRequest) (core.GenTrace, error) {
+	return ok(a.hub.GenerateExtensionTrace(r))
+}
+
+// ToolFromReply reads a revised tool from a Prompt Playground answer.
+func (a *App) ToolFromReply(text string, draft extension.Extension) (core.GenTrace, error) {
+	return ok(a.hub.ToolFromReply(text, draft))
 }
 
 // SaveManagedLibraryFile adds or changes a file of a corporate skill and re-signs it (admin).
@@ -342,8 +413,8 @@ func (a *App) InspectTool(e extension.Extension) (core.ToolInspect, error) {
 }
 
 // RefineToolWithAI proposes a tool's parameters, output shape and test cases.
-func (a *App) RefineToolWithAI(e extension.Extension, model string) (core.ToolRefine, error) {
-	return ok(a.hub.RefineToolWithAI(e, model))
+func (a *App) RefineToolWithAI(e extension.Extension, model, ask string) (core.ToolRefine, error) {
+	return ok(a.hub.RefineToolWithAI(e, model, ask))
 }
 
 // SaveToolMeta saves a tool's parameters, output shape and test cases.
@@ -576,6 +647,9 @@ func (a *App) ExportProjectZip(withContext bool) (core.ZipResult, error) {
 }
 
 // BuiltinTools lists the built-in tools for the UI, in admin mode only.
+// AgentTools lists the built-in and SpecWright tools agents are offered.
+func (a *App) AgentTools() []core.AgentTool { return val(a.hub.AgentTools()) }
+
 func (a *App) BuiltinTools() []core.BuiltinTool {
 	if !a.hub.BuiltinsVisible() {
 		return []core.BuiltinTool{}

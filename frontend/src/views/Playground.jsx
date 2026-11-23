@@ -1,6 +1,7 @@
 // Prompt playground: send any prompt to the chosen agent in the workspace
 // and see its answer, every tool call with arguments and result, and the
 // tokens, cost or premium requests, model calls and timing of the run.
+import { registerPlace } from "../navigation.js";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { PROMPT_STATUS_LABEL, RUN_KIND_LONG } from "../labels.js";
 import { CopyButton } from "../CopyButton.jsx";
@@ -8,7 +9,7 @@ import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHo
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
-import { EmptyState } from "../ui.jsx";
+import { EmptyState, RefreshButton, usePoll } from "../ui.jsx";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, isCopilot, fmtK, fmtMs, fmtCredits } from "../store.js";
 import { Icon, Pill, Stat, Chip } from "../ui.jsx";
@@ -20,6 +21,8 @@ import { EventIcon } from "../EventIcon.jsx";
 import { openFlowRunner } from "./FlowRun.jsx";
 import { ResultsLink } from "../RunResults.jsx";
 import { AiProgress } from "../AiProgress.jsx";
+import { applyToolRevision, reloadTool } from "./Tools.jsx";
+import { proposedTool } from "./tools/toolHistory.js";
 
 const EXAMPLES = [
   "Summarize what this project does and how it is organised",
@@ -29,7 +32,43 @@ const EXAMPLES = [
 ];
 
 const pg = () =>
-  (S.pg ||= { prompt: "", tools: true, model: "", runs: [], sel: "", loaded: false, parents: [] });
+  (S.pg ||= { prompt: "", tools: true, ask: true, model: "", runs: [], sel: "", loaded: false, parents: [] });
+
+// Which tool each conversation is about (run id → tool name), kept in this
+// browser so Apply works after a reload.
+const TOOL_KEY = "codegen.pg.tools.v1";
+function toolFor() {
+  const p = pg();
+  if (!p.toolFor)
+    try {
+      p.toolFor = JSON.parse(localStorage.getItem(TOOL_KEY) || "{}") || {};
+    } catch {
+      p.toolFor = {};
+    }
+  return p.toolFor;
+}
+function setToolFor(id, name) {
+  const m = toolFor();
+  m[id] = name;
+  try {
+    localStorage.setItem(TOOL_KEY, JSON.stringify(Object.fromEntries(Object.entries(m).slice(-200))));
+  } catch {
+    /* per-browser convenience only */
+  }
+}
+
+// openToolChat: a new conversation about a tool, its prompt (the tool, its
+// history and last test) ready to read and edit before sending.
+export function openToolChat(prompt, name) {
+  const p = pg();
+  p.parents = [];
+  p.sel = "";
+  p.prompt = prompt;
+  p.toolNext = name;
+  S.view = "playground";
+  update();
+  setTimeout(() => document.querySelector(".pg-composer textarea")?.focus(), 50);
+}
 
 // Start a new prompt in the playground that continues from earlier runs.
 export function continueInPlayground(ids) {
@@ -49,14 +88,36 @@ const runTitle = (id) => {
     : id.slice(0, 15) + "…";
 };
 
-async function loadPast() {
+// How often the run list is read again while the Playground is open (as
+// History): runs started elsewhere (a flow, a trigger, an agent's run_flow)
+// show up without leaving the view.
+export const PLAYGROUND_POLL = 30;
+
+// loadPast reads the recorded runs of this project into the list, merging
+// with what it has: on opening, on Refresh, every PLAYGROUND_POLL seconds,
+// and when a run it does not know sends an event. Another project starts a
+// list of its own.
+export async function loadPast(force) {
   const p = pg();
-  if (p.loaded || !S.ws) return;
+  if (!S.ws) return;
+  if (p.root !== S.ws.root) {
+    if (p.root) Object.assign(p, { runs: [], sel: "", parents: [] });
+    p.root = S.ws.root;
+    p.loaded = false;
+  }
+  if (p.loaded && !force) return;
   p.loaded = true;
-  const runs = (await backend.Runs(500).catch(() => [])) || [];
+  const runs = (await backend.Runs(500).catch(() => null)) || null;
+  if (!runs) return;
   for (const r of runs.filter((x) => x.step === "playground" || x.step === "flow")) {
     const had = p.runs.find((x) => x.id === r.id);
-    if (had) Object.assign(had, { archived: !!r.archived, group: r.group || "" });
+    if (had)
+      Object.assign(had, {
+        archived: !!r.archived,
+        group: r.group || "",
+        title: had.title || r.title || "",
+        state: r.state || had.state,
+      });
     else
       p.runs.push({
         id: r.id,
@@ -105,6 +166,7 @@ async function reply(runId, text) {
   p.prompt = text;
   p.parents = [runId];
   p.reply = "";
+  if (toolFor()[runId]) p.toolNext = toolFor()[runId];
   return run();
 }
 
@@ -121,7 +183,12 @@ async function run() {
   if (!prompt) return toast("Type a prompt first.");
   try {
     const parents = [...(p.parents || [])];
-    const id = await backend.RunPrompt(prompt, { tools: p.tools, model: p.model.trim(), parents });
+    const id = await backend.RunPrompt(prompt, {
+      tools: p.tools,
+      model: p.model.trim(),
+      parents,
+      interactive: p.ask !== false,
+    });
     S.loaded[id] = true;
     S.events[id] ||= [];
     p.runs.unshift({
@@ -135,6 +202,8 @@ async function run() {
     p.sel = id;
     p.parents = [];
     p.prompt = "";
+    if (p.toolNext) setToolFor(id, p.toolNext);
+    p.toolNext = "";
     update();
   } catch (e) {
     toast(errMsg(e), "error");
@@ -358,7 +427,22 @@ function Composer({ compact, box, r, running, anyRunning }) {
           />{" "}
           Also offer project and admin tools
         </label>
+        <label
+          className="check"
+          title="Copilot: instead of refusing what it may not do on its own (a command, or editing a file outside the project, such as your own extension in ~/.copilot/extensions), it asks you here. Edits inside the project need no question. Copilot reads files without asking, so with this on it can also read files outside the project."
+        >
+          <input
+            type="checkbox"
+            checked={p.ask !== false}
+            onChange={(e) => {
+              p.ask = e.target.checked;
+              update();
+            }}
+          />{" "}
+          Ask me to approve commands and edits outside the project
+        </label>
       </div>
+      <AgentToolsList withProject={p.tools} />
       {!compact && (
         <p className="muted" style={{ margin: "8px 0 0" }}>
           Runs in <code className="inline-code">{S.ws.root}</code> with the workflow's token and cost budget.
@@ -370,12 +454,181 @@ function Composer({ compact, box, r, running, anyRunning }) {
   );
 }
 
+const TOOL_GROUPS = [
+  ["flows", "SpecWright: flows and history"],
+  ["tools", "SpecWright: tools"],
+  ["read", "Read"],
+  ["search", "Search"],
+  ["edit", "Edit"],
+  ["execute", "Run"],
+  ["web", "Web"],
+  ["chart", "Charts"],
+  ["plan", "Plan"],
+];
+
+async function loadAgentTools() {
+  S.agentTools = (await backend.AgentTools().catch(() => [])) || [];
+  update();
+}
+
+// AgentToolsList: what the agent gets in a Playground run: SpecWright's own
+// tools (save_flow, run_flow, …), the built-ins and, with "Also offer
+// project and admin tools", the project's tools through extension_managed.
+// Names as the agent's CLI shows them, so a prompt can name them.
+function AgentToolsList({ withProject }) {
+  const [open, setOpen] = useState(false);
+  const toolKey = (S.ws?.extensions || []).map((t) => t.name + ":" + (t.revision || 0)).join(",");
+  useEffect(() => {
+    if (open) loadAgentTools(); // read again each time: tools and policy change
+  }, [open, toolKey]);
+  const all = S.agentTools || [];
+  const project = withProject
+    ? (S.ws?.extensions || []).filter((t) => !t.managed || t.managed.status === "verified")
+    : [];
+  const cop = isCopilot();
+  const shown = (n) => (cop ? "agentbridge-" + n : "mcp__agentbridge__" + n);
+  return (
+    <div className="pg-agenttools">
+      <button className="link" onClick={() => setOpen(!open)} aria-expanded={open}>
+        {open ? "▾" : "▸"} Tools the agent can use{S.agentTools ? ` · ${all.length + project.length}` : ""}
+      </button>
+      {open && (
+        <div className="pg-agenttools-body">
+          <p className="muted">
+            On SpecWright&apos;s agentbridge MCP server, named as {cop ? "GitHub Copilot" : "the agent"} sees
+            them. SpecWright&apos;s own tools can also be called through extension_managed by their name.
+          </p>
+          {!S.agentTools && <span className="spinner" />}
+          {TOOL_GROUPS.map(([g, label]) => {
+            const ts = all.filter((t) => t.group === g);
+            if (!ts.length) return null;
+            return (
+              <div key={g}>
+                <div className="bt-group">{label}</div>
+                <ul className="pg-agenttools-list">
+                  {ts.map((t) => (
+                    <li key={t.name} title={t.desc}>
+                      <code className="inline-code" data-nofile>
+                        {shown(t.name)}
+                      </code>{" "}
+                      <span className="muted">{t.title || t.desc}</span>
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            );
+          })}
+          {all
+            .filter((t) => !TOOL_GROUPS.some(([g]) => g === t.group))
+            .map((t) => (
+              <div key={t.name}>
+                <code className="inline-code" data-nofile>
+                  {shown(t.name)}
+                </code>{" "}
+                <span className="muted">{t.title || t.desc}</span>
+              </div>
+            ))}
+          {withProject ? (
+            <div>
+              <div className="bt-group">Project tools (through {shown("extension_managed")})</div>
+              {project.length ? (
+                <ul className="pg-agenttools-list">
+                  {project.map((t) => (
+                    <li key={t.name} title={t.desc}>
+                      <code className="inline-code" data-nofile>
+                        {t.name}
+                      </code>{" "}
+                      <span className="muted">{t.desc}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="muted">No project tools yet.</p>
+              )}
+            </div>
+          ) : (
+            <p className="muted">Project tools are not offered: tick “Also offer project and admin tools”.</p>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ToolApply: this conversation is about a tool: take the revision in the
+// answer into the tool builder and test it, or read the tool's files again
+// when the agent changed them.
+function ToolApply({ name, answer, runId, proposed }) {
+  const [busy, setBusy] = useState(false);
+  const has = !!proposed || /```json[\s\S]*?"(script|command)"\s*:/.test(answer);
+  const saved = (S.ws?.extensions || []).some((x) => x.name === name);
+  const apply = async () => {
+    const draft =
+      S.tb?.draft && (S.tb.draft.name === name || S.tb.editing === name)
+        ? S.tb.draft
+        : (S.ws?.extensions || []).find((x) => x.name === name);
+    if (!draft) return toast(`Open the tool ${name} in Tools first.`, "error");
+    setBusy(true);
+    try {
+      const text = proposed
+        ? "```json\n" + JSON.stringify({ ...proposed.tool, why: proposed.why }) + "\n```"
+        : answer;
+      const tr = await backend.ToolFromReply(text, draft);
+      if (!tr.reply || proposed) tr.reply = answer;
+      await applyToolRevision(tr, name, runId);
+    } catch (e) {
+      toast(errMsg(e), "error");
+    }
+    setBusy(false);
+  };
+  return (
+    <div className="pg-toolapply">
+      <span>
+        <Icon.tool /> {proposed ? "The AI proposes a revision of" : "About the tool"} <b>{name}</b>
+        {proposed?.why && <span className="muted"> · {proposed.why}</span>}
+        {!has && (
+          <span className="muted"> · no revised tool in this answer yet: ask for the whole tool as JSON</span>
+        )}
+      </span>
+      <button className="btn primary" disabled={busy || !has} onClick={apply}>
+        {busy ? "Applying…" : "Apply to the tool and test"}
+      </button>
+      {saved && (
+        <button
+          className="btn secondary"
+          disabled={busy}
+          onClick={() => reloadTool(name)}
+          title="When the agent edited the tool's files in the project, read them again"
+        >
+          Reload from its files
+        </button>
+      )}
+      <button
+        className="btn secondary"
+        onClick={() => {
+          S.view = "tools";
+          update();
+        }}
+      >
+        Back to the tool
+      </button>
+    </div>
+  );
+}
+
 export function Playground() {
   const p = pg(),
     box = useRef(null);
   useEffect(() => {
     loadPast();
   }, [S.ws?.root]);
+  usePoll(() => loadPast(true), PLAYGROUND_POLL * 1000, [S.ws?.root]);
+  useEffect(() => {
+    if (!S.pgStale) return;
+    S.pgStale = false;
+    const t = setTimeout(() => loadPast(true), 400); // the run is recorded first
+    return () => clearTimeout(t);
+  }, [S.pgStale]);
   if (!S.ws) return <NeedWorkspace what="the playground" />;
   for (const [id, fst] of Object.entries(S.flowRuns))
     if (!p.runs.some((x) => x.id === id))
@@ -391,7 +644,7 @@ export function Playground() {
     .map((e) => e.text)
     .join("\n\n");
   const problems = evs.filter((e) =>
-    ["error", "loop.detected", "budget.exceeded", "run.retry"].includes(e.type),
+    ["error", "loop.detected", "budget.exceeded", "run.retry", "tools.unreachable"].includes(e.type),
   );
   const model = [...evs].reverse().find((e) => e.type === "model.request" && e.model)?.model;
   const anyRunning = p.runs.some((x) => stateOf(S.events[x.id] || []) === "running");
@@ -407,7 +660,14 @@ export function Playground() {
             padding: "0 8px 8px",
           }}
         >
-          <h1>Playground</h1>
+          <h1 className="list-head">
+            Playground{" "}
+            <RefreshButton
+              label="Refresh the Playground runs"
+              every={PLAYGROUND_POLL}
+              onRefresh={() => loadPast(true)}
+            />
+          </h1>
           <button
             className="btn primary"
             onClick={() => {
@@ -568,7 +828,12 @@ export function Playground() {
               )}
             </div>
             {problems.map((e) => (
-              <div key={e.seq} className={"banner" + (e.type === "run.retry" ? "" : " error")}>
+              <div
+                key={e.seq}
+                className={
+                  "banner" + (e.type === "run.retry" || e.type === "tools.unreachable" ? "" : " error")
+                }
+              >
                 <Linkify text={e.summary} />
               </div>
             ))}
@@ -595,6 +860,14 @@ export function Playground() {
                 <div className="pg-waiting">
                   <Icon.shield /> Waiting for your approval to use <b>{S.permAsks[0].tool}</b>.
                 </div>
+              )}
+              {!running && (toolFor()[r.id] || proposedTool(evs)) && (
+                <ToolApply
+                  name={proposedTool(evs)?.tool.name || toolFor()[r.id]}
+                  answer={answer}
+                  runId={r.id}
+                  proposed={proposedTool(evs)}
+                />
               )}
               {!running && answer && evs.some((e) => e.type === "run.end") && (
                 <div className={"pg-reply" + (asksUser(answer) ? " asks" : "")}>
@@ -906,3 +1179,6 @@ export function RunPicker() {
     </div>
   );
 }
+
+// Back / Forward: the run open in the Playground (navigation.js)
+registerPlace("playground", { key: () => S.pg?.sel || "", restore: (id) => select(id) });

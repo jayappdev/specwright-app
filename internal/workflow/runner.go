@@ -39,6 +39,10 @@ type Runner struct {
 	// Flush is called when the agent finishes, so file changes it made just
 	// before exiting are attributed to this run (the watcher polls).
 	Flush func()
+	// ToolsReached says whether an agent reached SpecWright's tools since a
+	// time (the bridge's last contact): a run that never did gets a
+	// tools.unreachable event, as its CLI did not load the MCP server.
+	ToolsReached func(since time.Time) bool
 
 	mu     sync.Mutex
 	active *Run
@@ -94,6 +98,9 @@ type StartOptions struct {
 	// (a Spec Kit project folder inside it); AddDirs are opened to it too.
 	Dir     string
 	AddDirs []string
+	// Interactive: a person answers permission questions in the app while
+	// it runs (the Playground); see agent.Request.Interactive.
+	Interactive bool
 }
 
 // NewRunID returns a unique, sortable run id: the local date and time the
@@ -155,6 +162,12 @@ func (rn *Runner) Start(ctx context.Context, wfID, stepID string, o StartOptions
 	return run, nil
 }
 
+// Emit sends an event of run (a tool's result during the run, say) with the
+// run's next sequence number, and records it, as the run's own events are.
+func (rn *Runner) Emit(run *Run, typ, summary string, data map[string]any) bus.Event {
+	return rn.publish(run, typ, summary, data)
+}
+
 // publish sends an event for run through the bus and records it.
 func (rn *Runner) publish(run *Run, typ, summary string, data map[string]any) bus.Event {
 	run.mu.Lock()
@@ -181,7 +194,14 @@ func (rn *Runner) execute(ctx context.Context, run *Run, drv agent.Driver, wfID,
 	_ = sess.To(session.Running, "started")
 	rn.publish(run, "run.start", "Started "+stepID+" with "+drv.Name(), map[string]any{"agent": drv.Name(), "model": o.Model, "cwd": rn.Workspace, "workflow": wfID})
 	prompt := o.Prompt
+	offered := rn.MCPConfig != nil && drv.Name() != "mock"
+	if offered {
+		prompt += ToolCommandNote
+	}
 	finish := func(state session.State, reason string) {
+		if offered && rn.ToolsReached != nil && !rn.ToolsReached(run.started) && ctx.Err() == nil {
+			rn.publish(run, "tools.unreachable", "SpecWright's tools did not reach "+drv.Name()+" in this run: neither its MCP server (agentbridge) nor its Copilot extension (~/.copilot/extensions/specwright) was loaded. A company policy, or the CLI, may block them. The agent can still run them with its shell (\"$CODEGEN_TOOL\" tool list), as the prompt tells it.", map[string]any{"agent": drv.Name()})
+		}
 		_ = sess.To(state, reason)
 		u := run.Usage()
 		u.DurationMS = time.Since(run.started).Milliseconds()
@@ -284,7 +304,7 @@ func (rn *Runner) once(parent context.Context, run *Run, drv agent.Driver, o Sta
 		dir = o.Dir
 	}
 	req := agent.Request{Purpose: "step", Step: run.Session.Step, Prompt: prompt, Dir: dir, AddDirs: o.AddDirs, Model: o.Model,
-		AllowTools: []string{"mcp__agentbridge"}} // every agentbridge tool: built-ins + extension_managed
+		AllowTools: []string{"mcp__agentbridge"}, Interactive: o.Interactive} // every agentbridge tool: built-ins + extension_managed
 	if rn.Env != nil {
 		req.Env = rn.Env()
 	}
@@ -426,3 +446,11 @@ func Exists(path string) bool { _, err := os.Stat(path); return err == nil }
 func appOwned(p string) bool {
 	return strings.HasPrefix(p, ".codegen/workflows/") || p == ".codegen/profile.json" || p == ".codegen/extensions.json"
 }
+
+// ToolCommandNote tells the agent how to reach SpecWright's tools when its
+// CLI did not load the agentbridge MCP server (extension/toolcli.go).
+const ToolCommandNote = "\n\n(SpecWright's tools — save_flow, schedule_flow, run_flow, history_search, save_tool and its built-ins such as read_file or text_search — reach you in one of three ways; use the first one you have: " +
+	"1) as agentbridge-<name> (Claude Code: mcp__agentbridge__<name>), from its MCP server; " +
+	"2) as specwright_<name> and specwright_tool, from SpecWright's Copilot extension; " +
+	"3) with your shell: \"$CODEGEN_TOOL\" tool list shows them, \"$CODEGEN_TOOL\" tool <name> --schema a tool's arguments, and \"$CODEGEN_TOOL\" tool <name> '<arguments as one JSON object>' runs it (exactly that form, nothing chained to it). " +
+	"Search your tools for them if they are deferred. Never say a SpecWright tool is unavailable before trying 2 and 3.)"

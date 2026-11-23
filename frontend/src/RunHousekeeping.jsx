@@ -2,7 +2,7 @@
 // Archived, groups, and selecting several runs to archive, restore or group.
 // Runs are archived automatically after the days set under Settings › Runs ›
 // Housekeeping.
-import { useEffect } from "react";
+import { useEffect, useState } from "react";
 import { backend } from "./backend.js";
 import { S, update, toast, errMsg } from "./store.js";
 import { askText } from "./Dialog.jsx";
@@ -316,6 +316,78 @@ export function HousekeepingCard() {
           </span>
         )}
       </div>
+    </div>
+  );
+}
+
+const mb = (n) =>
+  n >= 1 << 20 ? `${(n / (1 << 20)).toFixed(1)} MB` : `${Math.max(1, Math.round(n / 1024))} KB`;
+
+// The history database (store/db.go, store/backup.go): its size, what it
+// holds, and its daily copies.
+export function HistoryDBCard() {
+  const [info, setInfo] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const load = () =>
+    backend
+      .HistoryDBInfo()
+      .then(setInfo)
+      .catch(() => {});
+  useEffect(() => {
+    load();
+  }, []);
+  if (!info) return null;
+  const last = info.backups?.[0];
+  return (
+    <div className="card" id="history-db">
+      <h3>History database</h3>
+      {info.open ? (
+        <p className="muted" style={{ margin: "0 0 8px" }}>
+          {mb(info.bytes)} · {info.runs} runs · {info.lessons} lessons · {info.toolCalls} tool calls recorded
+          {info.queued ? ` · ${info.queued} runs waiting` : ""}. Lessons, tool records and waiting runs are
+          only here, so a copy is made every day while the app is open (the newest 7 are kept).
+        </p>
+      ) : (
+        <div className="banner error">
+          Not in use: {info.error || "it could not be opened"}. History works from its files; search, lessons,
+          tool records and the trigger queue are off.
+        </div>
+      )}
+      <p className="muted" style={{ margin: "0 0 8px", overflowWrap: "anywhere" }}>
+        <code className="inline-code" data-nofile>
+          {info.path}
+        </code>
+      </p>
+      {info.open && (
+        <>
+          <div className="row-actions">
+            <button
+              className="btn secondary"
+              disabled={busy}
+              onClick={async () => {
+                setBusy(true);
+                try {
+                  const b = await backend.BackupHistoryNow();
+                  toast(`Copied to ${b.name} (${mb(b.bytes)}).`);
+                  load();
+                } catch (e) {
+                  toast(errMsg(e), "error");
+                }
+                setBusy(false);
+              }}
+            >
+              {busy ? "Copying…" : "Make a copy now"}
+            </button>
+            <span className="muted">
+              {last ? `Last copy ${new Date(last.at).toLocaleString()} (${mb(last.bytes)})` : "No copy yet"}
+              {info.backups.length > 1 ? ` · ${info.backups.length} kept` : ""}
+            </span>
+          </div>
+          <p className="muted fl-help" style={{ overflowWrap: "anywhere" }}>
+            Copies are in {info.folder}. To go back to one, quit SpecWright and put it in place of history.db.
+          </p>
+        </>
+      )}
     </div>
   );
 }

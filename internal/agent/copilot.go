@@ -145,9 +145,17 @@ func (c *Copilot) Args(req Request) []string { return c.argsWith(req, "") }
 // which asks in the app.
 func (c *Copilot) argsWith(req Request, pluginDir string) []string {
 	args := []string{"-p", req.Prompt, "--no-color"}
-	if pluginDir != "" {
+	switch {
+	case pluginDir != "" && req.Interactive:
+		// a person answers in the app: Copilot does not refuse paths outside
+		// the project on its own, and every edit goes to the hook, which
+		// allows those inside the project (and the run's folders) and asks
+		// about the rest. Reading files needs no permission in Copilot, so
+		// reads outside the project are not asked.
+		args = append(args, "--plugin-dir", pluginDir, "--allow-tool", "agentbridge", "--allow-all-paths")
+	case pluginDir != "":
 		args = append(args, "--plugin-dir", pluginDir, "--allow-tool", "write", "--allow-tool", "agentbridge")
-	} else {
+	default:
 		args = append(args, "--allow-all-tools")
 	}
 	for _, d := range c.DenyTools {
@@ -162,47 +170,113 @@ func (c *Copilot) argsWith(req Request, pluginDir string) []string {
 	if req.MCPConfig != "" {
 		args = append(args, "--additional-mcp-config", "@"+req.MCPConfig)
 	}
-	if hasProjectExtensions(req.Dir) {
+	project, user := copilotExtNames(req.Dir)
+	if len(project)+len(user) == 0 && hasSelfExt() {
+		args = append(args, "--experimental") // SpecWright's own extension: its tools without MCP
+	}
+	if len(project)+len(user) > 0 {
 		args = append(args, "--experimental") // Copilot extensions are experimental
 		if pluginDir != "" {
 			// Copilot cannot reload extensions in a -p run (it denies the
 			// reload without asking anyone), so it is hidden; the agent runs
 			// a changed extension through SpecWright instead, which asks the
 			// user. Last: the flag takes a list.
-			args[1] += reloadNote
+			args[1] += reloadNote(project, user)
 			args = append(args, "--excluded-tools", "extensions_reload")
 		}
 	}
 	return args
 }
 
-// reloadNote tells the agent how to run an extension it changed.
-const reloadNote = "\n\n(Note from SpecWright: Copilot extensions cannot be reloaded in this run. " +
-	"The tools of this project's extensions are also offered by the agentbridge MCP server (extension_managed), " +
-	"which runs each extension's current files: after you change an extension, call its tool through extension_managed " +
-	"to run the new version in this session. The user is asked before a changed version runs.)"
+// reloadNote tells the agent how to run an extension it changed: the
+// project's extensions (.github/extensions) through SpecWright; your own
+// (~/.copilot/extensions) that the project has a copy of: change the
+// project's copy, which is the one SpecWright runs; your own that only you
+// have: as loaded when the run started.
+func reloadNote(project, user []string) string {
+	in := map[string]bool{}
+	for _, n := range project {
+		in[n] = true
+	}
+	var both, only []string
+	for _, n := range user {
+		if in[n] {
+			both = append(both, n)
+		} else {
+			only = append(only, n)
+		}
+	}
+	s := "\n\n(Note from SpecWright: Copilot extensions cannot be reloaded in this run."
+	if len(project) > 0 {
+		s += " The tools of this project's extensions (" + strings.Join(project, ", ") + ", in .github/extensions) are also offered by the agentbridge MCP server (extension_managed), " +
+			"which runs each extension's current files: after you change one, call its tool through extension_managed to run the new version in this session. The user is asked before a changed version runs."
+	}
+	if len(both) > 0 {
+		s += " " + strings.Join(both, ", ") + " also exist in the user's own Copilot folder (~/.copilot/extensions): change the project's copy in .github/extensions, which is the one SpecWright runs; change the user's own copy only if the user asks for it."
+	}
+	if len(only) > 0 {
+		s += " " + strings.Join(only, ", ") + " exist only in the user's own Copilot folder (~/.copilot/extensions): they run as they were when this run started, so a change to them takes effect in the next run (or the user loads them into the project under Tools to run a changed version here)."
+	}
+	return s + ")"
+}
 
-// hasProjectExtensions reports whether dir has Copilot extensions in
-// .github/extensions (each a folder with extension.mjs/.cjs/.js).
-func hasProjectExtensions(dir string) bool {
-	if dir == "" {
-		return false
+// copilotHome is the Copilot CLI's folder ($COPILOT_HOME or ~/.copilot).
+func copilotHome() string {
+	if h := os.Getenv("COPILOT_HOME"); h != "" {
+		return h
 	}
-	ents, err := os.ReadDir(filepath.Join(dir, ".github", "extensions"))
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".copilot")
+}
+
+// extNames lists the Copilot extensions in dir (folders with an
+// extension.mjs, .cjs or .js).
+func extNames(dir string) []string {
+	ents, err := os.ReadDir(dir)
 	if err != nil {
-		return false
+		return nil
 	}
+	var out []string
 	for _, e := range ents {
 		if !e.IsDir() || strings.HasPrefix(e.Name(), ".") {
 			continue
 		}
 		for _, n := range []string{"extension.mjs", "extension.cjs", "extension.js"} {
-			if _, err := os.Stat(filepath.Join(dir, ".github", "extensions", e.Name(), n)); err == nil {
-				return true
+			if _, err := os.Stat(filepath.Join(dir, e.Name(), n)); err == nil {
+				out = append(out, e.Name())
+				break
 			}
 		}
 	}
-	return false
+	return out
+}
+
+// copilotExtNames are the project's extensions (.github/extensions in dir)
+// and the user's own (~/.copilot/extensions).
+func copilotExtNames(dir string) (project, user []string) {
+	if dir != "" {
+		project = extNames(filepath.Join(dir, ".github", "extensions"))
+	}
+	for _, n := range extNames(filepath.Join(copilotHome(), "extensions")) {
+		if n != "specwright" { // SpecWright's own tools, not the user's (extension.SelfCopilotExt)
+			user = append(user, n)
+		}
+	}
+	return project, user
+}
+
+// hasSelfExt: SpecWright's own Copilot extension is installed (its tools
+// need --experimental, as every extension does).
+func hasSelfExt() bool {
+	_, err := os.Stat(filepath.Join(copilotHome(), "extensions", "specwright", "extension.mjs"))
+	return err == nil
+}
+
+// hasProjectExtensions reports whether dir has Copilot extensions in
+// .github/extensions, or the user has their own.
+func hasProjectExtensions(dir string) bool {
+	p, u := copilotExtNames(dir)
+	return len(p)+len(u) > 0
 }
 
 // env is req.Env plus what makes -p mode load the project's extensions

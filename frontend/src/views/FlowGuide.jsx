@@ -6,6 +6,7 @@ import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg } from "../store.js";
 import { GUIDE, exampleFlow } from "./flowGuide.js";
 import { StepIcon, openFlowInDesigner } from "./Flows.jsx";
+import { RenderPreview, chartOf } from "../ContentView.jsx";
 
 // Open the guide at a step type (from the Flow designer).
 export function openFlowGuide(type) {
@@ -155,6 +156,8 @@ function Example({ g, ex, k }) {
             <p className="muted">Previewing…</p>
           ) : res.error ? (
             <div className="banner error">{res.error}</div>
+          ) : chartOf(res.output) && node.type !== "output" ? (
+            <RenderPreview text={res.output} format="html" />
           ) : node.type === "output" && node.format === "html" ? (
             <iframe className="fl-html guide-html" sandbox="" srcDoc={res.output} title="HTML preview" />
           ) : (
@@ -182,7 +185,7 @@ function Section({ g }) {
   return (
     <section className="card guide-step" id={"guide-" + g.type}>
       <div className="guide-head">
-        <StepIcon n={{ type: g.type }} tools={[]} size={40} />
+        <StepIcon n={g.icon || { type: g.type }} tools={[]} size={40} />
         <div>
           <h2>{g.name}</h2>
           <p className="wf-desc">
@@ -265,7 +268,7 @@ export function FlowGuide() {
             className={"run-item guide-nav" + (cur === g.type ? " active" : "")}
             onClick={() => go(g.type)}
           >
-            <StepIcon n={{ type: g.type }} tools={[]} size={22} />
+            <StepIcon n={g.icon || { type: g.type }} tools={[]} size={22} />
             <span>
               <b>{g.name}</b>
               <small>{g.examples.length} examples</small>

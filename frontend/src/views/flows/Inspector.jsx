@@ -1,6 +1,12 @@
 // The Flow designer's inspector: flow settings, inputs (incl. secret sources),
 // each step type's settings, decisions, filters, aggregates, connections, the
 // data panel (what a step gets and gives) and variable chips.
+import { LessonsEditor } from "./Lessons.jsx";
+import { TagEditor, allTags, allGroups } from "../../flowLists.jsx";
+import { HeadingPicker } from "../../listLayout.jsx";
+import { ContextInspector } from "./ContextStep.jsx";
+import { StepGuidance, aiStep } from "./StepGuidance.jsx";
+import { Reliability } from "../../ToolTile.jsx";
 import { TriggersEditor } from "./Triggers.jsx";
 import { ModelPicker } from "../../ModelPicker.jsx";
 import { stepRef, toolRef, isBuiltin, loopInfo } from "../../flowNames.js";
@@ -115,6 +121,46 @@ function FlowSettings() {
           value={flow.description || ""}
           onChange={(e) => {
             flow.description = e.target.value;
+            changed();
+          }}
+        />
+      </Field>
+      <Field
+        label="Group"
+        hint="Where the flow is listed, e.g. Releases or Billing / Refunds. Empty: not in a group."
+      >
+        <input
+          value={flow.group || ""}
+          list="fls-group-suggestions"
+          placeholder="e.g. Releases"
+          onChange={(e) => {
+            flow.group = e.target.value;
+            changed();
+          }}
+        />
+        <datalist id="fls-group-suggestions">
+          {allGroups(fl().list).map((g) => (
+            <option key={g} value={g} />
+          ))}
+        </datalist>
+      </Field>
+      {flow.id && (
+        <Field
+          label="Heading"
+          hint="Your own arrangement of the flow lists (you can also drag a flow onto a heading). Kept in SpecWright, not in the flow."
+        >
+          <HeadingPicker list="flows" id={flow.id} label="" />
+        </Field>
+      )}
+      <Field
+        label="Tags"
+        hint="Labels to find the flow by; the flow lists can be searched and filtered by them."
+      >
+        <TagEditor
+          tags={flow.tags || []}
+          suggestions={allTags(fl().list)}
+          onChange={(t) => {
+            flow.tags = t;
             changed();
           }}
         />
@@ -759,11 +805,11 @@ function StepInspector({ n }) {
           </small>
         </div>
         <span style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
-          {GUIDE_TYPES.has(n.type) && (
+          {(GUIDE_TYPES.has(n.type) || n.tool === "builtin:chart") && (
             <button
               className="link"
               title="How this step works, with examples"
-              onClick={() => openFlowGuide(n.type)}
+              onClick={() => openFlowGuide(n.tool === "builtin:chart" ? "visualization" : n.type)}
             >
               How to use ↗
             </button>
@@ -831,6 +877,7 @@ function StepInspector({ n }) {
                   <ToolOptions />
                 </select>
               </Field>
+              {n.tool && <Reliability name={n.tool} long />}
               {isBuiltin(n.tool) && (
                 <p className="muted fl-builtin-desc">
                   {(tools().find((x) => x.name === n.tool)?.desc || "").replace(/^[^:]*:\s*/, "")}{" "}
@@ -894,7 +941,10 @@ function StepInspector({ n }) {
           )}
           {n.type === "ai" && (
             <>
-              <Field label="Prompt" hint="The flow's context and skills are added automatically.">
+              <Field
+                label="Prompt"
+                hint="The flow's context and skills are added automatically, with this step's guidance (below)."
+              >
                 <textarea
                   rows={8}
                   value={n.prompt || ""}
@@ -912,13 +962,21 @@ function StepInspector({ n }) {
                   Default: the model chosen when the flow runs, else the app's model.
                 </small>
               </div>
+              <LessonsEditor n={n} />
             </>
           )}
-          {n.type === "improve" && <ImproveInspector n={n} set={set} flow={flow} />}
+          {n.type === "improve" && (
+            <>
+              <ImproveInspector n={n} set={set} flow={flow} />
+              <LessonsEditor n={n} />
+            </>
+          )}
+          {aiStep(n) && <StepGuidance n={n} set={set} />}
           <DataPanel n={n} />
           {n.type === "decision" && <DecisionInspector n={n} set={set} />}
           {n.type === "filter" && <FilterInspector n={n} set={set} />}
           {n.type === "aggregate" && <AggregateInspector n={n} set={set} />}
+          {n.type === "context" && <ContextInspector n={n} set={set} />}
           {n.type === "merge" && (
             <>
               <Field label="How to merge">

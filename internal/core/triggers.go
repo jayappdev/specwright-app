@@ -48,6 +48,7 @@ import (
 
 	"codegen/internal/bus"
 	"codegen/internal/flow"
+	"codegen/internal/store"
 	"codegen/internal/watch"
 )
 
@@ -58,7 +59,18 @@ type RunTrigger struct {
 	Name string `json:"name,omitempty"`
 	// Chain: the flows whose runs led to this one ("flow" triggers)
 	Chain []string `json:"chain,omitempty"`
+	// Attempt: a retry after a failed run (1, 2, …); Vars: what started the
+	// run ({{trigger.x}}), kept so a retry gets the same values
+	Attempt int               `json:"attempt,omitempty"`
+	Vars    map[string]string `json:"vars,omitempty"`
 }
+
+// maxTriggeredRuns is how many runs triggers may have going at once in a
+// project; maxQueued how many runs one trigger may have waiting.
+const (
+	maxTriggeredRuns = 2
+	maxQueued        = 3
+)
 
 // maxTriggerChain is the most flows one chain of "flow" triggers runs.
 const maxTriggerChain = 5
@@ -74,7 +86,8 @@ type TriggerState struct {
 	LastError  string    `json:"lastError,omitempty"`
 	Runs       int       `json:"runs"`
 	Missed     int       `json:"missed"`
-	Done       bool      `json:"done,omitempty"` // no more runs (once, Until, Count)
+	Done       bool      `json:"done,omitempty"`   // no more runs (once, Until, Count)
+	Queued     int       `json:"queued,omitempty"` // runs waiting for their turn (the trigger queue; shown, not kept)
 	// files triggers: the folders outside the project it watches, and why
 	// one cannot be watched
 	Watching   []string `json:"watching,omitempty"`
@@ -100,15 +113,31 @@ type TriggerView struct {
 type triggerStore struct {
 	mu   sync.Mutex
 	path string
+	// the history database keeps the state (namespace ns); the file at
+	// path is written too, for now (and read when there is no database)
+	db   *store.Store
+	ns   string
 	data map[string]*TriggerState // "<flow>/<trigger>" → state
 	// pend: file changes a "files" trigger collected, waiting to be quiet
 	pend map[string]*filePend
 	// ext: watchers of folders outside the project (folder → stop), while
 	// the scheduler (ctx) runs
-	ext map[string]context.CancelFunc
-	ctx context.Context
+	ext  map[string]context.CancelFunc
+	extW map[string]*watch.Watcher
+	// extCtx: the scheduler each outside watcher belongs to (reopening a
+	// project starts a new scheduler before the old one has stopped)
+	extCtx map[string]context.Context
+	projW  *watch.Watcher // the project's own watcher (filesclosed.go)
+	ctx    context.Context
+	// snap: the folders whose last scan is kept, for files triggers that
+	// count changes made while the app was closed (filesclosed.go);
+	// snapDirty: files changed since the scans were saved
+	snap      map[string]bool
+	snapDirty bool
 	// kick wakes the scheduler to look at the triggers again (a flow saved)
 	kick chan struct{}
+	// qmu: one pass at a time starts queued runs (trigger_queue.go)
+	qmu sync.Mutex
 }
 
 // maxExternalFiles is the most files a watched folder outside the project may hold.
@@ -135,8 +164,17 @@ func (h *Hub) triggers(root string) *triggerStore {
 	if h.trig != nil && h.trig.path != "" && strings.Contains(h.trig.path, workspaceKey(root)) {
 		return h.trig
 	}
-	ts := &triggerStore{path: filepath.Join(h.Store.Dir(), "triggers", workspaceKey(root)+".json"), data: map[string]*TriggerState{}, kick: make(chan struct{}, 1)}
-	if b, err := os.ReadFile(ts.path); err == nil {
+	ts := &triggerStore{path: filepath.Join(h.Store.Dir(), "triggers", workspaceKey(root)+".json"), data: map[string]*TriggerState{}, kick: make(chan struct{}, 1),
+		db: h.Store, ns: "triggers:" + workspaceKey(root)}
+	vals, ok, err := h.Store.LoadState(ts.ns)
+	if ok && err == nil && len(vals) > 0 {
+		for k, v := range vals {
+			var s TriggerState
+			if json.Unmarshal(v, &s) == nil {
+				ts.data[k] = &s
+			}
+		}
+	} else if b, err := os.ReadFile(ts.path); err == nil { // no database, or not moved in yet
 		_ = json.Unmarshal(b, &ts.data)
 	}
 	h.trig = ts
@@ -167,6 +205,17 @@ func (ts *triggerStore) current(key string, t flow.Trigger, now time.Time) *Trig
 }
 
 func (ts *triggerStore) save() error {
+	if ts.db != nil {
+		vals := map[string]json.RawMessage{}
+		for k, s := range ts.data {
+			if b, err := json.Marshal(s); err == nil {
+				vals[k] = b
+			}
+		}
+		if err := ts.db.SaveState(ts.ns, vals); err != nil {
+			return err
+		}
+	}
 	b, err := json.MarshalIndent(ts.data, "", "  ")
 	if err != nil {
 		return err
@@ -355,6 +404,7 @@ func (h *Hub) FlowTriggers(flowID string) ([]TriggerView, error) {
 		}
 	}
 	out := []TriggerView{}
+	queued := h.queuedCounts(root)
 	ts.mu.Lock()
 	defer ts.mu.Unlock()
 	for _, f := range flows {
@@ -363,6 +413,7 @@ func (h *Hub) FlowTriggers(flowID string) ([]TriggerView, error) {
 			if st.Hash != t.Hash() {
 				st = TriggerState{Secrets: st.Secrets} // settings changed: shown as new
 			}
+			st.Queued = queued[trigKey(f.ID, t.ID)]
 			out = append(out, h.triggerView(root, f, t, st))
 		}
 	}
@@ -428,7 +479,7 @@ func (h *Hub) RunTriggerNow(flowID, triggerID string) (FlowRunState, error) {
 	}
 	for _, t := range f.Triggers {
 		if t.ID == triggerID {
-			return h.fireTrigger(root, f, t, "run now", nil, nil)
+			return h.fireTrigger(root, f, t, "run now", nil, nil, 0)
 		}
 	}
 	return FlowRunState{}, fmt.Errorf("the flow %s has no trigger %s", flowID, triggerID)
@@ -436,7 +487,7 @@ func (h *Hub) RunTriggerNow(flowID, triggerID string) (FlowRunState, error) {
 
 // fireTrigger starts a run of f for trigger t; vars are what started it
 // ({{trigger.x}} in its input values), chain the flows that led to it.
-func (h *Hub) fireTrigger(root string, f *flow.Flow, t flow.Trigger, why string, vars map[string]string, chain []string) (FlowRunState, error) {
+func (h *Hub) fireTrigger(root string, f *flow.Flow, t flow.Trigger, why string, vars map[string]string, chain []string, attempt int) (FlowRunState, error) {
 	ts := h.triggers(root)
 	key := trigKey(f.ID, t.ID)
 	ts.mu.Lock()
@@ -446,7 +497,7 @@ func (h *Hub) fireTrigger(root string, f *flow.Flow, t flow.Trigger, why string,
 		sealed[k] = v
 	}
 	ts.mu.Unlock()
-	o := FlowRunOptions{Inputs: map[string]string{}, Review: "none", Trigger: &RunTrigger{Kind: t.Kind, ID: t.ID, Name: firstNonEmpty(t.Name, t.ID), Chain: chain}}
+	o := FlowRunOptions{Inputs: map[string]string{}, Review: "none", Trigger: &RunTrigger{Kind: t.Kind, ID: t.ID, Name: firstNonEmpty(t.Name, t.ID), Chain: chain, Attempt: attempt, Vars: vars}}
 	all := map[string]string{"name": firstNonEmpty(t.Name, t.ID), "kind": t.Kind}
 	for k, v := range vars {
 		all[k] = v
@@ -479,8 +530,8 @@ func (h *Hub) fireTrigger(root string, f *flow.Flow, t flow.Trigger, why string,
 	}
 	st0, err := h.RunFlow(f.ID, o)
 	ts.mu.Lock()
-	s := ts.get(key)
 	now := triggerNow()
+	s := ts.current(key, t, now) // a trigger that never ran (or whose settings changed) starts its state here
 	s.LastRun = now
 	if err != nil {
 		s.LastStatus, s.LastError = "failed", err.Error()
@@ -502,17 +553,40 @@ func (h *Hub) fireTrigger(root string, f *flow.Flow, t flow.Trigger, why string,
 func (h *Hub) runScheduler(ctx context.Context, root string) {
 	ts := h.triggers(root)
 	ts.mu.Lock()
-	ts.ctx = ctx
+	if ts.ctx == nil && ctx.Err() == nil { // started without OpenWorkspace (tests)
+		ts.ctx = ctx
+	}
+	current := ts.ctx == ctx
 	ts.mu.Unlock()
-	defer func() { // the project closed: stop watching outside folders
+	if !current { // the project was opened again before this one ran: the newer scheduler owns it
+		return
+	}
+	defer func() { // the project closed: keep the last scans, stop watching outside folders
+		ts.mu.Lock()
+		mine := ts.ctx == ctx // not when the project was opened again meanwhile: the new scheduler owns it
+		ts.mu.Unlock()
+		if mine {
+			h.saveScansOf(ts, root, true)
+		}
 		ts.mu.Lock()
 		for d, stop := range ts.ext {
-			stop()
-			delete(ts.ext, d)
+			if ts.extCtx[d] == ctx {
+				stop()
+				delete(ts.ext, d)
+				delete(ts.extW, d)
+				delete(ts.extCtx, d)
+			}
 		}
-		ts.ctx = nil
+		if mine {
+			ts.ctx = nil
+		}
 		ts.mu.Unlock()
+		if !mine { // the new scheduler may have counted on a watcher just removed: it looks again
+			h.kickTriggers(root)
+		}
 	}()
+	h.syncExternalWatches(root)
+	h.catchUpFiles(root) // changes made while the app was closed (filesclosed.go)
 	h.checkTriggers(root)
 	t := time.NewTicker(triggerTick)
 	defer t.Stop()
@@ -542,6 +616,7 @@ func (h *Hub) checkTriggers(root string) {
 		why string
 	}
 	var fire []due
+	queued := h.queuedCounts(root)
 	ts.mu.Lock()
 	changed := false
 	for _, sum := range list {
@@ -577,10 +652,11 @@ func (h *Hub) checkTriggers(root string) {
 				continue
 			}
 			late := now.Sub(s.NextRun)
+			waiting := queued[trigKey(f.ID, t.ID)] // runs in the queue count towards Count
 			next := func() {
 				nx, ok := t.Schedule.Next(now, s.Since)
 				s.NextRun = nx
-				if !ok || (t.Schedule.Count > 0 && s.Runs >= t.Schedule.Count) {
+				if !ok || (t.Schedule.Count > 0 && s.Runs+waiting >= t.Schedule.Count) {
 					s.Done, s.NextRun = true, time.Time{}
 				}
 				changed = true
@@ -590,10 +666,7 @@ func (h *Hub) checkTriggers(root string) {
 				s.Missed++
 				s.LastError = fmt.Sprintf("missed the run at %s (the app was closed or the computer asleep)", s.NextRun.Format("Jan 2 15:04"))
 				next()
-			case s.LastStatus == "running":
-				s.LastError = fmt.Sprintf("skipped %s: the previous run was still going", s.NextRun.Format("Jan 2 15:04"))
-				next()
-			default:
+			default: // it starts now, or waits in the queue if the flow is busy (startTriggered)
 				why := "scheduled"
 				if late > triggerGrace {
 					why = "catching up a run missed at " + s.NextRun.Format("Jan 2 15:04")
@@ -610,9 +683,12 @@ func (h *Hub) checkTriggers(root string) {
 	}
 	ts.mu.Unlock()
 	for _, d := range fire {
-		_, _ = h.fireTrigger(root, d.f, d.t, d.why, nil, nil)
+		h.startTriggered(root, d.f, d.t, d.why, nil, nil, 0)
 	}
+	h.processQueue(root)
 	h.syncExternalWatches(root)
+	h.saveScans(root, false)
+	_ = h.Store.BackupDaily() // a copy of the history database a day (store/backup.go)
 }
 
 var flowLive = []string{"running", "review", "scheduled"}
@@ -668,6 +744,8 @@ func (h *Hub) onFlowFinished(root string, run FlowRunState) {
 	if run.Trial != nil || !h.rootIs(root) {
 		return
 	}
+	defer h.processQueue(root) // a run ended: a waiting one may start (trigger_queue.go)
+	h.retryLater(root, run)
 	list, err := flow.List(root)
 	if err != nil {
 		return
@@ -702,8 +780,6 @@ func (h *Hub) onFlowFinished(root string, run FlowRunState) {
 				skip = fmt.Sprintf("skipped at %s: it would loop (%s → %s)", now.Format("Jan 2 15:04"), strings.Join(chain, " → "), f.ID)
 			case len(chain) >= maxTriggerChain:
 				skip = fmt.Sprintf("skipped at %s: a chain runs at most %d flows (%s)", now.Format("Jan 2 15:04"), maxTriggerChain, strings.Join(chain, " → "))
-			case h.flowRunning(f.ID):
-				skip = fmt.Sprintf("skipped at %s: a run of this flow was still going", now.Format("Jan 2 15:04"))
 			}
 			if skip != "" {
 				ts.mu.Lock()
@@ -715,7 +791,7 @@ func (h *Hub) onFlowFinished(root string, run FlowRunState) {
 			ts.mu.Lock()
 			ts.current(trigKey(f.ID, t.ID), t, now)
 			ts.mu.Unlock()
-			_, _ = h.fireTrigger(root, f, t, fmt.Sprintf("after %s: %s", firstNonEmpty(run.FlowName, run.FlowID), run.Status), vars, chain)
+			h.startTriggered(root, f, t, fmt.Sprintf("after %s: %s", firstNonEmpty(run.FlowName, run.FlowID), run.Status), vars, chain, 0)
 		}
 	}
 }
@@ -744,9 +820,19 @@ func (h *Hub) noteExternalChanges(root, dir string, chs []watch.Change) {
 	h.noteChanges(root, list)
 }
 
-func (h *Hub) noteChanges(root string, chs []fileChange) {
+func (h *Hub) noteChanges(root string, chs []fileChange) { h.noteChangesFor(root, chs, false) }
+
+// noteChangesFor: closed is true for the changes found when the project
+// opens (made while the app was closed): only triggers that ask for them.
+func (h *Hub) noteChangesFor(root string, chs []fileChange, closed bool) {
 	if len(chs) == 0 || !h.rootIs(root) {
 		return
+	}
+	if !closed {
+		ts := h.triggers(root)
+		ts.mu.Lock()
+		ts.snapDirty = true
+		ts.mu.Unlock()
 	}
 	list, err := flow.List(root)
 	if err != nil {
@@ -759,7 +845,7 @@ func (h *Hub) noteChanges(root string, chs []fileChange) {
 			continue
 		}
 		for _, t := range f.Triggers {
-			if t.Kind != "files" || !t.Enabled || t.Files == nil {
+			if t.Kind != "files" || !t.Enabled || t.Files == nil || (closed && !t.Files.WhileClosed) {
 				continue
 			}
 			var hit []string
@@ -819,11 +905,6 @@ func (h *Hub) fireFiles(root, flowID, trigID string) {
 		ts.mu.Unlock()
 		return
 	}
-	if h.flowRunning(flowID) { // wait for the run to end, then try again
-		p.timer.Reset(triggerQuiet(*t.Files))
-		ts.mu.Unlock()
-		return
-	}
 	delete(ts.pend, key)
 	ts.current(key, *t, triggerNow())
 	ts.mu.Unlock()
@@ -837,7 +918,7 @@ func (h *Hub) fireFiles(root, flowID, trigID string) {
 		shown = append(append([]string{}, files[:200]...), fmt.Sprintf("… and %d more", len(files)-200))
 	}
 	vars := map[string]string{"files": strings.Join(shown, "\n"), "file": files[0]}
-	_, _ = h.fireTrigger(root, f, *t, fmt.Sprintf("%d file(s) changed", len(files)), vars, nil)
+	h.startTriggered(root, f, *t, fmt.Sprintf("%d file(s) changed", len(files)), vars, nil, 0) // waits if the flow is running
 }
 
 // --- folders outside the project ---------------------------------------------------
@@ -853,6 +934,7 @@ func (h *Hub) syncExternalWatches(root string) {
 		return
 	}
 	want := map[string][]string{} // folder → trigger keys
+	snap := map[string]bool{}     // folders whose scan is kept (filesclosed.go)
 	problem := map[string]string{}
 	keys := map[string]flow.Trigger{}
 	for _, sum := range list {
@@ -871,6 +953,9 @@ func (h *Hub) syncExternalWatches(root string) {
 			}
 			for _, g := range t.Files.Paths {
 				if !flow.IsAbsPattern(g) {
+					if t.Files.WhileClosed {
+						snap[root] = true
+					}
 					continue
 				}
 				dir := filepath.FromSlash(flow.GlobBase(g))
@@ -883,6 +968,9 @@ func (h *Hub) syncExternalWatches(root string) {
 					dir = filepath.Dir(dir) // one file: watch its folder
 				}
 				if inside(root, dir) {
+					if t.Files.WhileClosed {
+						snap[root] = true
+					}
 					continue // the project's own watcher sees it
 				}
 				if p := tooBroad(dir); p != "" {
@@ -890,6 +978,9 @@ func (h *Hub) syncExternalWatches(root string) {
 					continue
 				}
 				want[dir] = append(want[dir], key)
+				if t.Files.WhileClosed {
+					snap[dir] = true
+				}
 			}
 		}
 	}
@@ -897,14 +988,22 @@ func (h *Hub) syncExternalWatches(root string) {
 	ts.mu.Lock()
 	ctx := ts.ctx
 	if ts.ext == nil {
-		ts.ext = map[string]context.CancelFunc{}
+		ts.ext, ts.extW, ts.extCtx = map[string]context.CancelFunc{}, map[string]*watch.Watcher{}, map[string]context.Context{}
 	}
 	for d, stop := range ts.ext {
-		if _, ok := want[d]; !ok {
+		if _, ok := want[d]; !ok || ts.extCtx[d] != ctx { // not wanted, or an older scheduler's (stopping)
 			stop()
 			delete(ts.ext, d)
+			delete(ts.extW, d)
+			delete(ts.extCtx, d)
 		}
 	}
+	for d := range snap {
+		if !ts.snap[d] {
+			ts.snapDirty = true // a folder newly kept: save its scan
+		}
+	}
+	ts.snap = snap
 	var start []string
 	for d := range want {
 		if ts.ext[d] == nil {
@@ -928,12 +1027,20 @@ func (h *Hub) syncExternalWatches(root string) {
 		w.Poll() // the baseline: files already there do not count
 		c, stop := context.WithCancel(ctx)
 		ts.mu.Lock()
-		if ts.ext[d] != nil {
+		if ts.ctx != ctx { // the project was opened again meanwhile: its scheduler starts its own
 			ts.mu.Unlock()
 			stop()
 			continue
 		}
-		ts.ext[d] = stop
+		if old := ts.ext[d]; old != nil {
+			if ts.extCtx[d] == ctx { // started already
+				ts.mu.Unlock()
+				stop()
+				continue
+			}
+			old() // an older scheduler's, about to be cleaned up: replace it
+		}
+		ts.ext[d], ts.extW[d], ts.extCtx[d] = stop, w, ctx
 		ts.mu.Unlock()
 		dir := d
 		go w.Run(c, func(chs []watch.Change) { h.noteExternalChanges(root, dir, chs) })

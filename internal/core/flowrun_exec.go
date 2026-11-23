@@ -636,6 +636,9 @@ func (h *Hub) runFlowStep(ctx context.Context, root string, fr *flowRun, n *flow
 }
 
 func stepTimeout(o FlowRunOptions, n *flow.Node) time.Duration {
+	if n.Type == "tool" && n.Tool == BuiltinPrefix+"ask_user" {
+		return 25 * time.Hour // a person's time: ask_user has its own timeout_seconds (at most a day)
+	}
 	if o.StepTimeoutSeconds > 0 {
 		return time.Duration(o.StepTimeoutSeconds) * time.Second
 	}
