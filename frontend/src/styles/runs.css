@@ -3479,3 +3479,15 @@ select.fl-secret-pick {
     grid-column: 1 / -1;
   }
 }
+
+/* a runner window (one flow): no flow list */
+.app.runner-mode {
+  grid-template-columns: 1fr;
+  grid-template-rows: 1fr;
+}
+.frun.frun-runner {
+  grid-template-columns: 1fr;
+}
+.frun.frun-runner.with-side {
+  grid-template-columns: 1fr var(--pane-r, 260px);
+}

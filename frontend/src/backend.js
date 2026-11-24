@@ -173,6 +173,7 @@ const METHODS = [
   "SaveToolMeta",
   "RunToolWith",
   "SaveToolGuide",
+  "OpenRunnerWindow",
   "GenerateToolGuide",
   "RunToolExample",
   "RunToolTests",

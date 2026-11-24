@@ -44,6 +44,10 @@ type Run struct {
 	Ask     string   `json:"ask,omitempty"`
 	Parents []string `json:"parents,omitempty"`
 	Results string   `json:"results,omitempty"`
+	// Owner is the process running it while it is live: a run whose
+	// owner is still alive (another SpecWright window) is not interrupted
+	// when this app starts (MarkInterrupted).
+	Owner int `json:"owner,omitempty"`
 	// Archived runs are hidden from the Playground and History lists until
 	// restored (by hand, or automatically after some days); Group is a
 	// label the user gives runs to keep them together.
@@ -202,6 +206,9 @@ func safe(id string) string {
 func (s *Store) SaveRun(r Run) error { return s.reportWrite("save run "+r.ID, s.saveRun(r)) }
 
 func (s *Store) saveRun(r Run) error {
+	if liveState(r.State) && r.Owner == 0 {
+		r.Owner = os.Getpid()
+	}
 	// fields written by others (the results writer) survive a later save
 	// that does not know them
 	if old, err := s.GetRun(r.ID); err == nil {
@@ -349,11 +356,16 @@ func (s *Store) Runs(workspace string, limit int) ([]Run, error) {
 }
 
 // MarkInterrupted flags runs that were still live when the app last quit.
+func liveState(st string) bool { return st == "running" || st == "paused" || st == "idle" }
+
 func (s *Store) MarkInterrupted() int {
 	runs, _ := s.Runs("", 0)
 	n := 0
 	for _, r := range runs {
-		if r.State == "running" || r.State == "paused" || r.State == "idle" {
+		if liveState(r.State) {
+			if r.Owner != 0 && r.Owner != os.Getpid() && processAlive(r.Owner) {
+				continue // another SpecWright window is running it
+			}
 			r.State, r.Reason, r.Ended = "interrupted", "the app closed during the run", time.Now()
 			if s.SaveRun(r) == nil {
 				n++

@@ -645,19 +645,21 @@ export function RunView({ st }) {
               <Icon.x /> Stop
             </button>
           )}
-          <button
-            className="btn secondary"
-            onClick={() => {
-              S.pg ||= { prompt: "", tools: true, model: "", runs: [], sel: "", loaded: false };
-              S.pg.loaded = false;
-              S.pg.sel = st.id;
-              S.view = "playground";
-              update();
-            }}
-          >
-            Watch in the playground
-          </button>
-          {!live && (
+          {!S.runner && (
+            <button
+              className="btn secondary"
+              onClick={() => {
+                S.pg ||= { prompt: "", tools: true, model: "", runs: [], sel: "", loaded: false };
+                S.pg.loaded = false;
+                S.pg.sel = st.id;
+                S.view = "playground";
+                update();
+              }}
+            >
+              Watch in the playground
+            </button>
+          )}
+          {!live && !S.runner && (
             <button
               className="btn secondary"
               title="Ask follow-up questions about this run's results"
@@ -677,7 +679,7 @@ export function RunView({ st }) {
               Run again
             </button>
           )}
-          {!live && (
+          {!live && !S.runner && (
             <button
               className="btn secondary fr-switch"
               onClick={() => {

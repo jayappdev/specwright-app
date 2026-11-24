@@ -3,11 +3,11 @@ import { DateTimeField } from "../../DateTimeField.jsx";
 import { resolveDate } from "../../dates.js";
 import { ModelPicker } from "../../ModelPicker.jsx";
 import { backend } from "../../backend.js";
-import { update, toast, errMsg, kcName, isWindows } from "../../store.js";
+import { S, update, toast, errMsg, kcName, isWindows } from "../../store.js";
 import { Icon } from "../../ui.jsx";
 import { openFlowInDesigner } from "../Flows.jsx";
 import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../../Attachments.jsx";
-import { Commands, frs, loadFlow, start } from "../FlowRun.jsx";
+import { Commands, frs, loadFlow, start, openRunnerWindow } from "../FlowRun.jsx";
 import { TagEditor, allTags } from "../../flowLists.jsx";
 
 // --- setup ------------------------------------------------------------------------
@@ -601,23 +601,36 @@ export function Setup() {
   return (
     <>
       <header className="view-head">
-        <select
-          className="fr-switch"
-          aria-label="Flow"
-          value={f.id}
-          onChange={(e) => loadFlow(e.target.value)}
-        >
-          {(r.flows || []).map((x) => (
-            <option key={x.id} value={x.id}>
-              {x.name}
-            </option>
-          ))}
-        </select>
+        {!S.runner && (
+          <select
+            className="fr-switch"
+            aria-label="Flow"
+            value={f.id}
+            onChange={(e) => loadFlow(e.target.value)}
+          >
+            {(r.flows || []).map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
+              </option>
+            ))}
+          </select>
+        )}
         <h1>{f.name}</h1>
         <div className="head-controls head-model">
-          <button className="link" onClick={() => openFlowInDesigner(f.id)}>
-            Edit in the designer
-          </button>
+          {!S.runner && (
+            <button className="link" onClick={() => openFlowInDesigner(f.id)}>
+              Edit in the designer
+            </button>
+          )}
+          {!S.runner && (
+            <button
+              className="btn secondary"
+              title="Run and watch this flow in a SpecWright window of its own (you can open several)"
+              onClick={() => openRunnerWindow(f.id)}
+            >
+              <Icon.panelR /> Open in its own window
+            </button>
+          )}
           <ModelPicker
             value={r.opts.model || ""}
             onChange={(v) => {

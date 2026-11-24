@@ -31,12 +31,16 @@ type App struct {
 func NewApp() (*App, error) { return newApp("") }
 
 // newApp creates the hub with its data in storeDir ("" = the app's usual folder).
-func newApp(storeDir string) (*App, error) {
+func newApp(storeDir string) (*App, error) { return newAppWith(core.Options{StoreDir: storeDir}) }
+
+// newAppWith creates the hub with these options (a runner window's, say).
+func newAppWith(o core.Options) (*App, error) {
 	// a Finder-launched app gets a minimal PATH: borrow the login shell's so
 	// claude, copilot, node, go and mvn are found
 	core.UseLoginShellPath()
 	exe, _ := os.Executable()
-	h, err := core.New(core.Options{AIShimExe: exe, StoreDir: storeDir})
+	o.AIShimExe = exe
+	h, err := core.New(o)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +72,10 @@ func (a *App) Info() core.Info                            { return val(a.hub.Inf
 func (a *App) DetectCredentials() []core.CredentialSource { return val(a.hub.DetectCredentials()) }
 func (a *App) SetAgent(name, token, model string) error   { return a.hub.SetAgent(name, token, model) }
 func (a *App) ClearToken()                                { a.hub.ClearToken() }
+
+// OpenRunnerWindow opens a flow in a SpecWright window of its own, where
+// it can be run and watched apart from the rest of the app.
+func (a *App) OpenRunnerWindow(flowID string) error { return a.hub.OpenRunnerWindow(flowID) }
 
 // ExportTools returns a tool file (*.tools.json) with the named tools.
 func (a *App) ExportTools(names, exts []string) (core.ToolExport, error) {

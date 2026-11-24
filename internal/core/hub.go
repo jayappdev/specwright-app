@@ -42,23 +42,24 @@ type Hub struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 
-	mu        sync.RWMutex
-	root      string
-	profile   *workflow.Profile
-	wf        *workflow.Workflow
-	exts      *extension.Store
-	pkgs      *extension.PackageStore
-	runner    *workflow.Runner
-	watcher   *watch.Watcher
-	stopWatch context.CancelFunc
-	agentName string
-	model     string
-	token     string              // session-only credential, never persisted
-	sec       secretsState        // session secrets, pending prompts, resolved values (secrets.go)
-	qs        questionsState      // ask_user questions waiting for a person (questions.go)
-	flowRuns  map[string]*flowRun // live flow runs
-	resultsWG sync.WaitGroup      // results folders being written
-	closing   bool                // Close has started: no new results writes
+	mu         sync.RWMutex
+	root       string
+	profile    *workflow.Profile
+	wf         *workflow.Workflow
+	exts       *extension.Store
+	pkgs       *extension.PackageStore
+	runner     *workflow.Runner
+	watcher    *watch.Watcher
+	stopWatch  context.CancelFunc
+	agentName  string
+	model      string
+	token      string              // session-only credential, never persisted
+	runnerFlow string              // Options.Runner
+	sec        secretsState        // session secrets, pending prompts, resolved values (secrets.go)
+	qs         questionsState      // ask_user questions waiting for a person (questions.go)
+	flowRuns   map[string]*flowRun // live flow runs
+	resultsWG  sync.WaitGroup      // results folders being written
+	closing    bool                // Close has started: no new results writes
 	// Clipboard copies text for a flow output's "copy" action (set by the
 	// desktop app; nil in headless runs).
 	Clipboard func(string) error
@@ -88,6 +89,11 @@ type Options struct {
 	// that count the AI a tool uses itself (see internal/aishim). Empty
 	// leaves tools' PATH alone.
 	AIShimExe string
+	// Runner: this app is a runner window for one flow (the flow's id):
+	// it runs and shows that flow only, and leaves the background work
+	// (schedules and triggers, archiving, marking interrupted runs) to the
+	// main SpecWright window.
+	Runner string
 }
 
 // New creates a hub. Call Close when done.
@@ -99,10 +105,12 @@ func New(o Options) (*Hub, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
 	}
-	st.MarkInterrupted()
+	if o.Runner == "" { // runs another window is running are skipped (their owner is alive)
+		st.MarkInterrupted()
+	}
 	ctx, cancel := context.WithCancel(context.Background())
 	h := &Hub{Bus: bus.New(), Store: st, Agents: agent.NewRegistry(), ctx: ctx, cancel: cancel,
-		agentName: o.Agent, runs: map[string]*workflow.Run{}}
+		agentName: o.Agent, runs: map[string]*workflow.Run{}, runnerFlow: o.Runner}
 	h.sec.values = map[string]string{}
 	if h.agentName == "" {
 		h.agentName = "claude"
@@ -118,7 +126,9 @@ func New(o Options) (*Hub, error) {
 	}
 	h.watchRunEnds()
 	h.reportStoreErrors()
-	go h.autoArchiveLoop()
+	if o.Runner == "" {
+		go h.autoArchiveLoop()
+	}
 	h.Bus.SetFilter(func(e *bus.Event) { st.Redactor().Event(e) })
 	br, err := extension.StartBridge(h)
 	if err != nil {
@@ -174,6 +184,8 @@ type Info struct {
 	Runtimes []string `json:"runtimes"`
 	// OS is the operating system (darwin, windows, linux): where secrets are kept is named after it.
 	OS string `json:"os"`
+	// Runner: the flow this window runs, when it is a runner window
+	Runner string `json:"runner,omitempty"`
 }
 
 // Info reports versions, agents and the open workspace.
@@ -189,7 +201,7 @@ func (h *Hub) Info() Info {
 	node, _ := exec.LookPath("node")
 	h.mu.RLock()
 	defer h.mu.RUnlock()
-	return Info{Version: Version, Workspace: h.root, Agent: h.agentName, Model: h.model, HasToken: h.token != "", Agents: sts,
+	return Info{Version: Version, Runner: h.runnerFlow, Workspace: h.root, Agent: h.agentName, Model: h.model, HasToken: h.token != "", Agents: sts,
 		StoreDir: h.Store.Dir(), Node: node, Languages: workflow.Languages, LangOrder: workflow.LanguageOrder, Runtimes: Runtimes(), OS: runtime.GOOS}
 }
 
@@ -334,7 +346,9 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 		return WorkspaceState{}, fmt.Errorf("workflow: %w", err)
 	}
 	// a step left running or paused by a previous app session cannot resume
-	interrupt(wf)
+	if h.runnerFlow == "" { // a runner window leaves the main window's workflow alone
+		interrupt(wf)
+	}
 	h.mu.Lock()
 	if h.stopWatch != nil {
 		h.stopWatch()
@@ -374,11 +388,13 @@ func (h *Hub) OpenWorkspace(root string) (WorkspaceState, error) {
 	// its goroutine happens to run: a slower, older one must not take over
 	ts.ctx = wctx
 	ts.mu.Unlock()
-	h.sched.Add(1)
-	go func() { // the project's triggers (schedules, files, after flows); triggers.go
-		defer h.sched.Done()
-		h.runScheduler(wctx, abs)
-	}()
+	if h.runnerFlow == "" { // the main window runs the triggers, once
+		h.sched.Add(1)
+		go func() { // the project's triggers (schedules, files, after flows); triggers.go
+			defer h.sched.Done()
+			h.runScheduler(wctx, abs)
+		}()
+	}
 	h.Bus.Publish(bus.Event{Type: "workspace.opened", Summary: abs, Data: map[string]any{"root": abs}})
 	return h.Workspace()
 }
