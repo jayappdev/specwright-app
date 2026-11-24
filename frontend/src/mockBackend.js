@@ -4015,9 +4015,6 @@ export function createMockBackend(methods) {
       return "Summary: " + prompt.split("\n")[0].slice(0, 160);
     };
     const ai = async (step, prompt) => {
-      // the step's AI conversation, to continue it later ("Keep chatting")
-      const ss = st.steps.find((x) => x.id === step);
-      if (ss) Object.assign(ss, { session: "mock-" + id + "-" + step, sessionAgent: db.agent || "mock" });
       const ctx = 2000 + Math.round(Math.random() * 3000);
       pub("model.request", "Request → " + st.model, {
         step,
@@ -5649,18 +5646,8 @@ export function createMockBackend(methods) {
     async RunPrompt(prompt, o = {}) {
       if (!prompt?.trim()) throw new Error("type a prompt first");
       if (live) throw new Error("another step is still running or waiting for approval");
-      // one earlier run whose AI kept a conversation: continue it (no context
-      // is pasted again); otherwise earlier answers go as text
-      let resumes = false;
-      if (o.parents?.length === 1) {
-        const pid = o.parents[0];
-        const fst =
-          flowLive.get(pid)?.st ||
-          [...(db.events[pid] || [])].reverse().find((e) => e.type === "flow.state")?.state;
-        resumes = !!fst?.steps?.some((x) => x.session) || !!(db.runs || []).find?.((x) => x.id === pid);
-      }
       const asked = o.ask || prompt.trim(),
-        ctxText = o.parents?.length && !resumes ? contextFor(o.parents) : "";
+        ctxText = o.parents?.length ? contextFor(o.parents) : "";
       const meta = {
         ask: asked,
         runTitle: o.title || asked.split("\n")[0].slice(0, 100),

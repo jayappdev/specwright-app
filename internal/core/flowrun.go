@@ -119,12 +119,7 @@ type FlowStepState struct {
 	// Args are the arguments a tool step ran with; Why says how the agent
 	// chose them when the step was described in words.
 	Args map[string]any `json:"args,omitempty"`
-	// Session is the AI conversation the step's agent ran in (its last
-	// call), with the agent's name: "Keep chatting" continues it, so the
-	// context the step gathered is not fetched or sent again.
-	Session      string `json:"session,omitempty"`
-	SessionAgent string `json:"sessionAgent,omitempty"`
-	Why          string `json:"why,omitempty"`
+	Why  string         `json:"why,omitempty"`
 	// Context: what the step gathered and kept (flowrun_context.go)
 	Context *flow.CtxReport `json:"context,omitempty"`
 	// Confidence: how sure the AI was of a decision (percent; Why is its reason)

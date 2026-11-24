@@ -242,19 +242,10 @@ func (c *Copilot) runSDK(ctx context.Context, bin string, req Request, emit func
 	if hasSelfExt() {
 		opts.Experiments.EnableExperimentalMode = &yes
 	}
-	opts.SessionID = req.SessionID
-	var session *copilot.Session
-	if req.Resume && req.SessionID != "" { // continue the earlier conversation
-		session, err = client.ResumeSession(ctx, req.SessionID, &copilot.ResumeSessionOptions{ClientName: opts.ClientName, Model: opts.Model,
-			WorkingDirectory: opts.WorkingDirectory, Permissions: opts.Permissions, Interaction: opts.Interaction, MCP: opts.MCP,
-			Filesystem: copilot.SessionFilesystemOptions{AdditionalDirectories: req.AddDirs}, Experiments: opts.Experiments})
-	} else {
-		session, err = client.CreateSession(ctx, opts)
-	}
+	session, err := client.CreateSession(ctx, opts)
 	if err != nil {
 		return Result{}, fmt.Errorf("%w: %v", errSDKUnavailable, err)
 	}
-	p.res.SessionID = session.SessionID
 	defer func() { _ = session.Disconnect() }()
 	started = true
 	emit(Event{Type: "agent.log", Summary: "Copilot is hosted by SpecWright: its questions come to you in the app", Data: map[string]any{"line": "copilot sdk session"}})

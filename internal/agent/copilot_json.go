@@ -27,7 +27,7 @@ func (c *Copilot) runJSON(ctx context.Context, bin string, req Request, emit fun
 	defer os.Remove(uf.Name())
 	plugin, cleanup := permissionPlugin(req.MCPConfig, req.AddDirs...)
 	defer cleanup()
-	args := append(append(c.argsWith(req, plugin), c.extraArgs(ctx, bin, req)...), "--output-format", "json", "--usage-output-file", uf.Name())
+	args := append(append(c.argsWith(req, plugin), c.extraArgs(ctx, bin)...), "--output-format", "json", "--usage-output-file", uf.Name())
 	base, dropped := baseEnv()
 	noteDropped(emit, dropped)
 	p := &copilotJSON{emit: emit, names: map[string]string{}, started: map[string]time.Time{}, model: modelOr(req.Model, "copilot/default")}
@@ -37,9 +37,6 @@ func (c *Copilot) runJSON(ctx context.Context, bin string, req Request, emit fun
 		},
 	}.run(ctx)
 	p.usage(uf.Name())
-	if c.hasFlag(ctx, bin, "--session-id") {
-		p.res.SessionID = req.SessionID
-	}
 	return p.res, err
 }
 

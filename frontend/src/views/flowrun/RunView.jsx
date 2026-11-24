@@ -18,9 +18,6 @@ import { StepFixPanel, TrialBanner, canFix, openFix } from "./StepFix.jsx";
 import { LIVE, STATUS_LABEL, decide, frs, pill } from "../FlowRun.jsx";
 import { RunSimple } from "./RunSimple.jsx";
 
-// chatty: the run's AI kept a conversation that can be continued
-const chatty = (st) => (st.steps || []).some((s) => s.session);
-
 // the details (steps, outputs, the activity log) or the simple view; the
 // choice is remembered (S.layout is saved with the preferences)
 const DETAILS = "frun:details";
@@ -504,17 +501,6 @@ function Steps({ st }) {
               </button>
               {open[s.id] && (
                 <div className="fr-step-body">
-                  {s.session && !LIVE.includes(st.status) && !S.runner && (
-                    <div className="row-actions" style={{ justifyContent: "flex-start", marginTop: 0 }}>
-                      <button
-                        className="btn secondary"
-                        title="Ask this step's AI follow-up questions: its conversation goes on, with everything it gathered and said"
-                        onClick={() => continueInPlayground([st.id], { chat: true, step: s.id })}
-                      >
-                        💬 Chat with this step's AI
-                      </button>
-                    </div>
-                  )}
                   {s.error && (
                     <div className={"banner " + (s.status === "skipped" ? "" : "error")}>{s.error}</div>
                   )}
@@ -673,16 +659,7 @@ export function RunView({ st }) {
               Watch in the playground
             </button>
           )}
-          {!live && !S.runner && chatty(st) && details && (
-            <button
-              className="btn primary"
-              title="Ask follow-up questions in the same AI conversation: what it gathered (pages, files, documents) and answered is kept, not loaded again"
-              onClick={() => continueInPlayground([st.id], { chat: true })}
-            >
-              💬 Keep chatting
-            </button>
-          )}
-          {!live && !S.runner && !chatty(st) && (
+          {!live && !S.runner && (
             <button
               className="btn secondary"
               title="Ask follow-up questions about this run's results"
@@ -715,16 +692,7 @@ export function RunView({ st }) {
           )}
         </div>
       </header>
-      {!details && (
-        <RunSimple
-          st={st}
-          runs={r.runs}
-          onDetails={() => setDetails(true)}
-          onChat={
-            !live && !S.runner && chatty(st) ? () => continueInPlayground([st.id], { chat: true }) : null
-          }
-        />
-      )}
+      {!details && <RunSimple st={st} runs={r.runs} onDetails={() => setDetails(true)} />}
       {details && st.status === "scheduled" && (
         <div className="banner">
           Starts at {new Date(st.options.startAt).toLocaleString()}. Keep the app open; you can stop it before

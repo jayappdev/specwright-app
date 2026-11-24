@@ -67,13 +67,6 @@ func (c *Claude) Args(req Request) []string {
 	if len(req.AllowTools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(req.AllowTools, " "))
 	}
-	if req.SessionID != "" { // the conversation, so it can be continued (or is)
-		if req.Resume {
-			args = append(args, "--resume", req.SessionID)
-		} else {
-			args = append(args, "--session-id", req.SessionID)
-		}
-	}
 	return args
 }
 
@@ -128,7 +121,6 @@ func (c *Claude) Run(ctx context.Context, req Request, emit func(Event)) (Result
 		},
 	}.run(ctx)
 	res := p.result()
-	res.SessionID = req.SessionID
 	if err == nil && p.isError {
 		err = fmt.Errorf("claude reported an error: %s", short(res.Text, 300))
 	}

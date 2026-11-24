@@ -7,8 +7,6 @@ import (
 	"strings"
 	"testing"
 	"time"
-
-	"codegen/internal/agent"
 )
 
 // waitResults waits until a run's results folder has been written.
@@ -54,28 +52,16 @@ func TestRunIDsResultsAndContinuation(t *testing.T) {
 		t.Fatal("results must be git-ignored")
 	}
 
-	// continue the conversation: the AI's own conversation goes on, so the
-	// new prompt is only the question (nothing is pasted again)
+	// continue the conversation: the new prompt carries the earlier one
 	id2, err := prompt(t, h, "And what are its risks?", PromptOptions{Parents: []string{id}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	waitResults(t, h, id2)
 	p2, _ := os.ReadFile(filepath.Join(ws, filepath.FromSlash(runResultsDir(id2, time.Now())), "prompt.md"))
-	if !strings.Contains(string(p2), "And what are its risks?") || strings.Contains(string(p2), "This continues earlier work") {
-		t.Fatalf("a resumed conversation gets only the question:\n%s", p2)
-	}
-	// from several earlier runs there is no one conversation: the earlier
-	// questions and answers go as text
-	idM, err := prompt(t, h, "Compare them", PromptOptions{Parents: []string{id, id2}})
-	if err != nil {
-		t.Fatal(err)
-	}
-	waitResults(t, h, idM)
-	pM, _ := os.ReadFile(filepath.Join(ws, filepath.FromSlash(runResultsDir(idM, time.Now())), "prompt.md"))
-	for _, want := range []string{"This continues earlier work", "What does the order service do?", "Results folder: " + res.Dir, "Now, continuing from the above:", "Compare them"} {
-		if !strings.Contains(string(pM), want) {
-			t.Fatalf("prompt.md missing %q:\n%s", want, pM)
+	for _, want := range []string{"This continues earlier work", "What does the order service do?", "Results folder: " + res.Dir, "Now, continuing from the above:", "And what are its risks?"} {
+		if !strings.Contains(string(p2), want) {
+			t.Fatalf("prompt.md missing %q:\n%s", want, p2)
 		}
 	}
 	// a third turn sees the whole thread
@@ -86,7 +72,7 @@ func TestRunIDsResultsAndContinuation(t *testing.T) {
 		t.Fatalf("%v %+v", err, th)
 	}
 	recent, _ := h.RecentRuns(10)
-	if len(recent) != 4 || recent[0].Kind != "playground" || recent[0].Results == "" {
+	if len(recent) != 3 || recent[0].Kind != "playground" || recent[0].Results == "" {
 		t.Fatalf("%+v", recent)
 	}
 	if _, err := prompt(t, h, "x", PromptOptions{Parents: []string{"nope"}}); err == nil {
@@ -125,24 +111,10 @@ func TestFlowRunResults(t *testing.T) {
 	if !strings.Contains(string(b), "# 9.1") {
 		t.Fatal(string(b))
 	}
-	// a prompt can continue from a flow run: its AI step's conversation goes
-	// on (only the question is sent)
+	// a prompt can continue from a flow run: it gets the flow's outputs
 	id, _ := h.RunPrompt("Turn the notes into a tweet", PromptOptions{Parents: []string{st.ID}})
 	waitResults(t, h, id)
 	p, _ := os.ReadFile(filepath.Join(ws, filepath.FromSlash(runResultsDir(id, time.Now())), "prompt.md"))
-	if strings.TrimSpace(string(p)) == "" || strings.Contains(string(p), "Flow run: Release notes") {
-		t.Fatal(string(p))
-	}
-	// with another agent that conversation cannot go on: the flow's outputs go as text
-	h.mu.Lock()
-	h.agentName = "mock2"
-	h.mu.Unlock()
-	m2 := agent.NewMock()
-	m2.Delay = time.Millisecond
-	h.Agents.Add(renamed{m2, "mock2"})
-	id, _ = h.RunPrompt("Turn the notes into a haiku", PromptOptions{Parents: []string{st.ID}})
-	waitResults(t, h, id)
-	p, _ = os.ReadFile(filepath.Join(ws, filepath.FromSlash(runResultsDir(id, time.Now())), "prompt.md"))
 	if !strings.Contains(string(p), "Flow run: Release notes") || !strings.Contains(string(p), "# 9.1") {
 		t.Fatal(string(p))
 	}
@@ -191,11 +163,3 @@ func TestPlaygroundRunsEnd(t *testing.T) {
 	r, _ := h.Store.GetRun(id)
 	t.Fatalf("run never ended: %s", r.State)
 }
-
-// renamed is a driver under another name
-type renamed struct {
-	*agent.Mock
-	name string
-}
-
-func (r renamed) Name() string { return r.name }

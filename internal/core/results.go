@@ -656,35 +656,3 @@ func (h *Hub) writeRunFile(rel, content string) (string, error) {
 	}
 	return rel, os.WriteFile(abs, []byte(h.Store.Redactor().String(content)), 0o644)
 }
-
-// resumableSession is the AI conversation a run can be continued in: a
-// playground run's own, or a flow run's AI step's (step, or its last AI
-// step that has one), when it was the current agent's. "" when there is
-// none: the caller then passes earlier answers as text instead.
-func (h *Hub) resumableSession(runID, step string) string {
-	r, err := h.Store.GetRun(runID)
-	if err != nil {
-		return ""
-	}
-	h.mu.RLock()
-	agentName := h.agentName
-	h.mu.RUnlock()
-	if r.Kind != "flow" && r.Kind != "flow-trial" {
-		if r.AgentSession != "" && r.Agent == agentName {
-			return r.AgentSession
-		}
-		return ""
-	}
-	st, err := h.FlowRun(runID)
-	if err != nil {
-		return ""
-	}
-	for i := len(st.Steps) - 1; i >= 0; i-- {
-		s := st.Steps[i]
-		if s.Session == "" || s.SessionAgent != agentName || (step != "" && s.ID != step) {
-			continue
-		}
-		return s.Session
-	}
-	return ""
-}
