@@ -3491,3 +3491,10 @@ select.fl-secret-pick {
 .frun.frun-runner.with-side {
   grid-template-columns: 1fr var(--pane-r, 260px);
 }
+.frs-chat {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+  margin-top: 16px;
+}

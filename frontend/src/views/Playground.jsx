@@ -71,9 +71,11 @@ export function openToolChat(prompt, name) {
 }
 
 // Start a new prompt in the playground that continues from earlier runs.
-export function continueInPlayground(ids) {
+export function continueInPlayground(ids, { chat = false, step = "" } = {}) {
   const p = pg();
-  p.parents = [...new Set([...(p.parents || []), ...ids])];
+  p.parents = chat ? [...ids] : [...new Set([...(p.parents || []), ...ids])];
+  if (chat) p.chat = true;
+  p.resumeStep = step;
   p.sel = "";
   p.prompt = "";
   S.view = "playground";
@@ -188,6 +190,7 @@ async function run() {
       model: p.model.trim(),
       parents,
       interactive: p.ask !== false,
+      resumeStep: p.resumeStep || "",
     });
     S.loaded[id] = true;
     S.events[id] ||= [];
@@ -200,7 +203,9 @@ async function run() {
       state: "running",
     });
     p.sel = id;
-    p.parents = [];
+    // a conversation: the next question continues from this answer
+    p.parents = p.chat ? [id] : [];
+    p.resumeStep = "";
     p.prompt = "";
     if (p.toolNext) setToolFor(id, p.toolNext);
     p.toolNext = "";
@@ -381,7 +386,9 @@ function Composer({ compact, box, r, running, anyRunning }) {
             </span>
           ))}
           <span className="muted pg-cont-hint">
-            The earlier questions, answers and results folders go to the agent as context.
+            {p.parents.length === 1
+              ? "Continues the AI's conversation from that run when it has one (with the same agent): what it gathered and answered is kept, not loaded again. Otherwise the earlier questions, answers and results folders go to it as context."
+              : "The earlier questions, answers and results folders go to the agent as context."}
           </span>
         </div>
       )}
@@ -426,6 +433,22 @@ function Composer({ compact, box, r, running, anyRunning }) {
             }}
           />{" "}
           Also offer project and admin tools
+        </label>
+        <label
+          className="check"
+          title="Each question continues the conversation of the last answer: ask follow-ups for as long as you like; the context the AI gathered is kept, not loaded again"
+        >
+          <input
+            type="checkbox"
+            checked={!!p.chat}
+            onChange={(e) => {
+              p.chat = e.target.checked;
+              if (!p.chat) p.parents = [];
+              else if (!p.parents?.length && p.sel) p.parents = [p.sel];
+              update();
+            }}
+          />{" "}
+          💬 Conversation: keep going from the last answer
         </label>
         <label
           className="check"

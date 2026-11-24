@@ -20,6 +20,7 @@ import (
 	"codegen/internal/agent"
 	"codegen/internal/extension"
 	"codegen/internal/store"
+	"codegen/internal/workflow"
 )
 
 func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name string, args map[string]any, timeout time.Duration, input ...flowInput) (string, error) {
@@ -296,7 +297,16 @@ func (h *Hub) flowAgent(ctx context.Context, root string, fr *flowRun, step, pro
 		h.flowPublish(fr, typ, ev.Summary, data)
 	}
 	res, err := drv.Run(ctx, agent.Request{Purpose: "flow", Step: step, Prompt: prompt, Dir: root, Model: model, Env: h.childEnv(), MCPConfig: mcp,
-		AllowTools: []string{"mcp__agentbridge"}}, emit)
+		AllowTools: []string{"mcp__agentbridge"}, SessionID: workflow.NewUUID()}, emit)
+	if res.SessionID != "" && err == nil { // the conversation, to continue it later ("Keep chatting")
+		fr.update(func(st *FlowRunState) {
+			for i := range st.Steps {
+				if st.Steps[i].ID == step {
+					st.Steps[i].Session, st.Steps[i].SessionAgent = res.SessionID, name
+				}
+			}
+		})
+	}
 	if res.CostUSD > 0 && u.CostUSD == 0 {
 		u.CostUSD = res.CostUSD
 	}

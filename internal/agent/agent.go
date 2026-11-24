@@ -47,6 +47,13 @@ type Request struct {
 	// about paths outside the project too, instead of refusing them, and
 	// asks about edits outside it (see Copilot.argsWith).
 	Interactive bool
+	// SessionID names the AI conversation (a UUID the caller makes). With
+	// Resume it is an earlier conversation to continue: the AI still has
+	// everything said in it (gathered context, answers), so the prompt is
+	// only the new question. Without Resume it names the new conversation,
+	// so it can be continued later.
+	SessionID string
+	Resume    bool
 	// AskPermission asks the person in the app whether the agent may use a
 	// tool (Copilot hosted through its SDK, in an interactive run); agentID
 	// scopes "allow for this run". AutoAllow says which calls need no
@@ -74,6 +81,7 @@ type Result struct {
 	CostUSD         float64
 	PremiumRequests int
 	ExitCode        int
+	SessionID       string // the conversation it ran in ("" when the CLI cannot name one)
 }
 
 // Status describes whether a driver can run on this machine.

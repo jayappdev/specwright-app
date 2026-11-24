@@ -128,7 +128,7 @@ export function mood(st, left, elapsed, usual, tick) {
   return { art: "🛠️", line: quip };
 }
 
-export function RunSimple({ st, runs, onDetails }) {
+export function RunSimple({ st, runs, onDetails, onChat }) {
   const live = ["running", "review", "scheduled"].includes(st.status);
   const [now, setNow] = useState(Date.now());
   useEffect(() => {
@@ -229,6 +229,16 @@ export function RunSimple({ st, runs, onDetails }) {
             </li>
           ))}
         </ol>
+      )}
+      {onChat && (
+        <div className="frs-chat">
+          <button className="btn primary" onClick={onChat}>
+            💬 Keep chatting
+          </button>
+          <span className="muted">
+            Ask follow-ups in the same conversation: what it gathered is kept, not fetched again.
+          </span>
+        </div>
       )}
       <div className="frs-more">
         <button className="link" onClick={onDetails}>

@@ -48,6 +48,9 @@ type Run struct {
 	// owner is still alive (another SpecWright window) is not interrupted
 	// when this app starts (MarkInterrupted).
 	Owner int `json:"owner,omitempty"`
+	// AgentSession is the AI conversation the run ended in (its agent's
+	// session id): a run that continues from this one resumes it.
+	AgentSession string `json:"agentSession,omitempty"`
 	// Archived runs are hidden from the Playground and History lists until
 	// restored (by hand, or automatically after some days); Group is a
 	// label the user gives runs to keep them together.

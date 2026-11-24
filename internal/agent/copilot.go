@@ -90,8 +90,12 @@ func baseEnv() (env, dropped []string) {
 // extraArgs are the flags that depend on what this CLI supports and on the
 // web setting: GitHub tokens hidden from shell commands and MCP servers the
 // agent starts, and the URLs it may open.
-func (c *Copilot) extraArgs(ctx context.Context, bin string) []string {
+func (c *Copilot) extraArgs(ctx context.Context, bin string, req Request) []string {
 	var args []string
+	// the conversation: a new one by this id, or the earlier one to continue
+	if req.SessionID != "" && c.hasFlag(ctx, bin, "--session-id") {
+		args = append(args, "--session-id", req.SessionID)
+	}
 	if c.hasFlag(ctx, bin, "--secret-env-vars") {
 		args = append(args, "--secret-env-vars="+strings.Join(tokenVars, ","))
 	}
@@ -312,13 +316,17 @@ func (c *Copilot) Run(ctx context.Context, req Request, emit func(Event)) (Resul
 	noteDropped(emit, dropped)
 	plugin, cleanup := permissionPlugin(req.MCPConfig, req.AddDirs...)
 	defer cleanup()
-	_, _, err = proc{bin: bin, args: append(c.argsWith(req, plugin), c.extraArgs(ctx, bin)...), dir: req.Dir, env: c.env(req), base: base, onLine: p.line,
+	_, _, err = proc{bin: bin, args: append(c.argsWith(req, plugin), c.extraArgs(ctx, bin, req)...), dir: req.Dir, env: c.env(req), base: base, onLine: p.line,
 		onErr: func(l string) {
 			emit(Event{Type: "agent.log", Summary: short(l, 200), Data: map[string]any{"line": l, "stream": "stderr"}})
 		},
 	}.run(ctx)
 	p.flush()
-	return p.finish(), err
+	res := p.finish()
+	if c.hasFlag(ctx, bin, "--session-id") {
+		res.SessionID = req.SessionID
+	}
+	return res, err
 }
 
 func modelOr(m, d string) string {

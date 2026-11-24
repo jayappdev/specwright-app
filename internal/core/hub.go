@@ -862,6 +862,9 @@ type PromptOptions struct {
 	// (on by default in the Playground): Copilot asks before editing files
 	// outside the project or running commands, instead of refusing them.
 	Interactive bool `json:"interactive,omitempty"`
+	// ResumeStep: continuing from a flow run, the AI step whose conversation
+	// to continue (default: its last AI step that has one).
+	ResumeStep string `json:"resumeStep,omitempty"`
 }
 
 // RunPrompt sends a free-form prompt to the chosen agent in the workspace
@@ -877,7 +880,13 @@ func (h *Hub) RunPrompt(prompt string, o PromptOptions) (string, error) {
 		return "", errors.New("type a prompt first")
 	}
 	ask := firstNonEmpty(o.Ask, strings.TrimSpace(prompt))
-	if len(o.Parents) > 0 {
+	// one earlier run with an AI conversation by the same agent: continue
+	// that conversation (the AI keeps its context; only the question goes)
+	session := ""
+	if len(o.Parents) == 1 {
+		session = h.resumableSession(o.Parents[0], o.ResumeStep)
+	}
+	if session == "" && len(o.Parents) > 0 {
 		ctx, err := h.continuationContext(o.Parents)
 		if err != nil {
 			return "", err
@@ -886,7 +895,8 @@ func (h *Hub) RunPrompt(prompt string, o PromptOptions) (string, error) {
 	}
 	h.mu.RLock()
 	so := workflow.StartOptions{Agent: h.agentName, Model: firstNonEmpty(o.Model, h.model, h.wf.Model), Budget: h.wf.Budget, Prompt: prompt, NoTools: !o.Tools,
-		Title: firstNonEmpty(o.Title, firstLine(ask)), Ask: ask, Parents: o.Parents, Interactive: o.Interactive}
+		Title: firstNonEmpty(o.Title, firstLine(ask)), Ask: ask, Parents: o.Parents, Interactive: o.Interactive,
+		SessionID: session, Resume: session != ""}
 	runner := h.runner
 	h.mu.RUnlock()
 	run, err := runner.Start(h.ctx, PlaygroundStep, PlaygroundStep, so)

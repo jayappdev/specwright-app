@@ -66,7 +66,11 @@ type Run struct {
 	files   map[string]string
 	runner  *Runner
 	done    chan struct{}
+	// agentSession: the AI conversation it ran in (see StartOptions.Resume)
+	agentSession string
 }
+
+func (r *Run) session() string { r.mu.Lock(); defer r.mu.Unlock(); return r.agentSession }
 
 // Usage returns a copy of the run's usage so far.
 func (r *Run) Usage() store.Usage { r.mu.Lock(); defer r.mu.Unlock(); return r.usage }
@@ -107,6 +111,10 @@ type StartOptions struct {
 	// Interactive: a person answers permission questions in the app while
 	// it runs (the Playground); see agent.Request.Interactive.
 	Interactive bool
+	// SessionID with Resume continues an earlier AI conversation (the run
+	// it continues from): the prompt is then only the new question.
+	SessionID string
+	Resume    bool
 }
 
 // NewRunID returns a unique, sortable run id: the local date and time the
@@ -152,7 +160,7 @@ func (rn *Runner) Start(ctx context.Context, wfID, stepID string, o StartOptions
 			kind = "playground"
 		}
 		r := store.Run{ID: id, Workspace: rn.Workspace, Workflow: wfID, Step: stepID, Agent: o.Agent, Model: run.model, State: string(sess.State()), Reason: sess.Reason(), Started: run.started, Usage: u, Events: run.seq,
-			Kind: kind, Title: o.Title, Ask: o.Ask, Parents: o.Parents}
+			Kind: kind, Title: o.Title, Ask: o.Ask, Parents: o.Parents, AgentSession: run.session()}
 		if sess.State().Terminal() {
 			r.Ended = time.Now()
 		}
@@ -311,6 +319,12 @@ func (rn *Runner) once(parent context.Context, run *Run, drv agent.Driver, o Sta
 	}
 	req := agent.Request{Purpose: "step", Step: run.Session.Step, Prompt: prompt, Dir: dir, AddDirs: o.AddDirs, Model: o.Model,
 		AllowTools: []string{"mcp__agentbridge"}, Interactive: o.Interactive} // every agentbridge tool: built-ins + extension_managed
+	// the conversation: the earlier one to continue, or a new one by a
+	// fresh id (an id cannot be started twice), recorded with the run
+	req.SessionID, req.Resume = NewUUID(), false
+	if o.Resume && o.SessionID != "" {
+		req.SessionID, req.Resume = o.SessionID, true
+	}
 	if rn.Env != nil {
 		req.Env = rn.Env()
 	}
@@ -379,7 +393,16 @@ func (rn *Runner) once(parent context.Context, run *Run, drv agent.Driver, o Sta
 			cancel(stopCause{"budget", msg})
 		}
 	}
-	_, err := drv.Run(ctx, req, emit)
+	if req.Resume {
+		emit(agent.Event{Type: "agent.log", Summary: "Continuing the AI's earlier conversation: what it gathered and said is kept, not loaded again",
+			Data: map[string]any{"session": req.SessionID}})
+	}
+	res, err := drv.Run(ctx, req, emit)
+	if res.SessionID != "" {
+		run.mu.Lock()
+		run.agentSession = res.SessionID
+		run.mu.Unlock()
+	}
 	if c := context.Cause(ctx); c != nil {
 		var sc stopCause
 		if errors.As(c, &sc) {
