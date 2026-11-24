@@ -16,6 +16,15 @@ import { CopyButton } from "../../CopyButton.jsx";
 import { REVIEW_HINT } from "./Setup.jsx";
 import { StepFixPanel, TrialBanner, canFix, openFix } from "./StepFix.jsx";
 import { LIVE, STATUS_LABEL, decide, frs, pill } from "../FlowRun.jsx";
+import { RunSimple } from "./RunSimple.jsx";
+
+// the details (steps, outputs, the activity log) or the simple view; the
+// choice is remembered (S.layout is saved with the preferences)
+const DETAILS = "frun:details";
+const setDetails = (on) => {
+  S.layout[DETAILS] = on;
+  update();
+};
 
 // --- run view -----------------------------------------------------------------------
 
@@ -612,13 +621,22 @@ export function Outputs({ st }) {
 export function RunView({ st }) {
   const r = frs(),
     evs = S.events[st.id] || [],
-    live = LIVE.includes(st.status);
+    live = LIVE.includes(st.status),
+    details = !!S.layout[DETAILS];
   return (
     <>
       <header className="view-head">
         <h1>{st.flowName}</h1>
         <Pill s={pill(st.status)} label={STATUS_LABEL[st.status] || st.status} />
         <div className="head-controls">
+          <div className="seg frs-switch" role="group" aria-label="How much to show">
+            <button className={details ? "" : "on"} aria-pressed={!details} onClick={() => setDetails(false)}>
+              Simple
+            </button>
+            <button className={details ? "on" : ""} aria-pressed={details} onClick={() => setDetails(true)}>
+              Details
+            </button>
+          </div>
           {live && (
             <button
               className="btn secondary danger-text"
@@ -672,14 +690,15 @@ export function RunView({ st }) {
           )}
         </div>
       </header>
-      {st.status === "scheduled" && (
+      {!details && <RunSimple st={st} runs={r.runs} onDetails={() => setDetails(true)} />}
+      {details && st.status === "scheduled" && (
         <div className="banner">
           Starts at {new Date(st.options.startAt).toLocaleString()}. Keep the app open; you can stop it before
           then.
         </div>
       )}
       {st.trial && <TrialBanner st={st} />}
-      {st.error && st.status !== "done" && (
+      {details && st.error && st.status !== "done" && (
         <div className={"banner " + (st.status === "stopped" ? "" : "error")}>{st.error}</div>
       )}
       {!live && <ResultsLink id={st.id} ended />}
@@ -689,18 +708,20 @@ export function RunView({ st }) {
         </div>
       )}
       {st.status === "review" && st.review && <Review st={st} />}
-      {st.status === "running" && <AiProgress evs={evs} />}
+      {details && st.status === "running" && <AiProgress evs={evs} />}
       {!live && st.outputs?.length > 0 && <Outputs st={st} />}
-      <Steps st={st} />
-      {(live || !st.outputs?.length) && <Outputs st={st} />}
-      <details className="fr-activity">
-        <summary className="muted">Activity and debug log · {evs.length} events</summary>
-        <RunPanel
-          st={{ id: "flow", cmd: st.flowName, status: live ? "running" : st.status, lastRun: st.id }}
-          evs={evs}
-          running={live}
-        />
-      </details>
+      {details && <Steps st={st} />}
+      {details && (live || !st.outputs?.length) && <Outputs st={st} />}
+      {details && (
+        <details className="fr-activity">
+          <summary className="muted">Activity and debug log · {evs.length} events</summary>
+          <RunPanel
+            st={{ id: "flow", cmd: st.flowName, status: live ? "running" : st.status, lastRun: st.id }}
+            evs={evs}
+            running={live}
+          />
+        </details>
+      )}
     </>
   );
 }

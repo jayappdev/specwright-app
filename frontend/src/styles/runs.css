@@ -3283,3 +3283,199 @@ select.fl-secret-pick {
 .guide-html.guide-dash {
   height: 460px;
 }
+
+/* Run flows: the simple view (RunSimple.jsx) */
+.frs {
+  padding: 18px 20px;
+}
+.frs-hot {
+  border-color: var(--warn);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--warn) 18%, transparent);
+}
+.frs-top {
+  display: flex;
+  gap: 16px;
+  align-items: center;
+}
+.frs-art {
+  position: relative;
+  font-size: 44px;
+  line-height: 1;
+  width: 60px;
+  text-align: center;
+  flex: none;
+}
+.frs-line {
+  font-size: 17px;
+  font-weight: 600;
+}
+.frs-sub {
+  margin-top: 2px;
+}
+.frs-track {
+  position: relative;
+  height: 12px;
+  margin: 26px 28px 8px 0;
+  background: var(--border);
+  border-radius: 99px;
+}
+.frs-fill {
+  height: 100%;
+  border-radius: 99px;
+  background: var(--focus);
+  transition: width 0.8s ease;
+}
+.frs-fill.s-done {
+  background: var(--ok);
+}
+.frs-fill.s-failed,
+.frs-fill.s-interrupted {
+  background: var(--error);
+}
+.frs-fill.s-review {
+  background: var(--warn);
+}
+.frs-runner {
+  position: absolute;
+  top: -22px;
+  font-size: 22px;
+  transition: left 0.8s ease;
+}
+.frs-runner.moving {
+  animation: frs-bob 0.6s ease-in-out infinite alternate;
+}
+.frs-flag {
+  position: absolute;
+  right: -26px;
+  top: -6px;
+  font-size: 18px;
+}
+.frs-facts {
+  display: grid;
+  grid-template-columns: 2fr 1fr 1fr;
+  gap: 16px;
+  margin-top: 18px;
+}
+.frs-facts > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 0;
+}
+.frs-facts b {
+  font-size: 16px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.frs-dots {
+  display: flex;
+  gap: 6px;
+  list-style: none;
+  padding: 0;
+  margin: 14px 0 0;
+}
+.frs-dots li span {
+  display: block;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: var(--border);
+}
+.frs-dots li.s-done span {
+  background: var(--ok);
+}
+.frs-dots li.s-failed span {
+  background: var(--error);
+}
+.frs-dots li.s-review span {
+  background: var(--warn);
+}
+.frs-dots li.s-running span {
+  background: var(--focus);
+  animation: frs-pulse 1s ease-in-out infinite alternate;
+}
+.frs-more {
+  margin-top: 14px;
+}
+.frs-party {
+  animation: frs-pop 0.7s ease-out 2;
+}
+/* a coffee cup with a little steam */
+.frs-steam {
+  position: absolute;
+  left: 50%;
+  top: -14px;
+  width: 30px;
+  margin-left: -15px;
+  display: flex;
+  justify-content: space-between;
+}
+.frs-steam i {
+  display: block;
+  width: 4px;
+  height: 14px;
+  border-radius: 4px;
+  background: var(--muted);
+  opacity: 0;
+  animation: frs-steam 2.4s ease-in-out infinite;
+}
+.frs-steam i:nth-child(2) {
+  animation-delay: 0.8s;
+}
+.frs-steam i:nth-child(3) {
+  animation-delay: 1.6s;
+}
+@keyframes frs-bob {
+  to {
+    transform: translateY(-4px);
+  }
+}
+@keyframes frs-pulse {
+  to {
+    opacity: 0.35;
+  }
+}
+@keyframes frs-pop {
+  0% {
+    transform: scale(1);
+  }
+  40% {
+    transform: scale(1.35) rotate(-10deg);
+  }
+  100% {
+    transform: scale(1);
+  }
+}
+@keyframes frs-steam {
+  0% {
+    opacity: 0;
+    transform: translateY(6px) scaleY(0.6);
+  }
+  40% {
+    opacity: 0.6;
+  }
+  100% {
+    opacity: 0;
+    transform: translateY(-10px) scaleY(1.1);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .frs-runner.moving,
+  .frs-dots li.s-running span,
+  .frs-party,
+  .frs-steam i {
+    animation: none;
+  }
+  .frs-fill,
+  .frs-runner {
+    transition: none;
+  }
+}
+@media (max-width: 700px) {
+  .frs-facts {
+    grid-template-columns: 1fr 1fr;
+  }
+  .frs-facts > div:first-child {
+    grid-column: 1 / -1;
+  }
+}

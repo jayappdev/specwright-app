@@ -21,6 +21,7 @@ import { Icon, Pill } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { ago } from "../time.js";
 import { Setup } from "./flowrun/Setup.jsx";
+import { runProgress, workSteps } from "./flowrun/RunSimple.jsx";
 import { RunView } from "./flowrun/RunView.jsx";
 
 export const frs = () =>
@@ -320,11 +321,7 @@ function Sidebar({ st }) {
   const evs = S.events[st.id] || [],
     u = st.usage || {},
     ev = usageOf(evs);
-  const work = st.steps.filter((s) => s.type !== "start");
-  const done = work.filter((s) => ["done", "skipped", "failed"].includes(s.status)).length;
-  const totalUnits = Math.max(1, (st.passes || 1) * (st.items || 1)),
-    unit = ((st.pass || 1) - 1) * (st.items || 1) + (st.item || 1) - 1;
-  const pct = Math.round(((unit + done / Math.max(1, work.length)) / totalUnits) * 100);
+  const pct = Math.round(runProgress(st) * 100); // the same measure as the simple view
   const [, tick] = useState(0);
   useEffect(() => {
     if (!LIVE.includes(st.status)) return;
@@ -355,7 +352,7 @@ function Sidebar({ st }) {
         </p>
       )}
       <ul className="fr-mini">
-        {work.map((s) => (
+        {workSteps(st).map((s) => (
           <li key={s.id} className={"s-" + s.status}>
             <span className="fr-dot" />
             {s.title}
