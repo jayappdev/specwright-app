@@ -6572,6 +6572,164 @@ export function createMockBackend(methods) {
         rowFormats: ["auto", "json", "csv", "lines"],
       };
     },
+    // --- Chatflows (core/chatflow.go): sessions in memory, answers made up ---
+    async Chatflows() {
+      return Object.values(db.flows)
+        .filter((f) => f.nodes.some((n) => n.type === "chat"))
+        .map((f) => {
+          const chat = f.nodes.find((n) => n.type === "chat");
+          const reach = (id, up) => {
+            const seen = new Set();
+            const walk = (x) =>
+              f.edges
+                .filter((e) => (up ? e.to === x : e.from === x))
+                .forEach((e) => {
+                  const y = up ? e.from : e.to;
+                  if (!seen.has(y)) {
+                    seen.add(y);
+                    walk(y);
+                  }
+                });
+            walk(id);
+            return seen;
+          };
+          const setupIds = reach(chat.id, true);
+          return {
+            id: f.id,
+            name: f.name,
+            desc: f.description || "",
+            inputs: f.inputs || [],
+            starters: (chat.starters || []).filter((x) => x.trim()),
+            setup: f.nodes
+              .filter((n) => setupIds.has(n.id) && n.type !== "start")
+              .map((n) => n.title || n.id),
+            tools: f.edges
+              .filter((e) => e.from === chat.id)
+              .map((e) => {
+                const n = f.nodes.find((x) => x.id === e.to);
+                const set = reach(n.id, false);
+                set.add(n.id);
+                return {
+                  id: n.id,
+                  title: n.title || n.id,
+                  steps: f.nodes.filter((x) => set.has(x.id)).map((x) => x.id),
+                };
+              }),
+            vars: (f.vars || []).map((v) => v.name),
+            secrets: (f.secrets || []).map((v) => v.name),
+          };
+        });
+    },
+    async ChatSessions(flow) {
+      const c = (db.chats ||= { sessions: [], messages: {}, data: {} });
+      return clone(
+        c.sessions
+          .filter((x) => !flow || x.flow === flow)
+          .sort((a, b) => String(b.updated).localeCompare(String(a.updated))),
+      );
+    },
+    async ChatSession(flow, id) {
+      const x = (db.chats?.sessions || []).find((s) => s.flow === flow && s.id === id);
+      if (!x) throw new Error("no session " + id);
+      return clone(x);
+    },
+    async ChatMessages(flow, id) {
+      return clone(db.chats?.messages[flow + "/" + id] || []);
+    },
+    async ChatData(flow, id, name) {
+      return db.chats?.data[flow + "/" + id]?.[name] ?? "";
+    },
+    async StartChatSession(flow, inputs = {}) {
+      const info = (await api.Chatflows()).find((f) => f.id === flow);
+      if (!info) throw new Error(flow + " is not a Chatflow");
+      const c = (db.chats ||= { sessions: [], messages: {}, data: {} });
+      const t = new Date();
+      const id =
+        t.toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-") +
+        "-" +
+        Math.random().toString(36).slice(2, 8);
+      const shown = {};
+      for (const i of info.inputs) if (i.type !== "secret") shown[i.name] = inputs[i.name] ?? i.default ?? "";
+      const sess = {
+        id,
+        flow,
+        flowName: info.name,
+        title: "",
+        created: now(),
+        updated: now(),
+        status: "setup",
+        inputs: shown,
+        messages: 0,
+        data: [],
+      };
+      c.sessions.push(sess);
+      persist();
+      setTimeout(() => {
+        const k = flow + "/" + id;
+        c.data[k] = {};
+        for (const step of info.setup) {
+          const name = "setup-" + step.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".json";
+          c.data[k][name] = JSON.stringify([
+            { region: "EU", revenue: 182400 },
+            { region: "US", revenue: 161000 },
+          ]);
+          sess.data.push({ name, title: step, setup: true, bytes: c.data[k][name].length, at: now() });
+        }
+        Object.assign(sess, { status: "ready", setupAt: now(), updated: now() });
+        persist();
+        emit({ type: "chat.session", flow, session: id, status: "ready", summary: "Ready" });
+      }, 900);
+      return clone(sess);
+    },
+    async SendChatMessage(flow, id, text) {
+      const c = db.chats;
+      const sess = c?.sessions.find((s) => s.flow === flow && s.id === id);
+      if (!sess) throw new Error("no session " + id);
+      if (sess.status !== "ready") throw new Error("the session is still setting up");
+      const k = flow + "/" + id;
+      const msgs = (c.messages[k] ||= []);
+      const q = { id: "m" + Date.now(), role: "user", text: text.trim(), at: now() };
+      msgs.push(q);
+      sess.messages++;
+      if (!sess.title) sess.title = text.trim().slice(0, 60);
+      sess.updated = now();
+      persist();
+      const answer =
+        `From this session's data (${sess.data.map((d) => d.title).join(", ") || "no setup data"}):\n\n` +
+        `| region | revenue |\n| --- | ---: |\n| EU | 182,400 |\n| US | 161,000 |\n\n` +
+        `**EU** is ahead on “${text.trim().slice(0, 60)}”.`;
+      const parts = answer.split("\n\n");
+      parts.forEach((p, i) =>
+        setTimeout(
+          () => emit({ type: "chat.text", flow, session: id, text: p, summary: p.slice(0, 80) }),
+          400 + i * 350,
+        ),
+      );
+      setTimeout(
+        () => {
+          msgs.push({ id: "m" + Date.now(), role: "assistant", text: answer, at: now() });
+          sess.messages++;
+          sess.updated = now();
+          persist();
+          emit({ type: "chat.message", flow, session: id, summary: "Answered" });
+        },
+        400 + parts.length * 350 + 200,
+      );
+      return clone(q);
+    },
+    async StopChatMessage() {},
+    async RenameChatSession(flow, id, title) {
+      const sess = db.chats?.sessions.find((s) => s.flow === flow && s.id === id);
+      if (!sess) throw new Error("no session " + id);
+      sess.title = title.trim().slice(0, 60);
+      persist();
+      return clone(sess);
+    },
+    async DeleteChatSession(flow, id) {
+      const c = db.chats;
+      if (c) c.sessions = c.sessions.filter((s) => !(s.flow === flow && s.id === id));
+      persist();
+    },
     async Flows() {
       return Object.values(db.flows)
         .map(flowSummary)

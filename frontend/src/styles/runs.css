@@ -3543,3 +3543,140 @@ select.fl-secret-pick {
 .chat-list li {
   margin: 2px 0;
 }
+
+/* ---- Chats (views/Chats.jsx) ----------------------------------------------------- */
+.chats {
+  grid-template-columns: var(--pane-l, 260px) 1fr;
+}
+.chat-flow .tree-folder {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 6px;
+}
+.chat-sess {
+  padding-left: 18px !important;
+}
+.chat-view {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  padding: 0;
+}
+.chat-start {
+  max-width: 640px;
+  margin: 24px auto;
+  width: calc(100% - 32px);
+}
+.chat-start-what {
+  margin: 12px 0;
+}
+.chat-pick {
+  margin: auto;
+}
+.chat-main {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+.chat-head {
+  padding: 12px 20px;
+  border-bottom: 1px solid var(--border);
+}
+.chat-head h2 {
+  margin: 0;
+  font-size: 16px;
+}
+.chat-scroll {
+  flex: 1;
+  overflow: auto;
+  padding: 16px 20px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.chat-empty {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+.chat-empty p {
+  width: 100%;
+  margin: 0;
+}
+.chat-msg {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  max-width: 860px;
+}
+.chat-user {
+  align-self: flex-end;
+  flex-direction: row-reverse;
+}
+.chat-avatar {
+  font-size: 20px;
+  line-height: 1.4;
+}
+.chat-bubble {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 8px 14px;
+  min-width: 0;
+}
+.chat-user .chat-bubble {
+  background: var(--select-bg);
+  color: var(--select-fg);
+  border-color: transparent;
+}
+.chat-q {
+  white-space: pre-wrap;
+}
+.chat-err {
+  margin-top: 6px;
+}
+.chat-composer {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+  padding: 10px 20px 14px;
+  border-top: 1px solid var(--border);
+}
+.chat-composer textarea {
+  flex: 1;
+  resize: vertical;
+}
+.chat-typing {
+  display: inline-flex;
+  gap: 4px;
+  padding: 6px 0;
+}
+.chat-typing i {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--muted);
+  animation: frs-pulse 0.8s ease-in-out infinite alternate;
+}
+.chat-typing i:nth-child(2) {
+  animation-delay: 0.2s;
+}
+.chat-typing i:nth-child(3) {
+  animation-delay: 0.4s;
+}
+/* the conversation scrolls; the message box stays at the bottom */
+main.main[data-view="chats"] {
+  min-height: 0;
+  overflow: hidden;
+}
+.files.chats {
+  height: calc(100vh - 24px); /* the window, less the status bar: only the conversation scrolls */
+  min-height: 0;
+}
+.app.runner-mode .files.chats {
+  height: 100vh;
+}

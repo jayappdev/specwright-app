@@ -60,6 +60,10 @@ type FlowRunOptions struct {
 	// Inputs holds flow.SecretMask in their place, so the values never reach
 	// the screen, run history or saved results.
 	Secrets map[string]string `json:"-"`
+	// Env: more environment for the run's tool steps (a Chatflow's
+	// variables and secrets; secret values are redacted like Secrets)
+	Env       map[string]string `json:"-"`
+	EnvSecret []string          `json:"-"` // the Env names that are secrets
 	// SaveSecrets: secret inputs whose typed value is also saved in the
 	// system keychain (at the input's keychain entry) for later runs.
 	SaveSecrets []string `json:"saveSecrets,omitempty"`
@@ -340,6 +344,11 @@ func (h *Hub) startFlow(root string, f *flow.Flow, o FlowRunOptions, trial *Flow
 	}
 	for _, v := range o.Secrets { // hidden from every output, event and saved file
 		h.Store.Redactor().Add(v)
+	}
+	for _, k := range o.EnvSecret {
+		if v := o.Env[k]; v != "" {
+			h.Store.Redactor().Add(v)
+		}
 	}
 	runID := workflow.NewRunID()
 	fr := &flowRun{flow: f, decide: make(chan FlowDecision, 1), done: make(chan struct{}), t0: time.Now()}

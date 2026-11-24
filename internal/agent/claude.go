@@ -44,7 +44,9 @@ func (c *Claude) Status(ctx context.Context) Status {
 // headless runner's --dry-run).
 func (c *Claude) Args(req Request) []string {
 	args := []string{"-p", "--output-format", "stream-json", "--verbose"}
-	if c.PermissionMode != "" {
+	if req.ReadOnly { // no edits, no commands: denied, not asked
+		args = append(args, "--permission-mode", "default", "--disallowedTools", "Bash Edit Write MultiEdit NotebookEdit")
+	} else if c.PermissionMode != "" {
 		args = append(args, "--permission-mode", c.PermissionMode)
 	}
 	if req.Model != "" {
@@ -66,6 +68,13 @@ func (c *Claude) Args(req Request) []string {
 	}
 	if len(req.AllowTools) > 0 {
 		args = append(args, "--allowedTools", strings.Join(req.AllowTools, " "))
+	}
+	if req.SessionID != "" { // the conversation, so it can be continued (or is)
+		if req.Resume {
+			args = append(args, "--resume", req.SessionID)
+		} else {
+			args = append(args, "--session-id", req.SessionID)
+		}
 	}
 	return args
 }
@@ -121,6 +130,7 @@ func (c *Claude) Run(ctx context.Context, req Request, emit func(Event)) (Result
 		},
 	}.run(ctx)
 	res := p.result()
+	res.SessionID = req.SessionID
 	if err == nil && p.isError {
 		err = fmt.Errorf("claude reported an error: %s", short(res.Text, 300))
 	}

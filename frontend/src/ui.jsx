@@ -43,6 +43,12 @@ export const Icon = {
     </>,
   ),
   metrics: mk(<path d="M3 13V8.5M7 13V3.5M11 13V6.5M14.5 13.5h-13" />),
+  chat: mk(
+    <>
+      <path d="M2.5 3h11v7.5H7l-3.5 2.8V10.5h-1z" />
+      <path d="M5.5 6h5M5.5 8h3" />
+    </>,
+  ),
   playground: mk(
     <>
       <path d="M2.5 3.5h11v7h-6l-3 2.5v-2.5h-2z" />

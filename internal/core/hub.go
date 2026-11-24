@@ -55,6 +55,7 @@ type Hub struct {
 	model      string
 	token      string              // session-only credential, never persisted
 	runnerFlow string              // Options.Runner
+	chats      chatState           // live chat sessions (chatflow.go)
 	sec        secretsState        // session secrets, pending prompts, resolved values (secrets.go)
 	qs         questionsState      // ask_user questions waiting for a person (questions.go)
 	flowRuns   map[string]*flowRun // live flow runs

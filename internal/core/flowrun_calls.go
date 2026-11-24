@@ -104,6 +104,9 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 				}
 				env = append(env, "SPECWRIGHT_STEP="+step, "SPECWRIGHT_RUN="+fr.st.ID)
 			}
+			for k, v := range fr.st.Options.Env { // a Chatflow's variables and secrets
+				env = append(env, k+"="+v)
+			}
 			return extension.ExecInput(ctx, root, *e, args, secrets, env, timeout, stdin), nil
 		}()
 		if err != nil {

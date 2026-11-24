@@ -10,6 +10,7 @@ import (
 
 	"codegen/internal/agent"
 	"codegen/internal/bus"
+	"codegen/internal/chat"
 	"codegen/internal/core"
 	"codegen/internal/extension"
 	"codegen/internal/flow"
@@ -745,3 +746,49 @@ func (a *App) PickCAFile() (string, error) {
 	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: "Choose the corporate CA bundle",
 		Filters: []runtime.FileFilter{{DisplayName: "Certificates", Pattern: "*.pem;*.crt;*.cer"}}})
 }
+
+// --- Chatflows (core/chatflow.go) ---------------------------------------------
+
+// Chatflows lists the project's Chatflows.
+func (a *App) Chatflows() ([]core.ChatflowInfo, error) { return ok(a.hub.Chatflows()) }
+
+// ChatSessions lists a Chatflow's chat sessions ("" for all).
+func (a *App) ChatSessions(flowID string) ([]chat.Session, error) {
+	return ok(a.hub.ChatSessions(flowID))
+}
+
+// ChatSession reads one chat session.
+func (a *App) ChatSession(flowID, id string) (chat.Session, error) {
+	return ok(a.hub.ChatSession(flowID, id))
+}
+
+// ChatMessages reads a chat session's conversation.
+func (a *App) ChatMessages(flowID, id string) ([]chat.Message, error) {
+	return ok(a.hub.ChatMessages(flowID, id))
+}
+
+// ChatData reads one of a chat session's data items.
+func (a *App) ChatData(flowID, id, name string) (string, error) {
+	return ok(a.hub.ChatData(flowID, id, name))
+}
+
+// StartChatSession starts a chat session with the Chatflow's inputs.
+func (a *App) StartChatSession(flowID string, inputs map[string]string) (chat.Session, error) {
+	return ok(a.hub.StartChatSession(flowID, inputs))
+}
+
+// SendChatMessage asks the session's AI a question.
+func (a *App) SendChatMessage(flowID, id, text string) (chat.Message, error) {
+	return ok(a.hub.SendChatMessage(flowID, id, text))
+}
+
+// StopChatMessage stops the answer being written.
+func (a *App) StopChatMessage(flowID, id string) error { return a.hub.StopChatMessage(flowID, id) }
+
+// RenameChatSession renames a chat session.
+func (a *App) RenameChatSession(flowID, id, title string) (chat.Session, error) {
+	return ok(a.hub.RenameChatSession(flowID, id, title))
+}
+
+// DeleteChatSession removes a chat session.
+func (a *App) DeleteChatSession(flowID, id string) error { return a.hub.DeleteChatSession(flowID, id) }

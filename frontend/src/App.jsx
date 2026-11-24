@@ -38,6 +38,7 @@ import { Admin } from "./views/Admin.jsx";
 import { Appearance } from "./views/Appearance.jsx";
 import { Flows } from "./views/Flows.jsx";
 import { FlowRun, showFlowRun, openFlowRunner } from "./views/FlowRun.jsx";
+import { Chats } from "./views/Chats.jsx";
 import { FlowGuide } from "./views/FlowGuide.jsx";
 import { FilePreview } from "./FilePreview.jsx";
 import { LibraryEditor } from "./views/LibraryEditor.jsx";
@@ -71,6 +72,7 @@ const GROUPS = [
       { id: "playground", label: "Prompt playground", icon: Icon.playground, C: Playground },
       { id: "flows", label: "Flow designer", icon: Icon.flow, C: Flows },
       { id: "flowrun", label: "Run flows", icon: Icon.run, C: FlowRun },
+      { id: "chats", label: "Chats", icon: Icon.chat, C: Chats },
       { id: "flowguide", label: "Flow step guide", icon: Icon.book, C: FlowGuide, sub: true }, // under the Flow designer; labelled only when the sidebar is open
     ],
   },
