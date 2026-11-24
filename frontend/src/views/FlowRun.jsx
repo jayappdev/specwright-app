@@ -77,7 +77,8 @@ const FLOWRUN_POLL = 30;
 
 async function loadAll() {
   const r = frs();
-  r.flows = await backend.Flows().catch(() => []);
+  // Chatflows are chatted with (the Chats screen), not run
+  r.flows = ((await backend.Flows().catch(() => [])) || []).filter((f) => !f.chat);
   r.runs = await backend.FlowRuns(100).catch(() => []);
   r.triggers = (await backend.FlowTriggers("").catch(() => [])) || [];
   r.queue = (await backend.TriggerQueue().catch(() => [])) || [];

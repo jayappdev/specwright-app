@@ -2843,6 +2843,7 @@ export function createMockBackend(methods) {
   const flowSummary = (f) => ({
     id: f.id,
     name: f.name,
+    chat: f.nodes.some((n) => n.type === "chat") || undefined, // a Chatflow (flow/chatflow.go)
     description: f.description,
     steps: f.nodes.filter((n) => !["start", "output"].includes(n.type)).length,
     outputs: f.nodes.filter((n) => n.type === "output").length,

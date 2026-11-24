@@ -40,6 +40,12 @@ export const snap = (v) => Math.round(v / GRID) * GRID;
 const clone = (x) => JSON.parse(JSON.stringify(x));
 
 export const STEP_TYPES = [
+  {
+    type: "chat",
+    name: "Chat",
+    help: "Makes this a Chatflow: the steps before it set up a chat session; each path after it is something the chat can run",
+    keywords: "chatflow conversation assistant session",
+  },
   { type: "ai", name: "AI prompt", help: "Ask the agent; uses the flow's context and skills" },
   {
     type: "improve",
@@ -171,6 +177,16 @@ const sv = (d) =>
     );
   };
 const TYPE_ICON = {
+  chat: {
+    color: "--ansi-magenta",
+    Icon: sv(
+      <>
+        <path d="M4 5h16v10H9l-5 4z" />
+        <path d="M8 9h8" />
+        <path d="M8 12h5" />
+      </>,
+    ),
+  },
   context: {
     color: "--ansi-cyan",
     Icon: sv(
@@ -745,6 +761,10 @@ export function addNode(spec, x, y) {
     if (spec.title) n.title = uniqueTitle(flow, spec.title, id);
   } // in a flow, the response is data for the next steps
   if (spec.type === "ai") n.prompt = "";
+  if (spec.type === "chat") {
+    n.instructions = "";
+    n.starters = [];
+  }
   if (spec.type === "improve") {
     n.pair = f.sel && nodeOf(f.sel)?.type === "tool" ? "before" : "after";
     n.prompt = "";
@@ -1268,6 +1288,11 @@ export function Flows() {
                 >
                   <span className="run-item-top">
                     <b>{x.name}</b>
+                    {x.chat && (
+                      <span className="badge badge-info" title="A Chatflow: chatted with on the Chats screen">
+                        chat
+                      </span>
+                    )}
                     {x.revision > 1 && (
                       <span
                         className="badge"

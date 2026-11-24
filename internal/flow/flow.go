@@ -46,6 +46,10 @@ type Flow struct {
 	Edges   []Edge   `json:"edges"`
 	// Triggers start the flow by themselves (a schedule…); see trigger.go
 	Triggers []Trigger `json:"triggers,omitempty"`
+	// A Chatflow's environment (see chatflow.go): variables with values,
+	// and secrets by name, resolved when a chat session starts.
+	Vars    []Var       `json:"vars,omitempty"`
+	Secrets []SecretVar `json:"secrets,omitempty"`
 	// MinutesSaved is the manual work one successful run replaces (for
 	// Metrics); 0 means "estimate from the steps".
 	MinutesSaved int       `json:"minutesSaved,omitempty"`
@@ -194,7 +198,7 @@ type Skill struct {
 // Node is one step on the canvas.
 type Node struct {
 	ID    string  `json:"id"`
-	Type  string  `json:"type"` // start | tool | ai | improve | context | merge | transform | loop | gather | decision | filter | aggregate | output
+	Type  string  `json:"type"` // start | tool | ai | improve | context | merge | transform | loop | gather | decision | filter | aggregate | output | chat
 	Title string  `json:"title,omitempty"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
@@ -277,6 +281,12 @@ type Node struct {
 	Measures []Measure `json:"measures,omitempty"`
 	OrderBy  []string  `json:"orderBy,omitempty"` // "field" or "-field" (descending)
 
+	// chat (see chatflow.go; Instructions and Model as for ai): questions
+	// shown on an empty session, and a cost limit per session (USD; 0: the
+	// project's budget)
+	Starters  []string `json:"starters,omitempty"`
+	CostLimit float64  `json:"costLimit,omitempty"`
+
 	// output
 	Format  string   `json:"format,omitempty"` // md | txt | html | csv | json
 	Actions []Action `json:"actions,omitempty"`
@@ -302,7 +312,7 @@ type Edge struct {
 
 // NodeTypes, transform operations, merge modes and output formats.
 var (
-	NodeTypes   = []string{"start", "tool", "ai", "improve", "context", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
+	NodeTypes   = []string{"start", "tool", "ai", "improve", "context", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output", "chat"}
 	MergeModes  = []string{"concat", "json-object", "json-array", "template"}
 	Formats     = []string{"md", "txt", "html", "csv", "json"}
 	InputTypes  = []string{"text", "multiline", "secret", "number", "boolean", "date", "datetime", "choice", "multichoice", "file", "files", "clipboard"}
@@ -540,9 +550,10 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 	if starts != 1 {
 		add("", "error", "A flow needs exactly one Inputs step.")
 	}
-	if outputs == 0 {
+	if outputs == 0 && !f.IsChatflow() { // a Chatflow's answers are its output
 		add("", "warning", "Add an output so the flow produces something.")
 	}
+	f.checkChat(add)
 	for _, e := range f.Edges {
 		if !ids[e.From] || !ids[e.To] {
 			add("", "error", "A connection points at a step that no longer exists (%s → %s).", e.From, e.To)
@@ -1005,6 +1016,8 @@ type Summary struct {
 	Tags        []string  `json:"tags,omitempty"`
 	// Keywords: the steps' names and tools, for searching the lists
 	Keywords []string `json:"keywords,omitempty"`
+	// Chat: it is a Chatflow (it has a Chat step): chatted with, not run
+	Chat bool `json:"chat,omitempty"`
 }
 
 // List returns the workspace's flows, newest first.
@@ -1027,6 +1040,7 @@ func List(root string) ([]Summary, error) {
 		}
 		s := Summary{ID: f.ID, Name: f.Name, Description: f.Description, Updated: f.Updated, Parent: f.Parent, Revision: f.Revision,
 			Group: NormGroup(f.Group), Tags: NormTags(f.Tags), Keywords: f.keywords()}
+		s.Chat = f.IsChatflow()
 		for _, n := range f.Nodes {
 			switch n.Type {
 			case "output":

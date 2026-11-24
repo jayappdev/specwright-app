@@ -5,6 +5,7 @@ import { LessonsEditor } from "./Lessons.jsx";
 import { TagEditor, allTags, allGroups } from "../../flowLists.jsx";
 import { HeadingPicker } from "../../listLayout.jsx";
 import { ContextInspector } from "./ContextStep.jsx";
+import { ChatInspector } from "./ChatInspector.jsx";
 import { StepGuidance, aiStep } from "./StepGuidance.jsx";
 import { Reliability } from "../../ToolTile.jsx";
 import { TriggersEditor } from "./Triggers.jsx";
@@ -995,6 +996,7 @@ function StepInspector({ n }) {
           {n.type === "filter" && <FilterInspector n={n} set={set} />}
           {n.type === "aggregate" && <AggregateInspector n={n} set={set} />}
           {n.type === "context" && <ContextInspector n={n} set={set} />}
+          {n.type === "chat" && <ChatInspector n={n} set={set} flow={flow} />}
           {n.type === "merge" && (
             <>
               <Field label="How to merge">
@@ -1399,11 +1401,13 @@ function StepInspector({ n }) {
               <Preview node={n} />
             </>
           )}
-          <label className="check fl-review">
-            <input type="checkbox" checked={!!n.review} onChange={(e) => set("review", e.target.checked)} />{" "}
-            Pause for review after this step{" "}
-            <span className="muted">(accept, refine, run a command or stop)</span>
-          </label>
+          {n.type !== "chat" && (
+            <label className="check fl-review">
+              <input type="checkbox" checked={!!n.review} onChange={(e) => set("review", e.target.checked)} />{" "}
+              Pause for review after this step{" "}
+              <span className="muted">(accept, refine, run a command or stop)</span>
+            </label>
+          )}
           <Field label="Note">
             <textarea
               rows={2}

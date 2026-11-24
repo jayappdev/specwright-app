@@ -326,6 +326,9 @@ func (h *Hub) prepareRun(root string, f *flow.Flow, o *FlowRunOptions) error {
 // startFlow starts a run of f (a saved flow, or a trial copy).
 func (h *Hub) startFlow(root string, f *flow.Flow, o FlowRunOptions, trial *FlowTrial) (FlowRunState, error) {
 	// every way to run a flow (Run flows, trials, the built-in tool, headless) passes here
+	if f.IsChatflow() {
+		return FlowRunState{}, fmt.Errorf("%s is a Chatflow: chat with it on the Chats screen (it is not run as a flow)", f.Name)
+	}
 	if err := h.checkFlowCommands(root, f); err != nil {
 		return FlowRunState{}, err
 	}

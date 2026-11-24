@@ -3491,3 +3491,55 @@ select.fl-secret-pick {
 .frun.frun-runner.with-side {
   grid-template-columns: 1fr var(--pane-r, 260px);
 }
+
+/* the Chat step's inspector (flows/ChatInspector.jsx) */
+.chat-h {
+  margin: 16px 0 4px;
+}
+.chat-sub {
+  margin: 10px 0 4px;
+  font-size: 12px;
+}
+.chat-note {
+  margin: 0 0 6px;
+  font-size: 12px;
+}
+.chat-env {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  align-items: flex-start;
+}
+/* name and value (a secret: the name) on one line, the description under them */
+.chat-env-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr) auto;
+  gap: 6px;
+  width: 100%;
+  padding-bottom: 6px;
+  border-bottom: 1px dashed var(--border);
+}
+.chat-env-row .chat-env-wide {
+  grid-column: 1 / 3;
+}
+.chat-env-row .chat-env-desc {
+  grid-column: 1 / 3;
+  grid-row: 2;
+}
+.chat-env-row .icon-btn {
+  grid-column: 3;
+  grid-row: 1;
+}
+.chat-env-row .mono {
+  font-family: var(--font-mono);
+}
+.chat-env-row .bad {
+  border-color: var(--error);
+}
+.chat-list {
+  margin: 0 0 6px;
+  padding-left: 18px;
+}
+.chat-list li {
+  margin: 2px 0;
+}

@@ -398,7 +398,7 @@ func (h *Hub) FlowTriggers(flowID string) ([]TriggerView, error) {
 	} else {
 		list, _ := flow.List(root)
 		for _, s := range list {
-			if f, err := flow.Load(root, s.ID); err == nil && len(f.Triggers) > 0 {
+			if f, err := flow.Load(root, s.ID); err == nil && len(f.Triggers) > 0 && !f.IsChatflow() {
 				flows = append(flows, f)
 			}
 		}
@@ -621,7 +621,7 @@ func (h *Hub) checkTriggers(root string) {
 	changed := false
 	for _, sum := range list {
 		f, err := flow.Load(root, sum.ID)
-		if err != nil || len(f.Triggers) == 0 {
+		if err != nil || len(f.Triggers) == 0 || f.IsChatflow() { // a Chatflow is chatted with, not run
 			continue
 		}
 		for _, t := range f.Triggers {
@@ -766,7 +766,7 @@ func (h *Hub) onFlowFinished(root string, run FlowRunState) {
 	ts := h.triggers(root)
 	for _, sum := range list {
 		f, err := flow.Load(root, sum.ID)
-		if err != nil {
+		if err != nil || f.IsChatflow() {
 			continue
 		}
 		for _, t := range f.Triggers {
