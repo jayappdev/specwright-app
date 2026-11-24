@@ -523,6 +523,10 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 			}
 		}
 	}
+	chatFilled := map[string]bool{} // steps after a Chat step: the chat's AI fills their empty fields
+	if c := f.ChatNode(); c != nil {
+		chatFilled = f.descendants(c.ID)
+	}
 	toolByName := map[string]ToolInfo{}
 	for _, t := range tools {
 		toolByName[t.Name] = t
@@ -668,7 +672,8 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				add(n.ID, "error", "The tool %q is not available in this project.", n.Tool)
 			} else if strings.TrimSpace(n.Instruction) == "" {
 				for _, p := range t.Params {
-					if p.Required && strings.TrimSpace(n.Args[p.Name]) == "" {
+					// in a Chatflow's tools, the chat's AI fills the fields left empty
+					if p.Required && strings.TrimSpace(n.Args[p.Name]) == "" && !chatFilled[n.ID] {
 						add(n.ID, "error", "%s: the required parameter %q is empty (fill it in, or describe the step and let AI build it).", label(n), p.Name)
 					}
 					// only an optional input with no default fills it: empty when the input is left empty

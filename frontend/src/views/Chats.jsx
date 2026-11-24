@@ -19,6 +19,8 @@ const cs = () =>
     inputs: {},
     messages: {}, // "<flow>/<id>" → Message[]
     live: {}, // "<flow>/<id>" → the answer being written
+    liveSteps: {}, // "<flow>/<id>" → the steps run for it so far
+    open: {}, // a chip shown open: "<flow>/<id>/<message>/<n>" → its result
     draft: "",
   });
 const keyOf = (s) => s.flow + "/" + s.id;
@@ -58,6 +60,23 @@ export function onChatEvent(e) {
   const c = S.chat;
   if (!c) return;
   const k = e.flow + "/" + e.session;
+  if (e.type === "chat.step") {
+    // a step the chat runs: a chip while it runs, its result when done
+    const runs = (c.liveSteps[k] ||= []);
+    const i = runs.findIndex((r) => r.tool === e.tool && r.status === "running");
+    const r = {
+      tool: e.tool,
+      title: e.title,
+      status: e.status,
+      durationMs: e.durationMs,
+      error: e.error,
+      data: e.data,
+    };
+    if (i >= 0) runs[i] = r;
+    else runs.push(r);
+    update();
+    return;
+  }
   if (e.type === "chat.text") {
     c.live[k] = (c.live[k] ? c.live[k] + "\n\n" : "") + (e.text || "");
     update();
@@ -65,6 +84,7 @@ export function onChatEvent(e) {
   }
   if (e.type === "chat.message") {
     delete c.live[k];
+    delete c.liveSteps[k];
     loadMessages(e.flow, e.session);
   }
   backend
@@ -178,13 +198,73 @@ function StartForm({ f }) {
   );
 }
 
-function Message({ m }) {
+// StepChip: a step the chat ran ("▸ ran Query sales · 0.8 s"); open, its
+// fields and what it gave
+function StepChip({ r, s, k }) {
+  const c = cs();
+  const open = c.open[k];
+  const toggle = async () => {
+    if (open !== undefined) {
+      delete c.open[k];
+      return update();
+    }
+    c.open[k] = r.data ? "…" : "";
+    update();
+    if (r.data) {
+      c.open[k] = await backend.ChatData(s.flow, s.id, r.data).catch((e) => errMsg(e));
+      update();
+    }
+  };
+  const label =
+    r.status === "running"
+      ? "running " + r.title + "…"
+      : r.error
+        ? r.title + " did not run"
+        : "ran " + r.title + (r.durationMs ? " · " + (r.durationMs / 1000).toFixed(1) + " s" : "");
+  return (
+    <div className={"chat-chip-wrap" + (r.error ? " bad" : "")}>
+      <button
+        className="chat-chip"
+        onClick={toggle}
+        disabled={r.status === "running"}
+        aria-expanded={open !== undefined}
+      >
+        {r.status === "running" ? (
+          <span className="spinner" />
+        ) : (
+          <span aria-hidden="true">{open !== undefined ? "▾" : "▸"}</span>
+        )}{" "}
+        {label}
+      </button>
+      {open !== undefined && (
+        <div className="chat-chip-body">
+          {r.error && <div className="banner error">{r.error}</div>}
+          {r.args && Object.keys(r.args).length > 0 && (
+            <div className="chat-chip-args">
+              {Object.entries(r.args).map(([a, v]) => (
+                <div key={a}>
+                  <code className="inline-code">{a}</code> {typeof v === "string" ? v : JSON.stringify(v)}
+                </div>
+              ))}
+            </div>
+          )}
+          {open && <pre className="code chat-chip-out">{open}</pre>}
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Message({ m, s }) {
   return (
     <div className={"chat-msg chat-" + m.role}>
       <div className="chat-avatar" aria-hidden="true">
         {m.role === "user" ? "🧑" : "🤖"}
       </div>
       <div className="chat-bubble">
+        {(m.steps || []).map((r, i) => (
+          <StepChip key={i} r={r} s={s} k={keyOf(s) + "/" + m.id + "/" + i} />
+        ))}
         {m.role === "assistant" ? (
           <div className="rich md" dangerouslySetInnerHTML={{ __html: mdRender(m.text || "") }} />
         ) : (
@@ -251,7 +331,7 @@ function Conversation({ s, f }) {
           </div>
         )}
         {msgs.map((m) => (
-          <Message key={m.id} m={m} />
+          <Message key={m.id} m={m} s={s} />
         ))}
         {live !== undefined && (
           <div className="chat-msg chat-assistant">
@@ -259,6 +339,9 @@ function Conversation({ s, f }) {
               🤖
             </div>
             <div className="chat-bubble">
+              {(c.liveSteps[k] || []).map((r, i) => (
+                <StepChip key={i} r={r} s={s} k={k + "/live/" + i} />
+              ))}
               {live ? (
                 <div className="rich md" dangerouslySetInnerHTML={{ __html: mdRender(live) }} />
               ) : (

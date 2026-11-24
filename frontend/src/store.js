@@ -438,6 +438,7 @@ export function onHubEvent(e) {
     case "chat.session":
     case "chat.text":
     case "chat.message":
+    case "chat.step":
       chatListener?.(e); // views/Chats.jsx
       break;
     case "question.request":

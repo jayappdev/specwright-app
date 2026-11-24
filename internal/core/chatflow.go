@@ -64,6 +64,13 @@ type ChatflowInfo struct {
 
 func chatKey(flowID, id string) string { return flowID + "/" + id }
 
+// ready makes the maps (call with mu held).
+func (c *chatState) ready() {
+	if c.env == nil {
+		c.env, c.envSec, c.inputs, c.answers = map[string]map[string]string{}, map[string][]string{}, map[string]map[string]string{}, map[string]context.CancelFunc{}
+	}
+}
+
 func (h *Hub) chatStore() (*chat.Store, string, error) {
 	root, err := h.need()
 	if err != nil {
@@ -316,9 +323,7 @@ func (h *Hub) StartChatSession(flowID string, inputs map[string]string) (chat.Se
 	}
 	key := chatKey(f.ID, sess.ID)
 	h.chats.mu.Lock()
-	if h.chats.env == nil {
-		h.chats.env, h.chats.envSec, h.chats.inputs, h.chats.answers = map[string]map[string]string{}, map[string][]string{}, map[string]map[string]string{}, map[string]context.CancelFunc{}
-	}
+	h.chats.ready()
 	h.chats.env[key], h.chats.envSec[key], h.chats.inputs[key] = env, envSec, o.Secrets
 	h.chats.mu.Unlock()
 	for _, k := range envSec {
@@ -411,10 +416,10 @@ func chatDataText(st *chat.Store, s chat.Session) string {
 // chatPrompt is the first prompt of a session's AI conversation: the
 // Chatflow's instructions, the session's inputs and data, and (when the
 // conversation is started again) what was said so far.
-func chatPrompt(f *flow.Flow, st *chat.Store, s chat.Session, history []chat.Message, question string) string {
+func chatPrompt(f *flow.Flow, st *chat.Store, s chat.Session, history []chat.Message, question, tools string) string {
 	c := f.ChatNode()
 	var b strings.Builder
-	fmt.Fprintf(&b, "You are the assistant of the Chatflow %q in SpecWright. Answer the person's questions about the session's data below, in Markdown. Be accurate: use the data, say when it does not answer a question, and do not make numbers up. Do not edit files or run commands.\n", f.Name)
+	fmt.Fprintf(&b, "You are the assistant of the Chatflow %q in SpecWright. Answer the person's questions about the session's data below, in Markdown. Be accurate: use the data (and what you run), say when it does not answer a question, and do not make numbers up. Do not edit files or run commands yourself.\n", f.Name)
 	if t := strings.TrimSpace(c.Instructions); t != "" {
 		b.WriteString("\nINSTRUCTIONS:\n" + t + "\n")
 	}
@@ -427,6 +432,7 @@ func chatPrompt(f *flow.Flow, st *chat.Store, s chat.Session, history []chat.Mes
 	if d := chatDataText(st, s); d != "" {
 		b.WriteString("\nSESSION DATA (from the setup steps; it stays the same for the session):" + d)
 	}
+	b.WriteString(tools)
 	if len(history) > 0 {
 		b.WriteString("\nTHE CONVERSATION SO FAR:\n")
 		for _, m := range history {
@@ -469,9 +475,7 @@ func (h *Hub) SendChatMessage(flowID, id, text string) (chat.Message, error) {
 	}
 	key := chatKey(flowID, id)
 	h.chats.mu.Lock()
-	if h.chats.answers == nil {
-		h.chats.answers = map[string]context.CancelFunc{}
-	}
+	h.chats.ready()
 	if h.chats.answers[key] != nil {
 		h.chats.mu.Unlock()
 		return chat.Message{}, errors.New("the previous question is still being answered")
@@ -523,12 +527,13 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 		s.AgentSession = "" // another agent cannot continue that conversation
 	}
 	req := agent.Request{Purpose: "chat", Step: "chat", Dir: root, Model: s.Model, Env: h.childEnv(), ReadOnly: true}
+	first := chatPrompt(f, st, s, history, question, h.chatToolsText(f))
 	if s.AgentSession != "" {
 		req.SessionID, req.Resume, req.Prompt = s.AgentSession, true, question
 	} else {
-		req.SessionID, req.Prompt = workflow.NewUUID(), chatPrompt(f, st, s, history, question)
+		req.SessionID, req.Prompt = workflow.NewUUID(), first
 	}
-	var text strings.Builder
+	var text strings.Builder // this round's text, as it streams
 	var mu sync.Mutex
 	tokens := 0
 	emit := func(ev agent.Event) {
@@ -544,8 +549,11 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 			}
 			text.WriteString(t)
 			mu.Unlock()
-			h.Bus.Publish(bus.Event{Type: "chat.text", Summary: clipLine(h.Store.Redactor().String(t), 120),
-				Data: map[string]any{"flow": s.Flow, "session": s.ID, "text": h.Store.Redactor().String(t)}})
+			// a tool request is not shown as text (a chip shows the run)
+			if _, shown := parseChatCalls(t); strings.TrimSpace(shown) != "" {
+				h.Bus.Publish(bus.Event{Type: "chat.text", Summary: clipLine(h.Store.Redactor().String(shown), 120),
+					Data: map[string]any{"flow": s.Flow, "session": s.ID, "text": h.Store.Redactor().String(shown)}})
+			}
 		case "model.request":
 			tokens += toInt(ev.Data["input_tokens"])
 		case "model.response":
@@ -553,14 +561,49 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 		}
 	}
 	var res agent.Result
-	if err == nil {
+	var steps []chat.StepRun
+	var answer string
+	cost := 0.0
+	for round := 0; err == nil; round++ {
+		text.Reset()
 		res, err = drv.Run(ctx, req, emit)
+		cost += res.CostUSD
+		reply := strings.TrimSpace(res.Text)
+		if reply == "" {
+			reply = strings.TrimSpace(text.String())
+		}
+		calls, shown := parseChatCalls(reply)
+		answer = strings.TrimSpace(answer + "\n\n" + shown)
+		if err != nil || len(calls) == 0 || ctx.Err() != nil {
+			break
+		}
+		if len(steps) >= maxChatRuns {
+			answer = strings.TrimSpace(answer + "\n\n_(It wanted to run more, but a question may run at most " + fmt.Sprint(maxChatRuns) + " tools.)_")
+			break
+		}
+		// run what it asked for, and give the results back
+		var results strings.Builder
+		for _, c := range calls {
+			if len(steps) >= maxChatRuns {
+				break
+			}
+			run, out := h.runChatTool(ctx, root, f, s, c, s.Messages+len(steps)+1)
+			steps = append(steps, run)
+			if run.Error != "" {
+				fmt.Fprintf(&results, "\n### %s: it did not run\n%s\n", run.Title, run.Error)
+			} else {
+				fmt.Fprintf(&results, "\n### %s (result)\n```\n%s\n```\n", run.Title, clipText(out, 15000))
+			}
+		}
+		next := "RESULTS OF WHAT YOU RAN:" + results.String() + "\nNow answer the question from these results (or run another tool if you really need to)."
+		if res.SessionID != "" { // the same conversation goes on
+			req.SessionID, req.Resume, req.Prompt = res.SessionID, true, next
+		} else { // the CLI cannot continue it: everything again
+			req.SessionID, req.Resume, req.Prompt = workflow.NewUUID(), false, first+"\n"+next
+		}
 	}
-	answer := strings.TrimSpace(res.Text)
-	if answer == "" {
-		answer = strings.TrimSpace(text.String())
-	}
-	m := chat.Message{Role: "assistant", Text: h.Store.Redactor().String(answer)}
+	res.CostUSD = cost
+	m := chat.Message{Role: "assistant", Text: h.Store.Redactor().String(answer), Steps: steps}
 	switch {
 	case ctx.Err() != nil:
 		m.Error = "Stopped."

@@ -6698,22 +6698,71 @@ export function createMockBackend(methods) {
         `From this session's data (${sess.data.map((d) => d.title).join(", ") || "no setup data"}):\n\n` +
         `| region | revenue |\n| --- | ---: |\n| EU | 182,400 |\n| US | 161,000 |\n\n` +
         `**EU** is ahead on “${text.trim().slice(0, 60)}”.`;
+      // the chat runs its first tool (a mock result), shown as a chip
+      const info = (await api.Chatflows()).find((f) => f.id === flow);
+      const tool = info?.tools?.[0];
+      const steps = [];
+      if (tool) {
+        const dataName = `m${String(sess.messages).padStart(3, "0")}-${tool.id}.json`;
+        ((c.data ||= {})[k] ||= {})[dataName] = JSON.stringify(
+          [
+            { region: "EU", growth: 0.18 },
+            { region: "US", growth: 0.06 },
+          ],
+          null,
+          2,
+        );
+        steps.push({
+          tool: tool.id,
+          title: tool.title,
+          args: { [tool.id + ".question"]: text.trim() },
+          data: dataName,
+          durationMs: 800,
+        });
+        setTimeout(
+          () =>
+            emit({
+              type: "chat.step",
+              flow,
+              session: id,
+              tool: tool.id,
+              title: tool.title,
+              status: "running",
+            }),
+          200,
+        );
+        setTimeout(
+          () =>
+            emit({
+              type: "chat.step",
+              flow,
+              session: id,
+              tool: tool.id,
+              title: tool.title,
+              status: "done",
+              durationMs: 800,
+              data: dataName,
+            }),
+          1000,
+        );
+      }
+      const t0 = tool ? 1100 : 400;
       const parts = answer.split("\n\n");
       parts.forEach((p, i) =>
         setTimeout(
           () => emit({ type: "chat.text", flow, session: id, text: p, summary: p.slice(0, 80) }),
-          400 + i * 350,
+          t0 + i * 350,
         ),
       );
       setTimeout(
         () => {
-          msgs.push({ id: "m" + Date.now(), role: "assistant", text: answer, at: now() });
+          msgs.push({ id: "m" + Date.now(), role: "assistant", text: answer, at: now(), steps });
           sess.messages++;
           sess.updated = now();
           persist();
           emit({ type: "chat.message", flow, session: id, summary: "Answered" });
         },
-        400 + parts.length * 350 + 200,
+        t0 + parts.length * 350 + 200,
       );
       return clone(q);
     },
