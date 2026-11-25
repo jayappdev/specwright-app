@@ -212,3 +212,13 @@ func (f *Flow) checkChat(add func(node, level, format string, a ...any)) {
 		add(c.ID, "warning", "A Chatflow is chatted with, not run: its triggers never start it.")
 	}
 }
+
+// fedByChat reports whether one of these steps is a Chat step.
+func fedByChat(f *Flow, ids []string) bool {
+	for _, id := range ids {
+		if n := f.Node(id); n != nil && n.Type == "chat" {
+			return true
+		}
+	}
+	return false
+}

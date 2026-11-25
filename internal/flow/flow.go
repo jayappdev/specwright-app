@@ -690,7 +690,8 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 			for k, v := range n.Args {
 				checkVars(n, label(n)+" › "+k, v)
 			}
-			if work := nonStart(f, parents); len(work) > 0 && strings.TrimSpace(n.Instruction) == "" && !UsesUpstream(n, f) {
+			// (a step after the Chat step gets the chat's message: it need not use it)
+			if work := nonStart(f, parents); len(work) > 0 && strings.TrimSpace(n.Instruction) == "" && !UsesUpstream(n, f) && !fedByChat(f, parents) {
 				first := titles(f, work[:1])[0]
 				add(n.ID, "warning", "None of %s's fields use the result of %s. It is still piped in, which only helps tools that read piped data. To use it in a field, click “← %s” next to that field, or describe the step and let AI fill the fields.",
 					label(n), strings.Join(titles(f, work), " and "), first)

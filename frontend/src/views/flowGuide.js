@@ -1948,6 +1948,87 @@ export const GUIDE = [
     ],
   },
   {
+    type: "chat",
+    name: "Chat (Chatflows)",
+    resultLabel: "A conversation · an example (your AI's answers will differ)",
+    summary:
+      "Makes the flow a Chatflow: people chat with it on the Chats screen. The steps before the Chat step set up a session once (load data, gather documents); each path after it is a tool the chat's AI runs only when a question needs it. Sessions keep their data and their conversation, so follow-up questions do not load anything again.",
+    when: [
+      "People ask many questions about the same data: sales numbers, a runbook, an incident's logs.",
+      "Some questions need fresh work (a query, a chart, a web page) and most do not.",
+      "The data needs secrets or settings the person chatting should never see.",
+    ],
+    how: [
+      "Add a Chat step after the steps that load what a session needs; connect the Inputs step (directly or through them) into it.",
+      "Connect steps after the Chat step: each path out of it is one tool, named after its first step. Leave a tool's fields empty for the AI to fill from the question, or set them; {{chat.message}} is what the AI passes on, {{session.<step id>}} a setup step's result.",
+      "In the Chat step: the instructions (what the assistant is for), starter questions, a model and a cost limit per session; and the Chatflow's environment: variables (values) and secrets (names only: their values come from the keychain or are asked for once, and never show in the chat).",
+      "Chat on the Chats screen: + New session asks for the inputs and runs the setup once. Tools that only read run at once; anything that writes asks you first. /refresh runs the setup again, /data and /steps show what the session holds and can run.",
+    ],
+    settings: [
+      ["instructions", "What the assistant is for and how it answers."],
+      ["starters", "Questions shown on an empty session."],
+      ["model, costLimit", "The model, and a cost limit per session (USD)."],
+      ["vars, secrets", "The Chatflow's environment, given to every step a session runs."],
+    ],
+    examples: [
+      {
+        title: "Chat about sales rows, with a chart tool",
+        text: 'The setup loads the rows once; the chart tool\'s type and fields are left empty, so the AI fills them from the question ("chart revenue by region").',
+        nodes: [
+          sample("sales", "Sales rows", ORDERS),
+          {
+            id: "chat",
+            type: "chat",
+            title: "Sales assistant",
+            instructions:
+              "You answer questions about these orders. Show numbers in tables; draw a chart when asked.",
+            starters: ["Which region has the most revenue?", "Chart revenue by region"],
+          },
+          {
+            id: "chart",
+            type: "tool",
+            title: "Draw a chart",
+            tool: "builtin:chart",
+            args: { type: "", title: "", rows: "{{session.sales}}", x: "", y: "" },
+          },
+        ],
+        edges: chain("start", "sales", "chat", "chart"),
+        focus: "chat",
+        result:
+          "🧑 Which region has the most revenue?\n🤖 US: 390.00 over 2 orders (one of them closed), then EU with 360.50 over 3.\n\n🧑 Chart revenue by region\n🤖 ▸ ran Draw a chart · 0.2 s  (bar · x region · y total)\n   [the chart, with Export PNG]",
+      },
+      {
+        title: "Docs Q&A that can fetch a page",
+        text: "The setup gathers the runbook once; a question the runbook does not answer can fetch a page (its address filled by the AI).",
+        nodes: [
+          sample(
+            "docs",
+            "Runbook",
+            "# Billing runbook\n\nRestart the invoice worker with `svc restart invoices`. Alerts page the billing on-call.",
+          ),
+          {
+            id: "chat",
+            type: "chat",
+            title: "Runbook help",
+            instructions:
+              "Answer from the runbook. Quote the command to run. Fetch a page only when the runbook does not cover the question.",
+          },
+          {
+            id: "fetch",
+            type: "tool",
+            title: "Fetch a page",
+            tool: "builtin:fetch_webpage",
+            args: { url: "", format: "markdown" },
+          },
+        ],
+        edges: chain("start", "docs", "chat", "fetch"),
+        focus: "chat",
+        result:
+          "🧑 How do I restart the invoice worker?\n🤖 Run `svc restart invoices` (from the Billing runbook).\n\n🧑 What does the status page say right now?\n🤖 ▸ ran Fetch a page · 1.1 s\n   All systems operational; the last incident was resolved yesterday.",
+      },
+    ],
+  },
+  {
     type: "output",
     name: "Output",
     summary:

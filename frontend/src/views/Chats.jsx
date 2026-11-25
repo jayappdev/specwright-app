@@ -14,6 +14,8 @@ import { Icon } from "../ui.jsx";
 import { mdRender } from "../markdown.js";
 import { ago } from "../time.js";
 import { NeedWorkspace } from "./Wizard.jsx";
+import { confirmDialog, askText } from "../Dialog.jsx";
+import { openRunnerWindow } from "./FlowRun.jsx";
 
 const cs = () =>
   (S.chat ||= {
@@ -30,6 +32,7 @@ const cs = () =>
     attach: {}, // "<flow>/<id>" → files attached to the next message [{name, data}]
     notes: {}, // "<flow>/<id>" → answers to /data, /steps, /help (not saved)
     panel: true, // the session panel is shown
+    archived: false, // archived sessions are listed too
     preview: null, // { title, text }: a data item shown over the screen
     draft: "",
   });
@@ -62,6 +65,58 @@ function select(flow, id) {
   c.sel = { flow, id };
   c.starting = "";
   loadMessages(flow, id);
+}
+
+// a session's actions: rename, export, archive or restore, delete
+async function renameSession(x) {
+  const title = await askText("Rename the session", { value: x.title || "", ok: "Rename" });
+  if (!title?.trim()) return;
+  try {
+    Object.assign(x, await backend.RenameChatSession(x.flow, x.id, title));
+    update();
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+}
+async function exportSession(x) {
+  try {
+    const p = await backend.ExportChatSession(x.flow, x.id);
+    toast("Saved as " + p);
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+}
+async function archiveSession(x) {
+  try {
+    Object.assign(x, await backend.ArchiveChatSession(x.flow, x.id, !x.archived));
+    const c = cs();
+    if (x.archived && c.sel?.id === x.id && !c.archived) c.sel = null;
+    update();
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+}
+async function deleteSession(x) {
+  if (
+    !(await confirmDialog(
+      `“${x.title || "New session"}”, its messages and data are deleted from the project. This cannot be undone.`,
+      {
+        title: "Delete the session?",
+        ok: "Delete",
+        danger: true,
+      },
+    ))
+  )
+    return;
+  try {
+    await backend.DeleteChatSession(x.flow, x.id);
+    const c = cs();
+    c.sessions = c.sessions.filter((y) => !(y.flow === x.flow && y.id === x.id));
+    if (c.sel?.id === x.id) c.sel = null;
+    update();
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
 }
 
 // hub events: a session changed, an answer is being written or was saved
@@ -723,44 +778,103 @@ export function Chats() {
             up a session, the paths after it are what the chat can run.
           </p>
         )}
-        {flows.map((f) => {
-          const ss = c.sessions.filter((x) => x.flow === f.id && !x.archived);
-          return (
-            <div key={f.id} className="chat-flow">
-              <div className="tree-folder">
-                <span>💬 {f.name}</span>
-                <button
-                  className="link"
-                  onClick={() => {
-                    c.starting = f.id;
-                    c.sel = null;
-                    c.inputs = {};
-                    update();
-                  }}
-                >
-                  <Icon.plus /> New session
-                </button>
-              </div>
-              {ss.map((x) => (
-                <button
-                  key={x.id}
-                  className={
-                    "run-item chat-sess" + (c.sel?.id === x.id && c.sel?.flow === x.flow ? " active" : "")
-                  }
-                  onClick={() => select(x.flow, x.id)}
-                >
-                  <span className="run-item-top">
-                    <b>{x.title || "New session"}</b>
-                    {x.status !== "ready" && <span className="badge">{x.status}</span>}
+        {c.sessions.some((x) => x.archived) && (
+          <label className="check chat-show-archived">
+            <input
+              type="checkbox"
+              checked={c.archived}
+              onChange={(e) => ((c.archived = e.target.checked), update())}
+            />{" "}
+            Show archived sessions
+          </label>
+        )}
+        {flows
+          .filter((f) => !S.runner || f.id === S.runner)
+          .map((f) => {
+            const ss = c.sessions.filter((x) => x.flow === f.id && (c.archived || !x.archived));
+            return (
+              <div key={f.id} className="chat-flow">
+                <div className="tree-folder">
+                  <span>💬 {f.name}</span>
+                  <span className="chat-flow-acts">
+                    {!S.runner && (
+                      <button
+                        className="icon-btn"
+                        title="Open this Chatflow in a window of its own (for people who only chat)"
+                        aria-label={"Open " + f.name + " in its own window"}
+                        onClick={() => openRunnerWindow(f.id)}
+                      >
+                        <Icon.panelR />
+                      </button>
+                    )}
+                    <button
+                      className="link"
+                      onClick={() => {
+                        c.starting = f.id;
+                        c.sel = null;
+                        c.inputs = {};
+                        update();
+                      }}
+                    >
+                      <Icon.plus /> New session
+                    </button>
                   </span>
-                  <small className="muted">
-                    {x.messages || 0} messages · {ago(x.updated)}
-                  </small>
-                </button>
-              ))}
-            </div>
-          );
-        })}
+                </div>
+                {ss.map((x) => (
+                  <button
+                    key={x.id}
+                    className={
+                      "run-item chat-sess" + (c.sel?.id === x.id && c.sel?.flow === x.flow ? " active" : "")
+                    }
+                    onClick={() => select(x.flow, x.id)}
+                  >
+                    <span className="run-item-top">
+                      <b>{x.title || "New session"}</b>
+                      {x.status !== "ready" && <span className="badge">{x.status}</span>}
+                      {x.archived && <span className="badge">archived</span>}
+                    </span>
+                    <small className="muted">
+                      {x.messages || 0} messages · {ago(x.updated)}
+                    </small>
+                    <span className="chat-sess-acts" onClick={(e) => e.stopPropagation()}>
+                      <button
+                        className="icon-btn"
+                        title="Rename"
+                        aria-label="Rename"
+                        onClick={() => renameSession(x)}
+                      >
+                        ✏️
+                      </button>
+                      <button
+                        className="icon-btn"
+                        title="Export as Markdown (out/chats)"
+                        aria-label="Export"
+                        onClick={() => exportSession(x)}
+                      >
+                        ⤓
+                      </button>
+                      <button
+                        className="icon-btn"
+                        title={x.archived ? "Restore" : "Archive"}
+                        aria-label={x.archived ? "Restore" : "Archive"}
+                        onClick={() => archiveSession(x)}
+                      >
+                        {x.archived ? "↩" : "🗄"}
+                      </button>
+                      <button
+                        className="icon-btn"
+                        title="Delete"
+                        aria-label="Delete"
+                        onClick={() => deleteSession(x)}
+                      >
+                        🗑
+                      </button>
+                    </span>
+                  </button>
+                ))}
+              </div>
+            );
+          })}
       </nav>
       <section className="view chat-view">
         {startF ? (

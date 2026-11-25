@@ -22,11 +22,13 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -759,4 +761,133 @@ func (h *Hub) RefreshChatSession(flowID, id string) (chat.Session, error) {
 		h.chatPublish(upd, "Refreshed")
 	}()
 	return s, nil
+}
+
+// ArchiveChatSession puts a session away (or back): it stays on disk,
+// listed only when archived sessions are shown.
+func (h *Hub) ArchiveChatSession(flowID, id string, archived bool) (chat.Session, error) {
+	st, _, err := h.chatStore()
+	if err != nil {
+		return chat.Session{}, err
+	}
+	s, err := st.Update(flowID, id, func(s *chat.Session) { s.Archived = archived })
+	h.chatPublish(s, map[bool]string{true: "Archived", false: "Restored"}[archived])
+	return s, err
+}
+
+// ExportChatSession writes a session as Markdown (out/chats/<title>-<date>.md:
+// the questions, answers, the steps run with their results, attachments)
+// and returns its path in the project.
+func (h *Hub) ExportChatSession(flowID, id string) (string, error) {
+	st, root, err := h.chatStore()
+	if err != nil {
+		return "", err
+	}
+	s, err := st.Get(flowID, id)
+	if err != nil {
+		return "", err
+	}
+	ms, err := st.Messages(flowID, id)
+	if err != nil {
+		return "", err
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "# %s\n\n_%s · session %s · started %s_\n", firstNonEmpty(s.Title, "Chat"), s.FlowName, s.ID, s.Created.Format("2006-01-02 15:04"))
+	if len(s.Inputs) > 0 {
+		b.WriteString("\n**Inputs:** ")
+		var parts []string
+		for k, v := range s.Inputs {
+			parts = append(parts, fmt.Sprintf("%s = %s", k, v))
+		}
+		sort.Strings(parts)
+		b.WriteString(strings.Join(parts, " · ") + "\n")
+	}
+	for _, m := range ms {
+		switch m.Role {
+		case "user":
+			fmt.Fprintf(&b, "\n---\n\n### 🧑 %s\n", m.Text)
+			for _, f := range m.Files {
+				fmt.Fprintf(&b, "\n📎 %s\n", strings.TrimPrefix(f, "file-"))
+			}
+		case "assistant":
+			b.WriteString("\n")
+			for _, r := range m.Steps {
+				if r.Error != "" {
+					fmt.Fprintf(&b, "> ▸ %s did not run: %s\n\n", r.Title, r.Error)
+					continue
+				}
+				fmt.Fprintf(&b, "> ▸ ran **%s** (%.1f s)\n\n", r.Title, float64(r.DurationMS)/1000)
+				if r.Data != "" {
+					if c, err := st.GetData(flowID, id, r.Data); err == nil {
+						b.WriteString(resultMarkdown(c) + "\n\n")
+					}
+				}
+				for _, f := range r.Files {
+					fmt.Fprintf(&b, "Saved: `%s`\n\n", f)
+				}
+			}
+			b.WriteString(m.Text + "\n")
+			if m.Error != "" {
+				fmt.Fprintf(&b, "\n_(%s)_\n", m.Error)
+			}
+		}
+	}
+	rel := filepath.ToSlash(filepath.Join("out", "chats", slugify(firstNonEmpty(s.Title, "chat"))+"-"+time.Now().Format("20060102-150405")+".md"))
+	abs := filepath.Join(root, filepath.FromSlash(rel))
+	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+		return "", err
+	}
+	return rel, os.WriteFile(abs, []byte(h.Store.Redactor().String(b.String())), 0o644)
+}
+
+// resultMarkdown: a step's result for an export — rows as a table, other
+// text in a block.
+func resultMarkdown(c string) string {
+	var rows []map[string]any
+	if json.Unmarshal([]byte(strings.TrimSpace(c)), &rows) == nil && len(rows) > 0 && len(rows) <= 200 {
+		var cols []string
+		seen := map[string]bool{}
+		for _, r := range rows {
+			for k := range r {
+				if !seen[k] {
+					seen[k] = true
+					cols = append(cols, k)
+				}
+			}
+		}
+		sort.Strings(cols)
+		var b strings.Builder
+		b.WriteString("| " + strings.Join(cols, " | ") + " |\n|" + strings.Repeat(" --- |", len(cols)) + "\n")
+		for _, r := range rows {
+			var cells []string
+			for _, k := range cols {
+				v := ""
+				if x, ok := r[k]; ok && x != nil {
+					if s, ok := x.(string); ok {
+						v = s
+					} else {
+						bs, _ := json.Marshal(x)
+						v = string(bs)
+					}
+				}
+				cells = append(cells, strings.ReplaceAll(strings.ReplaceAll(v, "|", "\\|"), "\n", " "))
+			}
+			b.WriteString("| " + strings.Join(cells, " | ") + " |\n")
+		}
+		return b.String()
+	}
+	if strings.Contains(c, "data-specwright-chart") {
+		return "_(a chart: see the session in SpecWright)_"
+	}
+	return "```\n" + clipText(c, 4000) + "\n```"
+}
+
+var slugRE = regexp.MustCompile(`[^a-z0-9]+`)
+
+func slugify(s string) string {
+	s = strings.Trim(slugRE.ReplaceAllString(strings.ToLower(s), "-"), "-")
+	if len(s) > 50 {
+		s = strings.Trim(s[:50], "-")
+	}
+	return firstNonEmpty(s, "chat")
 }

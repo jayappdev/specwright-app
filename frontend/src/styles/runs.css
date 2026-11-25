@@ -3871,3 +3871,32 @@ main.main[data-view="chats"] {
   max-height: 84vh;
   overflow: auto;
 }
+.chat-flow-acts {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.chat-sess {
+  position: relative;
+}
+.chat-sess-acts {
+  position: absolute;
+  right: 6px;
+  top: 6px;
+  display: none;
+  gap: 2px;
+  background: var(--surface);
+  border-radius: 6px;
+}
+.chat-sess:hover .chat-sess-acts,
+.chat-sess:focus-within .chat-sess-acts {
+  display: inline-flex;
+}
+.chat-sess-acts .icon-btn {
+  font-size: 12px;
+  padding: 2px 4px;
+}
+.chat-show-archived {
+  margin: 0 8px 8px;
+  font-size: 12px;
+}

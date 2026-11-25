@@ -2905,7 +2905,7 @@ export function createMockBackend(methods) {
       inputs = new Set(f.inputs.map((i) => i.name)),
       ids = new Set(f.nodes.map((n) => n.id));
     if (!f.name?.trim()) add("", "error", "Give the flow a name.");
-    if (!f.nodes.some((n) => n.type === "output"))
+    if (!f.nodes.some((n) => n.type === "output") && !f.nodes.some((n) => n.type === "chat"))
       add("", "warning", "Add an output so the flow produces something.");
     for (const i of f.inputs)
       if (i.type === "secret" && i.default)
@@ -3046,7 +3046,12 @@ export function createMockBackend(methods) {
                 ),
             ),
         );
-        if (feeders.length && !(n.instruction || "").trim() && !uses)
+        if (
+          feeders.length &&
+          !(n.instruction || "").trim() &&
+          !uses &&
+          !feeders.some((x) => x.type === "chat")
+        )
           add(
             n.id,
             "warning",

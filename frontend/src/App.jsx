@@ -127,7 +127,11 @@ async function boot() {
   S.runner = S.info?.runner || new URLSearchParams(location.search).get("runner") || "";
   if (S.runner) {
     if (S.info?.workspace || S.lastWorkspace) await openWorkspace(S.info?.workspace || S.lastWorkspace);
-    openFlowRunner(S.runner);
+    // a Chatflow's window chats; another flow's runs
+    const chats = (await backend.Chatflows().catch(() => [])) || [];
+    S.runnerChat = chats.some((f) => f.id === S.runner);
+    if (!S.runnerChat) openFlowRunner(S.runner);
+    update();
     return;
   }
   refreshAdmin();
@@ -194,13 +198,13 @@ export function App() {
   );
 
   if (S.runner) {
-    // a runner window: that flow's Run screen, nothing else
-    S.view = "flowrun";
+    // a runner window: that flow's Run screen (a Chatflow: its chats), nothing else
+    S.view = S.runnerChat ? "chats" : "flowrun";
     return (
       <div className="app runner-mode">
-        <main className="main main-full" data-view="flowrun">
-          <ErrorBoundary name="Run flows" resetKey="runner">
-            <FlowRun />
+        <main className="main main-full" data-view={S.view}>
+          <ErrorBoundary name={S.runnerChat ? "Chats" : "Run flows"} resetKey="runner">
+            {S.runnerChat ? <Chats /> : <FlowRun />}
           </ErrorBoundary>
         </main>
         <ErrorBoundary floating name="The prompts">

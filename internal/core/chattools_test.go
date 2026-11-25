@@ -2,6 +2,8 @@ package core
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -101,6 +103,24 @@ func TestChatRunsItsTools(t *testing.T) {
 	if len(ag.reqs) != 3 || !ag.reqs[1].Resume || ag.reqs[1].SessionID != ag.reqs[0].SessionID || !strings.Contains(ag.reqs[1].Prompt, "from the AI / region rows") ||
 		!strings.Contains(ag.reqs[2].Prompt, "No saving today.") {
 		t.Fatalf("%+v", ag.reqs)
+	}
+	// export: the questions, the steps with their results, the answers
+	path, err := h.ExportChatSession("sales-qa", s.ID)
+	if err != nil || !strings.HasPrefix(path, "out/chats/which-region-") {
+		t.Fatalf("%s %v", path, err)
+	}
+	md, _ := os.ReadFile(filepath.Join(ws, filepath.FromSlash(path)))
+	for _, want := range []string{"# Which region?", "### 🧑 Which region?", "ran **Shout**", "from the AI / region rows / which region", "Save it did not run: No saving today.", "The answer: FROM THE AI"} {
+		if !strings.Contains(string(md), want) {
+			t.Fatalf("missing %q in\n%s", want, md)
+		}
+	}
+	// archive and restore
+	if x, err := h.ArchiveChatSession("sales-qa", s.ID, true); err != nil || !x.Archived {
+		t.Fatalf("%+v %v", x, err)
+	}
+	if x, _ := h.ArchiveChatSession("sales-qa", s.ID, false); x.Archived {
+		t.Fatal("restored")
 	}
 }
 

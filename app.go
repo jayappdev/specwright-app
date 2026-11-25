@@ -802,3 +802,13 @@ func (a *App) RenameChatSession(flowID, id, title string) (chat.Session, error) 
 
 // DeleteChatSession removes a chat session.
 func (a *App) DeleteChatSession(flowID, id string) error { return a.hub.DeleteChatSession(flowID, id) }
+
+// ArchiveChatSession archives (or restores) a chat session.
+func (a *App) ArchiveChatSession(flowID, id string, archived bool) (chat.Session, error) {
+	return ok(a.hub.ArchiveChatSession(flowID, id, archived))
+}
+
+// ExportChatSession writes a chat session as Markdown and returns its path.
+func (a *App) ExportChatSession(flowID, id string) (string, error) {
+	return ok(a.hub.ExportChatSession(flowID, id))
+}
