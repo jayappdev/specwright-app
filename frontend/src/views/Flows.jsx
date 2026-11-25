@@ -5,16 +5,7 @@
 //   inspector the selected step, or the flow (name, context, skills) when nothing is selected
 // Flows are saved to .codegen/flows/<id>.json (autosave). Running them comes with the executor.
 import { registerPlace } from "../navigation.js";
-import {
-  FlowFilterBar,
-  FlowGroup,
-  FlowTagChips,
-  TagEditor,
-  allTags,
-  flowFilter,
-  groupFlows,
-} from "../flowLists.jsx";
-import { dragProps, loadLayout } from "../listLayout.jsx";
+import { loadLayout } from "../listLayout.jsx";
 import { stepRef, toolRef, isBuiltin, loopInfo, uniqueTitle } from "../flowNames.js";
 import { useEffect, useRef } from "react";
 import { openFlowRunner } from "./FlowRun.jsx";
@@ -30,6 +21,7 @@ import { ToolIcon } from "../ToolTile.jsx";
 import { openFlowGuide } from "./FlowGuide.jsx";
 import { Canvas } from "./flows/Canvas.jsx";
 import { Palette } from "./flows/Palette.jsx";
+import { FlowLibrary } from "./flows/FlowLibrary.jsx";
 import { Inspector, loopFromInputs } from "./flows/Inspector.jsx";
 import { branchName, newCond, nextBranch } from "./flows/Conditions.jsx";
 
@@ -366,6 +358,19 @@ export async function openFlow(id) {
     toast(errMsg(e), "error");
   }
   update();
+}
+
+// closeFlow goes back to the list of flows (saving the open one first).
+export async function closeFlow() {
+  const f = fl();
+  if (!f.flow) return;
+  if (f.conflict)
+    return toast("Choose which version of this flow to keep first (the banner above the canvas).", "error");
+  if (f.dirty) await save();
+  if (f.dirty) return; // the save failed: stay, so nothing is lost
+  Object.assign(f, { id: "", flow: null, sel: null, selEdge: null, multi: [], repairs: null });
+  update();
+  loadList();
 }
 
 // What every step gets and gives (designer metadata; never sent to the AI).
@@ -1200,9 +1205,6 @@ export function Flows() {
       loadLayout();
     }
   }, [S.ws?.root]);
-  useEffect(() => {
-    if (S.ws && f.list?.length && !f.flow && !f.id) openFlow(f.list[0].id);
-  }, [f.list]);
   // shown again (switching from another view): the flow may have changed meanwhile
   useEffect(() => {
     if (S.ws && fl().flow) checkDisk("shown");
@@ -1214,176 +1216,34 @@ export function Flows() {
     [],
   );
   if (!S.ws) return <NeedWorkspace what="the flow designer" />;
+  const importInput = (
+    <input
+      ref={imp}
+      type="file"
+      accept=".json,application/json"
+      hidden
+      onChange={(e) => {
+        const file = e.target.files[0];
+        e.target.value = "";
+        if (file) importFlow(file);
+      }}
+    />
+  );
   return (
-    <div className={"files flows" + (S.layout["flows:list:c"] && f.flow ? " list-c" : "")}>
-      <Pane k="flows" v="--pane-l" pane=":scope > .ftree" min={180} max={420} label="Resize the flow list" />
-      <nav className="ftree" aria-label="Flows">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            gap: 6,
-            padding: "0 8px 8px",
-          }}
-        >
-          <h1>Flows</h1>
-          <span className="grow" />
-          <button className="btn primary" onClick={newFlow}>
-            + New
-          </button>
-          {f.flow && (
-            <button
-              className="icon-btn"
-              aria-label="Hide the flow list"
-              title="Hide the flow list (the flow menu in the header still switches flows)"
-              onClick={() => togglePane("flows:list:c")}
-            >
-              <Icon.panelL />
-            </button>
-          )}
-        </div>
-        <div style={{ padding: "0 8px 8px", display: "grid", gap: 4, justifyItems: "start" }}>
-          <button
-            className="link"
-            title="Describe what you want: the AI works out the requirements with you, plans, and builds draft flows to try"
-            onClick={() => openWizard()}
-          >
-            <Icon.spark /> New flow with AI
-          </button>
-          {S.flowClip && (
-            <button
-              className="link"
-              title={`${S.flowClip.nodes.length} copied step(s) from ${S.flowClip.from || "a flow"}`}
-              onClick={() => pasteFromClipboard(true)}
-            >
-              Paste {S.flowClip.nodes.length} step{S.flowClip.nodes.length === 1 ? "" : "s"} as a new flow
-            </button>
-          )}
-        </div>
-        <FlowFilterBar area="designer" list={f.list} />
-        {(() => {
-          const groups = groupFlows(f.list, flowFilter("designer"));
-          if ((f.list || []).length && !groups.length)
-            return (
-              <p className="muted" style={{ padding: "4px 8px" }}>
-                No flow matches.
-              </p>
-            );
-          return groups.map((g) => (
-            <FlowGroup
-              key={g.key}
-              area="designer"
-              name={g.name}
-              heading={g.heading}
-              count={g.items.length}
-              groups={groups.length}
-            >
-              {g.items.map((x) => (
-                <button
-                  key={x.id}
-                  {...dragProps("flows", x.id)}
-                  className={"run-item" + (x.id === f.flow?.id ? " active" : "")}
-                  onClick={() => openFlow(x.id)}
-                >
-                  <span className="run-item-top">
-                    <b>{x.name}</b>
-                    {x.chat && (
-                      <span className="badge badge-info" title="A Chatflow: chatted with on the Chats screen">
-                        chat
-                      </span>
-                    )}
-                    {x.revision > 1 && (
-                      <span
-                        className="badge"
-                        title={
-                          "A version of " + ((f.list || []).find((y) => y.id === x.parent)?.name || x.parent)
-                        }
-                      >
-                        v{x.revision}
-                      </span>
-                    )}
-                  </span>
-                  <small>
-                    {x.steps} step{x.steps === 1 ? "" : "s"} · {x.outputs} output{x.outputs === 1 ? "" : "s"}
-                    {x.updated ? " · " + new Date(x.updated).toLocaleDateString() : ""}
-                  </small>
-                  <FlowTagChips tags={x.tags} area="designer" />
-                </button>
-              ))}
-            </FlowGroup>
-          ));
-        })()}
-        {f.list && !f.list.length && (
-          <p className="muted" style={{ padding: "4px 8px" }}>
-            No flows yet. A flow strings tools together: inputs → tools, AI, merges and transforms → outputs.
-          </p>
-        )}
-        <div style={{ padding: "10px 8px" }}>
-          <button className="btn secondary" onClick={() => imp.current?.click()}>
-            Import…
-          </button>
-          <input
-            ref={imp}
-            type="file"
-            accept=".json,application/json"
-            hidden
-            onChange={(e) => {
-              const file = e.target.files[0];
-              e.target.value = "";
-              if (file) importFlow(file);
-            }}
-          />
-        </div>
-      </nav>
+    <div className={"flows" + (f.flow ? " is-editing" : " is-library")}>
+      {importInput}
       {f.flow ? (
         <div className="fl-main">
           <header className="fl-bar">
-            {S.layout["flows:list:c"] && (
-              <button
-                className="icon-btn fl-list-show"
-                aria-label="Show the flow list"
-                title="Show the flow list"
-                onClick={() => togglePane("flows:list:c")}
-              >
-                <Icon.panelL />
-              </button>
-            )}
-            <select
-              className="fl-switch"
-              aria-label="Open a flow"
-              value={f.flow.id}
-              onChange={(e) => {
-                const v = e.target.value;
-                e.target.value = f.flow.id;
-                v === "+new"
-                  ? newFlow()
-                  : v === "+ai"
-                    ? openWizard()
-                    : v === "+paste"
-                      ? pasteFromClipboard(true)
-                      : v === "+import"
-                        ? imp.current?.click()
-                        : openFlow(v);
-              }}
-            >
-              {(f.list || []).map((x) => (
-                <option key={x.id} value={x.id}>
-                  {x.name}
-                </option>
-              ))}
-              <option value="+new">+ New flow…</option>
-              <option value="+ai">New flow with AI…</option>
-              {S.flowClip && (
-                <option value="+paste">
-                  Paste {S.flowClip.nodes.length} copied step{S.flowClip.nodes.length === 1 ? "" : "s"} as a
-                  new flow
-                </option>
-              )}
-              <option value="+import">Import…</option>
-            </select>
+            <button className="fl-back" title="Back to all flows" onClick={closeFlow}>
+              <Icon.back /> Flows
+            </button>
+            <span className="fl-crumb" aria-hidden="true">
+              /
+            </span>
             <input
               className="fl-name"
+              size={Math.min(48, Math.max(12, (f.flow.name || "").length + 2))}
               value={f.flow.name}
               aria-label="Flow name"
               onChange={(e) => {
@@ -1391,6 +1251,11 @@ export function Flows() {
                 changed();
               }}
             />
+            {f.flow.nodes.some((n) => n.type === "chat") && (
+              <span className="badge badge-info" title="A Chatflow: chatted with on the Chats screen">
+                chat
+              </span>
+            )}
             <Issues />
             <span className={"fl-saved" + (f.dirty && !f.saving ? " is-dirty" : " muted")} role="status">
               {f.saving ? "Saving…" : f.dirty ? "Unsaved changes" : "Saved"}
@@ -1435,17 +1300,6 @@ export function Flows() {
               ]}
             />
           </header>
-          <div className="fl-tagrow">
-            <span className="muted">Tags</span>
-            <TagEditor
-              tags={f.flow.tags || []}
-              suggestions={allTags(f.list)}
-              onChange={(t) => {
-                f.flow.tags = t;
-                changed();
-              }}
-            />
-          </div>
           {f.repairs && (
             <div className="banner fl-conflict" role="status">
               <span>
@@ -1533,33 +1387,18 @@ export function Flows() {
           </div>
         </div>
       ) : (
-        <section className="view">
-          <div className="card">
-            <h3>Design a flow</h3>
-            <p className="wf-desc">
-              Drag tools onto a canvas and connect them. Give the flow inputs (text, files, clipboard), a
-              custom context and skills; merge and transform data between steps; and produce outputs as
-              Markdown, text, HTML, CSV or JSON that are saved, passed to a tool, copied or shown.
-            </p>
-            <p className="wf-desc">
-              New to flows? The{" "}
-              <button className="link" onClick={() => openFlowGuide("")}>
-                Flow step guide
-              </button>{" "}
-              explains every step with examples you can open here.
-            </p>
-            <div className="row-actions">
-              <button className="btn primary" onClick={() => openWizard()}>
-                <Icon.spark /> Describe it to the AI
-              </button>
-              <button className="btn secondary" onClick={newFlow}>
-                Create a flow
-              </button>
-              <button className="btn secondary" onClick={() => imp.current?.click()}>
-                Import a flow…
-              </button>
-            </div>
-          </div>
+        <section className="view fl-lib-view">
+          <FlowLibrary
+            list={f.list}
+            actions={{
+              open: openFlow,
+              create: newFlow,
+              withAI: () => openWizard(),
+              importFile: () => imp.current?.click(),
+              paste: () => pasteFromClipboard(true),
+              guide: () => openFlowGuide(""),
+            }}
+          />
           {f.ai?.open && <AIDesigner inline />}
           {wz().open && <FlowWizard />}
         </section>
@@ -1571,4 +1410,8 @@ export function Flows() {
 // --- the AI designer ---------------------------------------------------------------
 
 // Back / Forward: the flow open in the designer (navigation.js)
-registerPlace("flows", { key: () => S.fl?.flow?.id || "", restore: (id) => openFlow(id) });
+registerPlace("flows", {
+  key: () => S.fl?.flow?.id || "",
+  restore: (id) => (id ? openFlow(id) : closeFlow()),
+  restoreEmpty: true, // "" is the list of flows: Back from a flow returns to it
+});
