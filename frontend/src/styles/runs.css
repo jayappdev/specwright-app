@@ -3707,6 +3707,16 @@ main.main[data-view="chats"] {
 .chat-chip-args {
   margin-bottom: 6px;
 }
+.chat-sql {
+  margin: 0 0 6px;
+  padding: 6px 8px;
+  background: var(--code-bg, var(--panel));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  font-size: 11.5px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
 .chat-chip-out {
   max-height: 260px;
   overflow: auto;
@@ -3768,6 +3778,10 @@ main.main[data-view="chats"] {
 }
 .chat-data:hover {
   color: var(--link);
+}
+.chat-indexed {
+  margin-left: 6px;
+  font-size: 10px;
 }
 .chat-tool {
   display: flex;

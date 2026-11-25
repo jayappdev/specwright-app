@@ -73,8 +73,8 @@ func TestChatRunsItsTools(t *testing.T) {
 	if _, err := h.ApproveExtension("echo-arg"); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(h.chatToolsText(f), `tool "echo"`) || !strings.Contains(h.chatToolsText(f), "echo.v") || !strings.Contains(h.chatToolsText(f), "the person is asked") {
-		t.Fatal(h.chatToolsText(f))
+	if !strings.Contains(h.chatToolsText(f, ""), `tool "echo"`) || !strings.Contains(h.chatToolsText(f, ""), "echo.v") || !strings.Contains(h.chatToolsText(f, ""), "the person is asked") {
+		t.Fatal(h.chatToolsText(f, ""))
 	}
 	s, err := h.StartChatSession("sales-qa", nil)
 	if err != nil {

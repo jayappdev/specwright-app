@@ -179,6 +179,7 @@ const METHODS = [
   "ChatSession",
   "ChatMessages",
   "ChatData",
+  "ChatCatalog",
   "StartChatSession",
   "SendChatMessage",
   "StopChatMessage",

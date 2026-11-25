@@ -767,6 +767,11 @@ func (a *App) ChatMessages(flowID, id string) ([]chat.Message, error) {
 	return ok(a.hub.ChatMessages(flowID, id))
 }
 
+// ChatCatalog lists a chat session's indexed data: tables and documents.
+func (a *App) ChatCatalog(flowID, id string) ([]chat.Entry, error) {
+	return ok(a.hub.ChatCatalog(flowID, id))
+}
+
 // ChatData reads one of a chat session's data items.
 func (a *App) ChatData(flowID, id, name string) (string, error) {
 	return ok(a.hub.ChatData(flowID, id, name))

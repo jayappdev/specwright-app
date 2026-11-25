@@ -321,6 +321,9 @@ var (
 	reTitle = regexp.MustCompile(`(?is)<title[^>]*>(.*?)</title>`)
 )
 
+// HTMLToText is a page's title and its text (no tags, scripts or styles).
+func HTMLToText(s string) (title, text string) { return htmlToText(s) }
+
 func htmlToText(s string) (title, text string) {
 	if m := reTitle.FindStringSubmatch(s); m != nil {
 		title = strings.TrimSpace(html.UnescapeString(m[1]))

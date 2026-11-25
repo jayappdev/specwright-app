@@ -5,7 +5,7 @@
 // results open in the content viewer (tables, charts with Export PNG);
 // charts show at once. Files can be attached; suggested follow-ups and
 // /refresh, /data and /steps work in the message box.
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { ContentView, chartOf, RenderPreview } from "../ContentView.jsx";
 import { FileLink } from "../FileLinks.jsx";
 import { backend } from "../backend.js";
@@ -330,11 +330,17 @@ function StepChip({ r, s, k }) {
           {r.error && <div className="banner error">{r.error}</div>}
           {r.args && Object.keys(r.args).length > 0 && (
             <div className="chat-chip-args">
-              {Object.entries(r.args).map(([a, v]) => (
-                <div key={a}>
-                  <code className="inline-code">{a}</code> {typeof v === "string" ? v : JSON.stringify(v)}
-                </div>
-              ))}
+              {Object.entries(r.args).map(([a, v]) =>
+                a === "sql" ? (
+                  <pre key={a} className="chat-sql">
+                    {v}
+                  </pre>
+                ) : (
+                  <div key={a}>
+                    <code className="inline-code">{a}</code> {typeof v === "string" ? v : JSON.stringify(v)}
+                  </div>
+                ),
+              )}
             </div>
           )}
           {result === null && <p className="muted">Loading…</p>}
@@ -647,8 +653,41 @@ function Conversation({ s, f }) {
 }
 
 // Panel: the session at a glance (names only: never a secret's value)
+// useCatalog: the session's indexed data (tables to query, documents to
+// search), loaded again when the session changes.
+function useCatalog(s) {
+  const [cat, setCat] = useState({});
+  const key = s.flow + "/" + s.id + "/" + (s.data || []).length + "/" + (s.setupAt || "");
+  useEffect(() => {
+    let live = true;
+    if (s.status !== "ready") return undefined;
+    backend
+      .ChatCatalog(s.flow, s.id)
+      .then((list) => live && setCat(Object.fromEntries((list || []).map((e) => [e.name, e]))))
+      .catch(() => live && setCat({}));
+    return () => {
+      live = false;
+    };
+  }, [key, s.status]); // the key covers the session changes that matter
+  return cat;
+}
+
+const SMALL_DATA = 20000; // as chatSmallData: larger data is queried or searched, not sent
+
+function catalogLabel(e) {
+  if (!e) return "";
+  const n = (k, one, many) => (k || 0).toLocaleString() + " " + (k === 1 ? one : many);
+  return e.kind === "table"
+    ? "table · " + n(e.rows, "row", "rows")
+    : "text · " + n(e.passages, "passage", "passages");
+}
+
 function Panel({ s, f }) {
   const c = cs();
+  const cat = useCatalog(s);
+  const entries = Object.values(cat);
+  const tables = entries.filter((e) => e.kind === "table"),
+    docs = entries.filter((e) => e.kind === "text");
   const show = async (d) => {
     try {
       c.preview = {
@@ -726,13 +765,36 @@ function Panel({ s, f }) {
             <small className="muted">
               {" "}
               {d.bytes > 1024 ? Math.round(d.bytes / 1024) + " KB" : d.bytes + " B"}
+              {cat[d.name] && " · " + catalogLabel(cat[d.name])}
             </small>
+            {cat[d.name] && d.bytes > SMALL_DATA && (
+              <span
+                className="badge chat-indexed"
+                title={
+                  cat[d.name].kind === "table"
+                    ? "Too large to send whole: the AI gets its columns and first rows, and queries it with SQL"
+                    : "Too large to send whole: the AI gets the passages that match each question, and can search for more"
+                }
+              >
+                {cat[d.name].kind === "table" ? "queried" : "searched"}
+              </span>
+            )}
           </button>
         ))}
         {!(s.data || []).length && <small className="muted">Nothing yet.</small>}
       </section>
       <section>
-        <h4>Can run · {(f?.tools || []).length}</h4>
+        <h4>Can run · {(f?.tools || []).length + (tables.length ? 1 : 0) + (docs.length ? 1 : 0)}</h4>
+        {tables.length > 0 && (
+          <div className="chat-tool" title={"SQL over " + tables.map((e) => e.table).join(", ")}>
+            Query the data <span className="badge">built in</span>
+          </div>
+        )}
+        {docs.length > 0 && (
+          <div className="chat-tool" title="Full-text search of the documents">
+            Search the documents <span className="badge">built in</span>
+          </div>
+        )}
         {(f?.tools || []).map((t) => (
           <div key={t.id} className="chat-tool">
             {t.title}

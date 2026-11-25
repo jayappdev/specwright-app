@@ -106,14 +106,20 @@ func (h *Hub) chatToolFields(f *flow.Flow, t flow.ChatTool) map[string]string {
 	return out
 }
 
-// chatToolsText is the part of the first prompt that lists the tools.
-func (h *Hub) chatToolsText(f *flow.Flow) string {
+// chatToolsText is the part of the first prompt that lists the tools:
+// the branches (each a short pipeline of steps) and the built-in ones;
+// builtins lists the built-in data tools (chatData.toolsText).
+func (h *Hub) chatToolsText(f *flow.Flow, builtins string) string {
 	tools := f.ChatTools()
-	if len(tools) == 0 {
+	if len(tools) == 0 && builtins == "" {
 		return ""
 	}
 	var b strings.Builder
-	b.WriteString("\nWHAT YOU CAN RUN (each is a short pipeline of steps; it runs in SpecWright, not on your side):\n")
+	b.WriteString("\nWHAT YOU CAN RUN (it runs in SpecWright, not on your side):\n")
+	b.WriteString(builtins)
+	if len(tools) > 0 && builtins != "" {
+		b.WriteString("\n")
+	}
 	for _, t := range tools {
 		var titles []string
 		for _, id := range t.Steps {
@@ -144,7 +150,7 @@ func (h *Hub) chatToolsText(f *flow.Flow) string {
 			b.WriteString("\n  (it changes things: the person is asked before it runs)")
 		}
 	}
-	b.WriteString("\n\nTo run one, reply with only this block (then stop; you get its result and continue):\n```specwright-run\n{\"tool\": \"<tool id>\", \"args\": {\"<step>.<field>\": \"value\"}, \"message\": \"<what to pass on, if the steps use it>\", \"why\": \"<one short reason>\"}\n```\nRun a tool only when the session data does not already answer the question; at most " + fmt.Sprint(maxChatRuns) + " per question. Never put secrets or passwords in a field.\n")
+	b.WriteString("\n\nTo run one, reply with only this block (then stop; you get its result and continue):\n```specwright-run\n{\"tool\": \"<tool id>\", \"args\": {\"<step>.<field> (or sql / query)\": \"value\"}, \"message\": \"<what to pass on, if the steps use it>\", \"why\": \"<one short reason>\"}\n```\nSeveral blocks in one reply run together. Run a tool only when the session data (and the passages sent with the question) do not already answer it; at most " + fmt.Sprint(maxChatRuns) + " pipelines and " + fmt.Sprint(maxDataRuns) + " data.query or data.search runs per question. Never put secrets or passwords in a field.\n")
 	return b.String()
 }
 

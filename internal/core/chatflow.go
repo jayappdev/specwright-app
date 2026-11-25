@@ -189,6 +189,31 @@ func (h *Hub) ChatMessages(flowID, id string) ([]chat.Message, error) {
 	return st.Messages(flowID, id)
 }
 
+// ChatCatalog is what a session's index holds: its tables (to query) and
+// documents (to search). It indexes what is new first.
+func (h *Hub) ChatCatalog(flowID, id string) ([]chat.Entry, error) {
+	st, _, err := h.chatStore()
+	if err != nil {
+		return nil, err
+	}
+	s, err := st.Get(flowID, id)
+	if err != nil {
+		return nil, err
+	}
+	d := h.openChatData(st, s)
+	defer d.close()
+	if d.x == nil {
+		return nil, d.err
+	}
+	out := []chat.Entry{}
+	for _, it := range d.s.Data {
+		if e, ok := d.cat[it.Name]; ok {
+			out = append(out, e)
+		}
+	}
+	return out, nil
+}
+
 // ChatData reads one of a session's data items.
 func (h *Hub) ChatData(flowID, id, name string) (string, error) {
 	st, _, err := h.chatStore()
@@ -404,36 +429,10 @@ func (h *Hub) runChatSetup(root string, f *flow.Flow, sess chat.Session, o FlowR
 	h.chatPublish(upd, "Ready")
 }
 
-// chatDataText is the session's data for the AI's first message.
-func chatDataText(st *chat.Store, s chat.Session, setupOnly bool) string {
-	if len(s.Data) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	total := 0
-	for _, d := range s.Data {
-		if setupOnly && !d.Setup {
-			continue
-		}
-		c, err := st.GetData(s.Flow, s.ID, d.Name)
-		if err != nil {
-			continue
-		}
-		c = clipText(c, 20000)
-		if total+len(c) > 80000 {
-			fmt.Fprintf(&b, "\n### %s\n(left out: the data is too large to send; ask for a summary step)\n", firstNonEmpty(d.Title, d.Name))
-			continue
-		}
-		total += len(c)
-		fmt.Fprintf(&b, "\n### %s (%s)\n```\n%s\n```\n", firstNonEmpty(d.Title, d.Name), d.Name, c)
-	}
-	return b.String()
-}
-
 // chatPrompt is the first prompt of a session's AI conversation: the
 // Chatflow's instructions, the session's inputs and data, and (when the
 // conversation is started again) what was said so far.
-func chatPrompt(f *flow.Flow, st *chat.Store, s chat.Session, history []chat.Message, question, tools string) string {
+func chatPrompt(f *flow.Flow, data *chatData, s chat.Session, history []chat.Message, question, tools string) string {
 	c := f.ChatNode()
 	var b strings.Builder
 	fmt.Fprintf(&b, "You are the assistant of the Chatflow %q in SpecWright. Answer the person's questions about the session's data below, in Markdown. Be accurate: use the data (and what you run), say when it does not answer a question, and do not make numbers up. Do not edit files or run commands yourself.\n", f.Name)
@@ -446,7 +445,7 @@ func chatPrompt(f *flow.Flow, st *chat.Store, s chat.Session, history []chat.Mes
 			fmt.Fprintf(&b, "- %s: %s\n", k, clipText(v, 500))
 		}
 	}
-	if d := chatDataText(st, s, false); d != "" {
+	if d := data.text(false); d != "" {
 		b.WriteString("\nSESSION DATA (from the setup steps; it stays the same for the session):" + d)
 	}
 	b.WriteString(tools)
@@ -512,7 +511,7 @@ func (h *Hub) SendChatMessage(flowID, id, text string, files []string) (chat.Mes
 	}
 	s, _ = st.Get(flowID, id)
 	h.chatPublish(s, "Question")
-	go h.answerChat(ctx, cancel, root, f, s, history, text+chatAttachments(st, s, files))
+	go h.answerChat(ctx, cancel, root, f, s, history, text, files)
 	return q, nil
 }
 
@@ -528,8 +527,12 @@ func (h *Hub) StopChatMessage(flowID, id string) error {
 	return nil
 }
 
-func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root string, f *flow.Flow, s chat.Session, history []chat.Message, question string) {
+func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root string, f *flow.Flow, s chat.Session, history []chat.Message, question string, files []string) {
 	st := chat.New(root)
+	data := h.openChatData(st, s)
+	defer data.close()
+	// what was attached, and the passages of large documents that match the question
+	question += data.attachments(files) + data.passages(question)
 	key := chatKey(s.Flow, s.ID)
 	defer func() {
 		cancel()
@@ -545,9 +548,9 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 		s.AgentSession = "" // another agent cannot continue that conversation
 	}
 	req := agent.Request{Purpose: "chat", Step: "chat", Dir: root, Model: s.Model, Env: h.childEnv(), ReadOnly: true}
-	first := chatPrompt(f, st, s, history, question, h.chatToolsText(f))
+	first := chatPrompt(f, data, s, history, question, h.chatToolsText(f, data.toolsText()))
 	if s.Refreshed && s.AgentSession != "" { // the setup ran again: the AI gets the new data
-		question = "THE SESSION DATA WAS REFRESHED (it replaces what you had):" + chatDataText(st, s, true) + "\n\n" + question
+		question = "THE SESSION DATA WAS REFRESHED (it replaces what you had):" + data.text(true) + "\n\n" + question
 	}
 	if s.AgentSession != "" {
 		req.SessionID, req.Resume, req.Prompt = s.AgentSession, true, question
@@ -584,6 +587,7 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 	var res agent.Result
 	var steps []chat.StepRun
 	var answer string
+	branchRuns, dataRuns := 0, 0
 	cost := 0.0
 	for round := 0; err == nil; round++ {
 		text.Reset()
@@ -598,23 +602,39 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 		if err != nil || len(calls) == 0 || ctx.Err() != nil {
 			break
 		}
-		if len(steps) >= maxChatRuns {
-			answer = strings.TrimSpace(answer + "\n\n_(It wanted to run more, but a question may run at most " + fmt.Sprint(maxChatRuns) + " tools.)_")
-			break
-		}
-		// run what it asked for, and give the results back
+		// run what it asked for (the built-in data tools at once, the
+		// branches as flows), and give the results back
 		var results strings.Builder
+		ran := 0
 		for _, c := range calls {
-			if len(steps) >= maxChatRuns {
-				break
+			isData := isDataTool(c.Tool)
+			if (isData && dataRuns >= maxDataRuns) || (!isData && branchRuns >= maxChatRuns) {
+				continue
 			}
-			run, out := h.runChatTool(ctx, root, f, s, c, s.Messages+len(steps)+1)
+			var run chat.StepRun
+			var out string
+			n := s.Messages + len(steps) + 1
+			if isData {
+				dataRuns++
+				run, out = data.runDataTool(ctx, c, n)
+			} else {
+				branchRuns++
+				run, out = h.runChatTool(ctx, root, f, s, c, n)
+			}
 			steps = append(steps, run)
+			ran++
 			if run.Error != "" {
 				fmt.Fprintf(&results, "\n### %s: it did not run\n%s\n", run.Title, run.Error)
 			} else {
-				fmt.Fprintf(&results, "\n### %s (result)\n```\n%s\n```\n", run.Title, clipText(out, 15000))
+				fmt.Fprintf(&results, "\n### %s (result)\n```\n%s\n```\n", run.Title, clipKeep(out, 15000))
+				if !isData {
+					results.WriteString(data.tableNote(run, out, 15000))
+				}
 			}
+		}
+		if ran == 0 {
+			answer = strings.TrimSpace(answer + "\n\n_(It wanted to run more, but a question may run at most " + fmt.Sprint(maxChatRuns) + " tools and " + fmt.Sprint(maxDataRuns) + " data queries or searches.)_")
+			break
 		}
 		next := "RESULTS OF WHAT YOU RAN:" + results.String() + "\nNow answer the question from these results (or run another tool if you really need to)."
 		if res.SessionID != "" { // the same conversation goes on
@@ -663,23 +683,6 @@ func splitFollowups(answer string) (string, []string) {
 		}
 	}
 	return strings.TrimSpace(answer[:m[0]] + answer[m[1]:]), out
-}
-
-// chatAttachments: what the person attached to a message, for the AI.
-func chatAttachments(st *chat.Store, s chat.Session, names []string) string {
-	if len(names) == 0 {
-		return ""
-	}
-	var b strings.Builder
-	b.WriteString("\n\nATTACHED BY THE PERSON:")
-	for _, n := range names {
-		c, err := st.GetData(s.Flow, s.ID, n)
-		if err != nil {
-			continue
-		}
-		fmt.Fprintf(&b, "\n### %s\n```\n%s\n```", n, clipText(c, 20000))
-	}
-	return b.String()
 }
 
 // AttachChatFile keeps a file the person attached to a session: text is

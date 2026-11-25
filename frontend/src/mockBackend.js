@@ -6646,6 +6646,51 @@ export function createMockBackend(methods) {
     async ChatData(flow, id, name) {
       return db.chats?.data[flow + "/" + id]?.[name] ?? "";
     },
+    // a rough copy of the Go index: CSV-like data is a table, the rest text
+    async ChatCatalog(flow, id) {
+      const s = db.chats?.sessions.find((x) => x.flow === flow && x.id === id);
+      if (!s) throw new Error("no session " + id);
+      return (s.data || [])
+        .filter((d) => !(d.step || "").startsWith("data."))
+        .map((d) => {
+          const text = db.chats.data[flow + "/" + id]?.[d.name] ?? "";
+          let rows = null;
+          try {
+            const v = JSON.parse(text);
+            if (Array.isArray(v) && v.length && v.every((x) => x && typeof x === "object"))
+              rows = [Object.keys(v[0]).join(","), ...v.map(() => "")];
+          } catch {
+            /* not JSON */
+          }
+          const lines = rows || text.trim().split("\n");
+          const sep = [",", "\t", "|"].find((x) => lines[0].includes(x));
+          const table = lines.length > 1 && !!sep;
+          return table
+            ? {
+                name: d.name,
+                title: d.title,
+                kind: "table",
+                table: d.name
+                  .replace(/\.[^.]+$/, "")
+                  .replace(/[^a-z0-9]+/gi, "_")
+                  .toLowerCase(),
+                columns: lines[0]
+                  .split(sep)
+                  .map((n) => n.trim())
+                  .filter(Boolean)
+                  .map((n) => ({ name: n, type: "TEXT" })),
+                rows: lines.length - 1,
+                bytes: text.length,
+              }
+            : {
+                name: d.name,
+                title: d.title,
+                kind: "text",
+                passages: Math.max(1, Math.ceil(text.length / 1200)),
+                bytes: text.length,
+              };
+        });
+    },
     async StartChatSession(flow, inputs = {}) {
       const info = (await api.Chatflows()).find((f) => f.id === flow);
       if (!info) throw new Error(flow + " is not a Chatflow");
