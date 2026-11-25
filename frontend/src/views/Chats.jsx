@@ -16,6 +16,7 @@ import { ago } from "../time.js";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { openRunnerWindow } from "./FlowRun.jsx";
+import { UsageButton, UsageDialog, UsageLine } from "./ChatUsage.jsx";
 
 const cs = () =>
   (S.chat ||= {
@@ -351,13 +352,25 @@ function StepChip({ r, s, k }) {
   );
 }
 
+function Avatar({ role }) {
+  return (
+    <div className={"chat-avatar chat-avatar-" + role} aria-hidden="true">
+      {role === "user" ? <Icon.user /> : role === "note" ? <Icon.book /> : <Icon.spark />}
+    </div>
+  );
+}
+
 function Message({ m, s, last, onAsk }) {
   return (
     <div className={"chat-msg chat-" + m.role}>
-      <div className="chat-avatar" aria-hidden="true">
-        {m.role === "user" ? "🧑" : m.role === "note" ? "ℹ️" : "🤖"}
-      </div>
+      <Avatar role={m.role} />
       <div className="chat-bubble">
+        {m.role !== "user" && (
+          <div className="chat-who">
+            {m.role === "note" ? "Note" : "Assistant"}
+            {m.at && <span className="muted"> · {ago(m.at)}</span>}
+          </div>
+        )}
         {(m.steps || []).map((r, i) => (
           <StepChip key={i} r={r} s={s} k={keyOf(s) + "/" + m.id + "/" + i} />
         ))}
@@ -367,9 +380,12 @@ function Message({ m, s, last, onAsk }) {
           <div className="rich md" dangerouslySetInnerHTML={{ __html: mdRender(m.text || "") }} />
         )}
         {(m.files || []).length > 0 && (
-          <div className="chat-files">📎 {m.files.map((f) => f.replace(/^file-/, "")).join(", ")}</div>
+          <div className="chat-files">
+            <Icon.clip /> {m.files.map((f) => f.replace(/^file-/, "")).join(", ")}
+          </div>
         )}
         {m.error && <div className="banner error chat-err">{m.error}</div>}
+        {m.role === "assistant" && <UsageLine m={m} />}
         {last && (m.followups || []).length > 0 && (
           <div className="chat-follow">
             {m.followups.map((q) => (
@@ -496,22 +512,42 @@ function Conversation({ s, f }) {
   return (
     <section className="chat-main">
       <header className="chat-head">
-        <div>
+        <div className="chat-head-title">
           <h2>{s.title || "New session"}</h2>
-          <small className="muted">
-            {s.flowName} · {s.status === "ready" ? "ready" : s.status === "setup" ? "setting up…" : s.status}
-          </small>
+          <div className="chat-head-meta">
+            <span className={"chat-status chat-status-" + s.status}>
+              {s.status === "ready"
+                ? "Ready"
+                : s.status === "setup"
+                  ? "Setting up…"
+                  : s.status === "failed"
+                    ? "Failed"
+                    : s.status}
+            </span>
+            <span>{s.flowName}</span>
+            {s.agent && (
+              <span>
+                {s.agent}
+                {s.model ? " · " + s.model : ""}
+              </span>
+            )}
+            <span>{(s.messages || 0).toLocaleString()} messages</span>
+          </div>
         </div>
-        <button
-          className="icon-btn"
-          title={c.panel ? "Hide the session panel" : "Show the session panel"}
-          aria-label="Session panel"
-          aria-pressed={c.panel}
-          onClick={() => ((c.panel = !c.panel), update())}
-        >
-          <Icon.panelR />
-        </button>
+        <div className="chat-head-acts">
+          <UsageButton s={s} onClick={() => ((c.usage = true), update())} />
+          <button
+            className="icon-btn"
+            title={c.panel ? "Hide the session panel" : "Show the session panel"}
+            aria-label="Session panel"
+            aria-pressed={c.panel}
+            onClick={() => ((c.panel = !c.panel), update())}
+          >
+            <Icon.panelR />
+          </button>
+        </div>
       </header>
+      {c.usage && <UsageDialog s={s} msgs={msgs} onClose={() => ((c.usage = false), update())} />}
       <div className="chat-scroll">
         {s.status === "setup" && (
           <div className="banner">⏳ Setting up the session: {f?.setup?.join(", ")}…</div>
@@ -530,10 +566,11 @@ function Conversation({ s, f }) {
         {rows}
         {live !== undefined && (
           <div className="chat-msg chat-assistant">
-            <div className="chat-avatar" aria-hidden="true">
-              🤖
-            </div>
+            <Avatar role="assistant" />
             <div className="chat-bubble">
+              <div className="chat-who">
+                Assistant <span className="muted">· {live ? "writing…" : "thinking…"}</span>
+              </div>
               {(c.liveSteps[k] || []).map((r, i) => (
                 <StepChip key={i} r={r} s={s} k={k + "/live/" + i} />
               ))}
@@ -571,47 +608,29 @@ function Conversation({ s, f }) {
             ))}
           </div>
         )}
-        {files.length > 0 && (
-          <div className="chat-attach">
-            {files.map((x, i) => (
-              <span key={i} className="chip">
-                📎 {x.name}
-                <button
-                  className="icon-btn"
-                  aria-label={"Remove " + x.name}
-                  onClick={() => ((c.attach[k] = files.filter((_, j) => j !== i)), update())}
-                >
-                  <Icon.x />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
-        <div className="chat-compose-row">
-          <button
-            className="icon-btn"
-            title="Attach files (or drop or paste them here)"
-            aria-label="Attach files"
-            disabled={s.status !== "ready"}
-            onClick={() => picker.current?.click()}
-          >
-            📎
-          </button>
-          <input
-            ref={picker}
-            type="file"
-            multiple
-            hidden
-            onChange={(e) => {
-              attach([...e.target.files]);
-              e.target.value = "";
-            }}
-          />
+        <div className="chat-compose-card">
+          {files.length > 0 && (
+            <div className="chat-attach">
+              {files.map((x, i) => (
+                <span key={i} className="chip">
+                  <Icon.clip /> {x.name}
+                  <button
+                    className="icon-btn"
+                    aria-label={"Remove " + x.name}
+                    onClick={() => ((c.attach[k] = files.filter((_, j) => j !== i)), update())}
+                  >
+                    <Icon.x />
+                  </button>
+                </span>
+              ))}
+            </div>
+          )}
           <textarea
             rows={2}
             value={c.draft}
             disabled={s.status !== "ready"}
-            placeholder={s.status === "ready" ? "Ask about the data…  (Enter to send · / for commands)" : ""}
+            aria-label="Your question"
+            placeholder={s.status === "ready" ? "Ask about the data…" : "The session is not ready"}
             onChange={(e) => {
               c.draft = e.target.value;
               update();
@@ -630,22 +649,46 @@ function Conversation({ s, f }) {
               }
             }}
           />
-          {answering ? (
+          <div className="chat-compose-row">
             <button
-              className="btn secondary"
-              onClick={() => backend.StopChatMessage(s.flow, s.id).catch((e) => toast(errMsg(e), "error"))}
+              className="icon-btn"
+              title="Attach files (or drop or paste them here)"
+              aria-label="Attach files"
+              disabled={s.status !== "ready"}
+              onClick={() => picker.current?.click()}
             >
-              Stop
+              <Icon.clip />
             </button>
-          ) : (
-            <button
-              className="btn primary"
-              disabled={s.status !== "ready" || !c.draft.trim()}
-              onClick={() => send()}
-            >
-              Send
-            </button>
-          )}
+            <input
+              ref={picker}
+              type="file"
+              multiple
+              hidden
+              onChange={(e) => {
+                attach([...e.target.files]);
+                e.target.value = "";
+              }}
+            />
+            <small className="chat-hint">
+              <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>/</kbd> commands
+            </small>
+            {answering ? (
+              <button
+                className="btn secondary"
+                onClick={() => backend.StopChatMessage(s.flow, s.id).catch((e) => toast(errMsg(e), "error"))}
+              >
+                Stop
+              </button>
+            ) : (
+              <button
+                className="btn primary chat-send"
+                disabled={s.status !== "ready" || !c.draft.trim()}
+                onClick={() => send()}
+              >
+                <Icon.send /> Send
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </section>
@@ -803,7 +846,12 @@ function Panel({ s, f }) {
         ))}
       </section>
       <section>
-        <h4>Budget</h4>
+        <h4 className="chat-panel-h">
+          Usage
+          <button className="link" onClick={() => ((cs().usage = true), update())}>
+            Details
+          </button>
+        </h4>
         <div>
           ${(s.costUsd || 0).toFixed(3)}
           {limit > 0 && <span className="muted"> of ${limit.toFixed(2)}</span>} ·{" "}
@@ -857,7 +905,9 @@ export function Chats() {
             return (
               <div key={f.id} className="chat-flow">
                 <div className="tree-folder">
-                  <span>💬 {f.name}</span>
+                  <span className="chat-flow-name">
+                    <Icon.chat /> {f.name}
+                  </span>
                   <span className="chat-flow-acts">
                     {!S.runner && (
                       <button
@@ -883,29 +933,30 @@ export function Chats() {
                   </span>
                 </div>
                 {ss.map((x) => (
-                  <button
-                    key={x.id}
-                    className={
-                      "run-item chat-sess" + (c.sel?.id === x.id && c.sel?.flow === x.flow ? " active" : "")
-                    }
-                    onClick={() => select(x.flow, x.id)}
-                  >
-                    <span className="run-item-top">
-                      <b>{x.title || "New session"}</b>
-                      {x.status !== "ready" && <span className="badge">{x.status}</span>}
-                      {x.archived && <span className="badge">archived</span>}
-                    </span>
-                    <small className="muted">
-                      {x.messages || 0} messages · {ago(x.updated)}
-                    </small>
-                    <span className="chat-sess-acts" onClick={(e) => e.stopPropagation()}>
+                  <div key={x.id} className="chat-sess-row">
+                    <button
+                      className={
+                        "run-item chat-sess" + (c.sel?.id === x.id && c.sel?.flow === x.flow ? " active" : "")
+                      }
+                      onClick={() => select(x.flow, x.id)}
+                    >
+                      <span className="run-item-top">
+                        <b>{x.title || "New session"}</b>
+                        {x.status !== "ready" && <span className="badge">{x.status}</span>}
+                        {x.archived && <span className="badge">archived</span>}
+                      </span>
+                      <small className="muted">
+                        {x.messages || 0} messages · {ago(x.updated)}
+                      </small>
+                    </button>
+                    <span className="chat-sess-acts">
                       <button
                         className="icon-btn"
                         title="Rename"
                         aria-label="Rename"
                         onClick={() => renameSession(x)}
                       >
-                        ✏️
+                        <Icon.pencil />
                       </button>
                       <button
                         className="icon-btn"
@@ -913,7 +964,7 @@ export function Chats() {
                         aria-label="Export"
                         onClick={() => exportSession(x)}
                       >
-                        ⤓
+                        <Icon.download />
                       </button>
                       <button
                         className="icon-btn"
@@ -921,7 +972,7 @@ export function Chats() {
                         aria-label={x.archived ? "Restore" : "Archive"}
                         onClick={() => archiveSession(x)}
                       >
-                        {x.archived ? "↩" : "🗄"}
+                        {x.archived ? <Icon.undo /> : <Icon.archive />}
                       </button>
                       <button
                         className="icon-btn"
@@ -929,10 +980,10 @@ export function Chats() {
                         aria-label="Delete"
                         onClick={() => deleteSession(x)}
                       >
-                        🗑
+                        <Icon.trash />
                       </button>
                     </span>
-                  </button>
+                  </div>
                 ))}
               </div>
             );

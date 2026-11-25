@@ -191,6 +191,34 @@ export const Icon = {
     </>,
     14,
   ),
+  pencil: mk(<path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3" />),
+  download: mk(<path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M2.5 13.5h11" />),
+  archive: mk(
+    <>
+      <path d="M2 3h12v3H2zM3 6v7h10V6" />
+      <path d="M6.5 8.5h3" />
+    </>,
+  ),
+  trash: mk(<path d="M2.5 4h11M6 4V2.5h4V4M4 4l.7 9.5h6.6L12 4M6.8 6.5v5M9.2 6.5v5" />),
+  send: mk(<path d="M2 8l12-5.5L9.5 14 7.5 9zM7.5 9L14 2.5" />),
+  copy: mk(
+    <>
+      <rect x="5" y="5" width="8.5" height="8.5" rx="1.5" />
+      <path d="M3 10.5V3.5A1 1 0 0 1 4 2.5h7" />
+    </>,
+  ),
+  clock: mk(
+    <>
+      <circle cx="8" cy="8" r="6" />
+      <path d="M8 4.5V8l2.5 1.5" />
+    </>,
+  ),
+  user: mk(
+    <>
+      <circle cx="8" cy="5.5" r="2.8" />
+      <path d="M2.8 14c.6-2.8 2.7-4.3 5.2-4.3s4.6 1.5 5.2 4.3" />
+    </>,
+  ),
 };
 
 export function Pill({ s, label }) {

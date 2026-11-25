@@ -53,12 +53,16 @@ type Session struct {
 	Agent        string `json:"agent,omitempty"`
 	Model        string `json:"model,omitempty"`
 	AgentSession string `json:"agentSession,omitempty"`
-	// usage so far
-	CostUSD  float64 `json:"costUsd,omitempty"`
-	Tokens   int     `json:"tokens,omitempty"`
-	Messages int     `json:"messages"`
-	Data     []Data  `json:"data,omitempty"`
-	Archived bool    `json:"archived,omitempty"`
+	// usage so far (CostUSD and Tokens: all of it, setup included)
+	CostUSD float64 `json:"costUsd,omitempty"`
+	Tokens  int     `json:"tokens,omitempty"`
+	// Usage: the questions' (the chat's AI, and its tools); SetupUsage:
+	// the setup steps' (every time they ran)
+	Usage      Usage  `json:"usage,omitzero"`
+	SetupUsage Usage  `json:"setupUsage,omitzero"`
+	Messages   int    `json:"messages"`
+	Data       []Data `json:"data,omitempty"`
+	Archived   bool   `json:"archived,omitempty"`
 	// Refreshed: the setup ran again; the next message tells the AI
 	Refreshed bool `json:"refreshed,omitempty"`
 }
@@ -86,7 +90,46 @@ type Message struct {
 	Error string    `json:"error,omitempty"`
 	// Followups: questions the assistant suggests next
 	Followups []string `json:"followups,omitempty"`
+	// what answering it took (an answer's), with which agent and model
+	Usage *Usage `json:"usage,omitempty"`
+	Agent string `json:"agent,omitempty"`
+	Model string `json:"model,omitempty"`
 }
+
+// Usage is what an answer (or a session, or a tool) took.
+type Usage struct {
+	Prompts         int     `json:"prompts,omitempty"`    // prompts sent to the chat's AI (one per round)
+	ModelCalls      int     `json:"modelCalls,omitempty"` // model calls those made
+	PremiumRequests int     `json:"premiumRequests,omitempty"`
+	InputTokens     int     `json:"inputTokens,omitempty"`
+	OutputTokens    int     `json:"outputTokens,omitempty"`
+	CachedTokens    int     `json:"cachedTokens,omitempty"` // of the input tokens, read from the cache
+	CostUSD         float64 `json:"costUsd,omitempty"`
+	ToolRuns        int     `json:"toolRuns,omitempty"`   // the Chatflow's tools (its branches) run
+	DataRuns        int     `json:"dataRuns,omitempty"`   // data.query / data.search runs
+	ToolErrors      int     `json:"toolErrors,omitempty"` // of those, the ones that did not run
+	AgentTools      int     `json:"agentTools,omitempty"` // tools the AI used on its own side
+	DurationMS      int64   `json:"durationMs,omitempty"`
+}
+
+// Add adds o to u.
+func (u *Usage) Add(o Usage) {
+	u.Prompts += o.Prompts
+	u.ModelCalls += o.ModelCalls
+	u.PremiumRequests += o.PremiumRequests
+	u.InputTokens += o.InputTokens
+	u.OutputTokens += o.OutputTokens
+	u.CachedTokens += o.CachedTokens
+	u.CostUSD += o.CostUSD
+	u.ToolRuns += o.ToolRuns
+	u.DataRuns += o.DataRuns
+	u.ToolErrors += o.ToolErrors
+	u.AgentTools += o.AgentTools
+	u.DurationMS += o.DurationMS
+}
+
+// Tokens is the input and output tokens.
+func (u Usage) Tokens() int { return u.InputTokens + u.OutputTokens }
 
 // StepRun is one of the chat's tools run for a message.
 type StepRun struct {
@@ -98,6 +141,8 @@ type StepRun struct {
 	Error      string         `json:"error,omitempty"`
 	// Files the step saved in the project (workspace paths)
 	Files []string `json:"files,omitempty"`
+	// Usage: the AI its steps used (a branch with AI steps)
+	Usage *Usage `json:"usage,omitempty"`
 }
 
 // Store reads and writes a project's chat sessions.

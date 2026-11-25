@@ -425,6 +425,14 @@ func (h *Hub) runChatSetup(root string, f *flow.Flow, sess chat.Session, o FlowR
 		x.Status, x.SetupAt, x.Error = "ready", time.Now(), ""
 		x.CostUSD += res.Usage.CostUSD
 		x.Tokens += res.Usage.InputTokens + res.Usage.OutputTokens
+		u := chat.Usage{}
+		if p := usageOf(res.Usage); p != nil {
+			u = *p
+		}
+		if !res.Ended.IsZero() {
+			u.DurationMS = res.Ended.Sub(res.Started).Milliseconds()
+		}
+		x.SetupUsage.Add(u)
 	})
 	h.chatPublish(upd, "Ready")
 }
@@ -559,8 +567,12 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 	}
 	var text strings.Builder // this round's text, as it streams
 	var mu sync.Mutex
-	tokens := 0
+	t0 := time.Now()
+	var used chat.Usage // the answer's: every round, every tool
+	model := s.Model
+	meter := &chatMeter{} // this round's
 	emit := func(ev agent.Event) {
+		meter.event(ev)
 		switch ev.Type {
 		case "model.text":
 			t, _ := ev.Data["text"].(string)
@@ -578,21 +590,18 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 				h.Bus.Publish(bus.Event{Type: "chat.text", Summary: clipLine(h.Store.Redactor().String(shown), 120),
 					Data: map[string]any{"flow": s.Flow, "session": s.ID, "text": h.Store.Redactor().String(shown)}})
 			}
-		case "model.request":
-			tokens += toInt(ev.Data["input_tokens"])
-		case "model.response":
-			tokens += toInt(ev.Data["output_tokens"])
 		}
 	}
 	var res agent.Result
 	var steps []chat.StepRun
 	var answer string
 	branchRuns, dataRuns := 0, 0
-	cost := 0.0
 	for round := 0; err == nil; round++ {
 		text.Reset()
+		meter = &chatMeter{}
 		res, err = drv.Run(ctx, req, emit)
-		cost += res.CostUSD
+		used.Add(meter.usage(res))
+		model = firstNonEmpty(meter.modelName(res), model)
 		reply := strings.TrimSpace(res.Text)
 		if reply == "" {
 			reply = strings.TrimSpace(text.String())
@@ -623,6 +632,19 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 			}
 			steps = append(steps, run)
 			ran++
+			if isData {
+				used.DataRuns++
+			} else {
+				used.ToolRuns++
+			}
+			if run.Error != "" {
+				used.ToolErrors++
+			}
+			if run.Usage != nil { // the AI its steps used
+				u := *run.Usage
+				u.Prompts = 0
+				used.Add(u)
+			}
 			if run.Error != "" {
 				fmt.Fprintf(&results, "\n### %s: it did not run\n%s\n", run.Title, run.Error)
 			} else {
@@ -643,9 +665,10 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 			req.SessionID, req.Resume, req.Prompt = workflow.NewUUID(), false, first+"\n"+next
 		}
 	}
-	res.CostUSD = cost
+	used.DurationMS = time.Since(t0).Milliseconds()
 	answer, followups := splitFollowups(answer)
-	m := chat.Message{Role: "assistant", Text: h.Store.Redactor().String(answer), Steps: steps, Followups: followups}
+	m := chat.Message{Role: "assistant", Text: h.Store.Redactor().String(answer), Steps: steps, Followups: followups,
+		Usage: &used, Agent: agentName, Model: model}
 	switch {
 	case ctx.Err() != nil:
 		m.Error = "Stopped."
@@ -660,8 +683,9 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 			x.AgentSession, x.Agent = res.SessionID, agentName
 			x.Refreshed = false
 		}
-		x.CostUSD += res.CostUSD
-		x.Tokens += tokens
+		x.CostUSD += used.CostUSD
+		x.Tokens += used.Tokens()
+		x.Usage.Add(used)
 	})
 	h.Bus.Publish(bus.Event{Type: "chat.message", Summary: clipLine(m.Text, 120), Data: map[string]any{"flow": s.Flow, "session": s.ID}})
 	h.chatPublish(upd, "Answered")

@@ -78,6 +78,12 @@ func TestChatQueriesAndSearchesItsData(t *testing.T) {
 		t.Error("the document's catalog entry is missing")
 	}
 
+	if u := a.Usage; u == nil || u.Prompts != 2 || u.DataRuns != 3 || u.ToolErrors != 1 || u.ToolRuns != 0 || a.Agent != "mock" {
+		t.Errorf("the answer's usage %+v (agent %q)", a.Usage, a.Agent)
+	}
+	if x, _ := h.ChatSession("shop-chat", s.ID); x.Usage.Prompts != 2 || x.Usage.DataRuns != 3 {
+		t.Errorf("the session's usage %+v", x.Usage)
+	}
 	if len(a.Steps) != 3 {
 		t.Fatalf("steps %+v", a.Steps)
 	}

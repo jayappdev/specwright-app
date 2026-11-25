@@ -6808,6 +6808,19 @@ export function createMockBackend(methods) {
       );
       setTimeout(
         () => {
+          // what the answer took (as the Go side measures it)
+          const copilot = db.setup?.provider === "copilot";
+          const usage = {
+            prompts: steps.length + 1,
+            modelCalls: steps.length + 2,
+            premiumRequests: copilot ? steps.length + 1 : 0,
+            inputTokens: 2600 + 900 * steps.length + Math.round(Math.random() * 400),
+            outputTokens: 380 + Math.round(Math.random() * 200),
+            cachedTokens: 1900 + 700 * steps.length,
+            costUsd: copilot ? 0 : 0.004 + 0.002 * steps.length,
+            toolRuns: steps.length,
+            durationMs: t0 + parts.length * 350 + 200,
+          };
           msgs.push({
             id: "m" + Date.now(),
             role: "assistant",
@@ -6815,9 +6828,14 @@ export function createMockBackend(methods) {
             at: now(),
             steps,
             followups: ["Why is EU ahead?", "How about last year?", "Chart it by region"],
+            usage,
+            agent: copilot ? "copilot" : "claude",
+            model: copilot ? "gpt-5" : "claude-sonnet",
           });
-          sess.costUsd = (sess.costUsd || 0) + 0.004;
-          sess.tokens = (sess.tokens || 0) + 3200;
+          const su = (sess.usage ||= {});
+          for (const [key, v] of Object.entries(usage)) su[key] = (su[key] || 0) + v;
+          sess.costUsd = (sess.costUsd || 0) + usage.costUsd;
+          sess.tokens = (sess.tokens || 0) + usage.inputTokens + usage.outputTokens;
           sess.messages++;
           sess.updated = now();
           persist();
