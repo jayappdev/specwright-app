@@ -1963,6 +1963,7 @@ export const GUIDE = [
       "Add a Chat step after the steps that load what a session needs; connect the Inputs step (directly or through them) into it.",
       "Connect steps after the Chat step: each path out of it is one tool, named after its first step. Leave a tool's fields empty for the AI to fill from the question, or set them; {{chat.message}} is what the AI passes on, {{session.<step id>}} a setup step's result.",
       "In the Chat step: the instructions (what the assistant is for), starter questions, a model and a cost limit per session; and the Chatflow's environment: variables (values) and secrets (names only: their values come from the keychain or are asked for once, and never show in the chat).",
+      "Keep the chat on topic in its instructions: say what it answers, that it should decline other questions in a sentence and offer ones it can answer, and that it should ask one short question when a question is unclear (the examples below do).",
       "Any field can read them: {{env.NAME}} for a variable (the environment's value of the same name wins), {{project_secret.NAME}} for a secret kept encrypted in the project, {{keychain.NAME}} for one in your computer's keychain (both set in Settings › Secrets, looked up when a session starts, hidden everywhere; keep them out of what the AI reads).",
       "Chat on the Chats screen: + New session asks for the inputs and runs the setup once. Tools that only read run at once; anything that writes asks you first. /refresh runs the setup again, /data and /steps show what the session holds and can run.",
     ],
@@ -1983,7 +1984,10 @@ export const GUIDE = [
             type: "chat",
             title: "Sales assistant",
             instructions:
-              "You answer questions about these orders. Show numbers in tables; draw a chart when asked.",
+              "You answer questions about these orders. Show numbers in tables; draw a chart when asked.\n\n" +
+              "Stay on topic: only answer questions about these orders. If a question is unrelated (general knowledge, coding, other data), say in one sentence that this chat only covers these orders, and offer two questions you can answer as the follow-ups.\n\n" +
+              "Ask when unclear: if a question could mean different things (which measure, period, region or customer), ask one short clarifying question instead of guessing, and give the likely choices as the follow-ups.\n\n" +
+              "Advice: when asked what to do, say it is a suggestion, keep it short, and show the numbers each point rests on. With only a few orders, say the sample is small.",
             starters: ["Which region has the most revenue?", "Chart revenue by region"],
           },
           {
@@ -2013,7 +2017,8 @@ export const GUIDE = [
             type: "chat",
             title: "Runbook help",
             instructions:
-              "Answer from the runbook. Quote the command to run. Fetch a page only when the runbook does not cover the question.",
+              "Answer from the runbook. Quote the command to run. Fetch a page only when the runbook does not cover the question.\n\n" +
+              "Stay on topic: if a question is not about running or fixing this service, say so in one sentence and offer two questions you can answer as the follow-ups. If a question is unclear (which environment, which error), ask one short clarifying question first.",
           },
           {
             id: "fetch",
