@@ -48,7 +48,8 @@ func (h *Hub) aiDecision(ctx context.Context, root string, fr *flowRun, n *flow.
 		"\n## The data that reached this step\n```\n" + data + "\n```" +
 		h.contextPacks(f, n, d, n.Prompt) + h.lessonsNote(f.ID, n.ID) + h.aiSuffix(f, n, d) +
 		"\n\n## Your reply\nReply with ONLY a JSON object, no explanation and no code fences:\n" +
-		`{"path": "<the id of one path above, or else>", "reason": "<one or two sentences; cite the context's [S1] labels when it has them>", "confidence": <0-100: how sure you are>}`
+		`{"path": "<the id of one path above, or else>", "reason": "<one or two sentences; cite the context's [S1] labels when it has them>", "confidence": <how sure you are, as a whole number of percent from 0 to 100, e.g. 85>}` +
+		"\nGive confidence as a whole number (85), not a fraction (0.85) or a decimal (85.5)."
 	var dec flow.AIDecision
 	var err error
 	for try := 0; try < 2; try++ {
