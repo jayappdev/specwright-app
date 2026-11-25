@@ -612,6 +612,21 @@ func (a *App) RemoveSecretFromKeychain(name string) error {
 	return a.hub.RemoveSecretFromKeychain(name)
 }
 
+// ProjectSecrets lists the project's encrypted secrets (names only).
+func (a *App) ProjectSecrets() ([]core.ProjectSecret, error) { return ok(a.hub.ProjectSecrets()) }
+
+// SetProjectSecret saves a project secret ({{project_secret.NAME}}); an
+// empty value changes only its description.
+func (a *App) SetProjectSecret(name, value, desc string) error {
+	return a.hub.SetProjectSecret(name, value, desc)
+}
+
+// DeleteProjectSecret removes a project secret.
+func (a *App) DeleteProjectSecret(name string) error { return a.hub.DeleteProjectSecret(name) }
+
+// SecretRefUses lists the project and keychain secrets the flows read.
+func (a *App) SecretRefUses() ([]core.SecretRefUse, error) { return ok(a.hub.SecretRefUses()) }
+
 // KeychainAvailable reports whether the system keychain can be used.
 func (a *App) KeychainAvailable() bool { return core.KeychainAvailable() }
 

@@ -217,7 +217,10 @@ type flowRun struct {
 	seq      int
 	t0       time.Time
 	noReview bool
-	gathered map[string][]flow.ItemResult // a Gather's results, for execStep
+	// refSecrets: {{project_secret.X}} and {{keychain.X}}, looked up at
+	// the start (memory only)
+	refSecrets map[string]string
+	gathered   map[string][]flow.ItemResult // a Gather's results, for execStep
 	// toolArgs: the arguments each tool step last ran with (secrets in
 	// place; memory only), for an Improve step that runs it again
 	toolArgs map[string]map[string]any
@@ -336,6 +339,10 @@ func (h *Hub) startFlow(root string, f *flow.Flow, o FlowRunOptions, trial *Flow
 	if err := h.checkFlowCommands(root, f); err != nil {
 		return FlowRunState{}, err
 	}
+	refs, err := h.refSecrets(root, f)
+	if err != nil {
+		return FlowRunState{}, err
+	}
 	h.mu.RLock()
 	agentName, model := h.agentName, h.model
 	h.mu.RUnlock()
@@ -351,7 +358,7 @@ func (h *Hub) startFlow(root string, f *flow.Flow, o FlowRunOptions, trial *Flow
 		}
 	}
 	runID := workflow.NewRunID()
-	fr := &flowRun{flow: f, decide: make(chan FlowDecision, 1), done: make(chan struct{}), t0: time.Now()}
+	fr := &flowRun{flow: f, decide: make(chan FlowDecision, 1), done: make(chan struct{}), t0: time.Now(), refSecrets: refs}
 	fr.st = FlowRunState{ID: runID, FlowID: f.ID, FlowName: f.Name, Status: "running", Started: time.Now(), Options: o, Agent: agentName, Model: model,
 		Outputs: []FlowOutputState{}, MinutesSaved: f.EstimatedMinutes(), Trial: trial}
 	fr.st.Steps = stepStates(f)

@@ -1,9 +1,11 @@
 // Flow designer fields shared by the inspector: secret sources for inputs and
 // tool parameters, and variable chips that insert {{…}} where the cursor is.
 import { stepRef, loopInfo } from "../../flowNames.js";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { backend } from "../../backend.js";
-import { toast, errMsg, kcName, isWindows } from "../../store.js";
+import { S, update, toast, errMsg, kcName, isWindows } from "../../store.js";
+import { askText } from "../../Dialog.jsx";
+import { openSettings } from "../Appearance.jsx";
 import { ancestors, changed, fl, nodeOf, parentsOf } from "../Flows.jsx";
 import { Field } from "./Inspector.jsx";
 
@@ -216,9 +218,27 @@ export function SecretSourceEditor({ i }) {
 // new one (asked in the run form) named after the argument.
 export function SecretPick({ args, p }) {
   const flow = fl().flow,
-    secrets = flow.inputs.filter((i) => i.type === "secret");
+    secrets = flow.inputs.filter((i) => i.type === "secret"),
+    projectSecrets = useProjectSecrets();
   const pick = (v) => {
     if (!v) return;
+    if (v.startsWith("{{")) {
+      args[p.name] = v;
+      changed();
+      return;
+    }
+    if (v === "+keychain") {
+      askText("Keychain entry", {
+        message: `The name of SpecWright's entry in the ${kcName()} (add or check it in Settings › Secrets).`,
+        placeholder: p.name.toUpperCase(),
+      }).then((n) => {
+        if (n && n.trim()) {
+          args[p.name] = `{{keychain.${n.trim()}}}`;
+          changed();
+        }
+      });
+      return;
+    }
     let name = v;
     if (v === "+new") {
       const base =
@@ -257,6 +277,75 @@ export function SecretPick({ args, p }) {
         </option>
       ))}
       <option value="+new">+ New secret input</option>
+      {projectSecrets.length > 0 && (
+        <optgroup label="Project secrets">
+          {projectSecrets.map((s) => (
+            <option key={s.name} value={`{{project_secret.${s.name}}}`}>
+              {s.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      <option value="+keychain">{kcName()} entry…</option>
+    </select>
+  );
+}
+
+// --- secrets from outside the flow: {{project_secret.X}}, {{keychain.X}} ---------------
+
+// useProjectSecrets: the project's secret names (loaded once per project)
+function useProjectSecrets() {
+  const root = S.ws?.root;
+  useEffect(() => {
+    if (!root || S.projectSecretsFor === root) return;
+    S.projectSecretsFor = root;
+    backend
+      .ProjectSecrets()
+      .then((l) => {
+        S.projectSecrets = l || [];
+        update();
+      })
+      .catch(() => {});
+  }, [root]);
+  return S.projectSecrets || [];
+}
+
+// SecretRefPick: a menu that puts {{project_secret.X}} or {{keychain.X}}
+// in a field (fill: replace a tool argument; else insert at the cursor)
+export function SecretRefPick({ fill, label = "🔒 Stored secret…" }) {
+  const ps = useProjectSecrets();
+  const put = (ref) => (fill ? fill(ref) : insertText(ref));
+  const pick = async (v) => {
+    if (!v) return;
+    if (v === "+keychain") {
+      const name = await askText("Keychain entry", {
+        message: `The name of SpecWright's entry in the ${kcName()} (add or check it in Settings › Secrets).`,
+        placeholder: "DB_PASSWORD",
+      });
+      if (name && name.trim()) put(`{{keychain.${name.trim()}}}`);
+    } else if (v === "+settings") openSettings("secrets");
+    else put(`{{project_secret.${v}}}`);
+  };
+  return (
+    <select
+      className="fl-use fl-secret-pick"
+      value=""
+      aria-label="Use a stored secret"
+      title="A project secret (encrypted in this project) or a keychain entry: looked up when the flow runs, hidden everywhere"
+      onChange={(e) => pick(e.target.value)}
+    >
+      <option value="">{label}</option>
+      {ps.length > 0 && (
+        <optgroup label="Project secrets">
+          {ps.map((p) => (
+            <option key={p.name} value={p.name}>
+              {p.name}
+            </option>
+          ))}
+        </optgroup>
+      )}
+      <option value="+keychain">{kcName()} entry…</option>
+      <option value="+settings">Manage secrets in Settings…</option>
     </select>
   );
 }
@@ -325,6 +414,11 @@ export function VarChips({ node, extra = [] }) {
       : []),
     ["context", "context"],
     ["skills", "skills"],
+    // the flow's variables (and a Chatflow's secrets: not for an AI step)
+    ...(flow.vars || []).filter((v) => v.name).map((v) => ["env." + v.name, "$" + v.name]),
+    ...(node?.type === "ai"
+      ? []
+      : (flow.secrets || []).filter((v) => v.name).map((v) => ["env." + v.name, "🔒 $" + v.name])),
     ...extra.map((v) => [v, v]),
   ];
   return (
@@ -342,6 +436,7 @@ export function VarChips({ node, extra = [] }) {
           {l}
         </button>
       ))}
+      {node?.type !== "ai" && <SecretRefPick />}
     </div>
   );
 }

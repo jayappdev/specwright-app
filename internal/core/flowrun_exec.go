@@ -207,7 +207,7 @@ func (h *Hub) execPass(ctx context.Context, root string, fr *flowRun, inputs map
 	}
 	li, _ := f.Loops()
 	d := flow.Data{Inputs: inputs, Steps: map[string]string{}, Context: h.flowContext(f), Skills: h.flowSkills(f), Flow: f.Name,
-		Files: map[string]string{}, Branches: map[string][]string{}}
+		Files: map[string]string{}, Branches: map[string][]string{}, Env: flowEnv(f, fr.st.Options), Secrets: fr.refSecrets}
 	stopped := false
 	return h.runNodes(ctx, root, fr, order, li, &d, map[string]string{}, item, &stopped)
 }

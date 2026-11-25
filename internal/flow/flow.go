@@ -594,6 +594,15 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				v = strings.TrimSpace(e)
 				head, rest, _ = strings.Cut(v, ".")
 			}
+			if store, ok := refHead(head); ok {
+				switch {
+				case !RefNameRE.MatchString(rest):
+					add(n.ID, "error", "%s uses {{%s}}: name the %s after the dot (letters, digits, _ . -).", what, v, map[bool]string{true: "variable", false: "secret"}[store == RefEnv])
+				case store == RefEnv && !f.hasVar(rest):
+					add(n.ID, "warning", "%s uses {{%s}}, which is not one of this flow's variables: it is read from the environment the app runs in (empty when it is not set).", what, v)
+				}
+				continue
+			}
 			switch head {
 			case "inputs":
 				name, _, _ := strings.Cut(rest, ".")
@@ -875,10 +884,21 @@ func secretIssues(f *Flow) []Issue {
 			secret[in.Name] = true
 		}
 	}
+	secretVar := map[string]bool{} // a Chatflow's secrets, read as {{env.NAME}}
+	for _, s := range f.Secrets {
+		secretVar[s.Name] = true
+	}
 	uses := func(tpl string) string {
 		for _, m := range varRE.FindAllStringSubmatch(tpl, -1) {
-			if h, r, ok := strings.Cut(strings.TrimSpace(m[1]), "."); ok && h == "inputs" && secret[strings.SplitN(r, ".", 2)[0]] {
+			h, r, ok := strings.Cut(strings.TrimSpace(m[1]), ".")
+			if !ok {
+				continue
+			}
+			if h == "inputs" && secret[strings.SplitN(r, ".", 2)[0]] {
 				return strings.SplitN(r, ".", 2)[0]
+			}
+			if store, isRef := refHead(h); isRef && (store != RefEnv || secretVar[r]) {
+				return store + "." + r
 			}
 		}
 		return ""
@@ -891,7 +911,11 @@ func secretIssues(f *Flow) []Issue {
 			}
 		case "tool":
 			if s := uses(n.Instruction); s != "" {
-				is = append(is, Issue{Node: n.ID, Level: "warning", Message: fmt.Sprintf("%s: the description sends the secret %q to the AI model. Put {{inputs.%s}} into the argument that needs it instead; the AI does not see it there.", label(n), s, s)})
+				ref := "{{inputs." + s + "}}"
+				if strings.Contains(s, ".") {
+					ref = "{{" + s + "}}"
+				}
+				is = append(is, Issue{Node: n.ID, Level: "warning", Message: fmt.Sprintf("%s: the description sends the secret %q to the AI model. Put %s into the argument that needs it instead; the AI does not see it there.", label(n), s, ref)})
 			}
 			for k, v := range n.Args {
 				v = strings.TrimSpace(v)
@@ -905,7 +929,7 @@ func secretIssues(f *Flow) []Issue {
 }
 
 // reservedVars cannot be step names in {{<step>.output_file}}.
-var reservedVars = map[string]bool{"inputs": true, "steps": true, "input": true, "input_file": true, "output": true, "context": true, "skills": true, "flow": true, "date": true, "now": true,
+var reservedVars = map[string]bool{"env": true, "project_secret": true, "keychain": true, "inputs": true, "steps": true, "input": true, "input_file": true, "output": true, "context": true, "skills": true, "flow": true, "date": true, "now": true,
 	"item": true, "item_index": true, "item_count": true, "this": true, "this_index": true, "parent": true, "root": true}
 
 // StepNames maps the other names a step goes by to its id: the tool it

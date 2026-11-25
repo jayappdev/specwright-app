@@ -4348,3 +4348,72 @@ main.main[data-view="chats"] {
   flex: 1;
   align-self: center;
 }
+
+/* Settings › Secrets */
+.secret-table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: 6px 0 12px;
+  font-size: 13px;
+}
+.secret-table th {
+  text-align: left;
+  font-weight: 500;
+  color: var(--muted);
+  font-size: 12px;
+}
+.secret-table th,
+.secret-table td {
+  padding: 6px 8px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+}
+.secret-acts {
+  text-align: right;
+  white-space: nowrap;
+}
+.secret-acts .icon-btn {
+  display: inline-grid;
+  vertical-align: middle;
+}
+.secret-acts .link + .link {
+  margin-left: 10px;
+}
+.secret-ref {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--code-bg, var(--surface));
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 2px 8px;
+  cursor: pointer;
+  color: inherit;
+  font-size: 12px;
+}
+.secret-ref:hover {
+  border-color: var(--focus);
+}
+.secret-ref svg {
+  opacity: 0.6;
+}
+.secret-ok {
+  color: var(--ok);
+}
+.secret-form {
+  display: grid;
+  grid-template-columns: minmax(140px, 1fr) minmax(160px, 1fr);
+  gap: 8px 12px;
+  align-items: end;
+  margin-top: 10px;
+}
+.secret-form .secret-form-desc {
+  grid-column: 1 / -1;
+}
+.secret-form .row-actions {
+  grid-column: 1 / -1;
+  justify-content: flex-end;
+}
+.secret-form input.bad {
+  border-color: var(--error);
+}

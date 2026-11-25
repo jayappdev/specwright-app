@@ -7760,6 +7760,49 @@ export function createMockBackend(methods) {
     async RemoveSecretFromKeychain(name) {
       delete kcStore[name];
     },
+    // project secrets: encrypted in the project on the Go side; values never come back
+    async ProjectSecrets() {
+      const ps = (db.projectSecrets ||= {});
+      return Object.keys(ps)
+        .sort()
+        .map((name) => ({ name, desc: ps[name].desc, updated: ps[name].updated, readable: true }));
+    },
+    async SetProjectSecret(name, value, desc) {
+      if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/.test(name || ""))
+        throw new Error(`name "${name}": start with a letter or _, then letters, digits, _ . or -`);
+      const ps = (db.projectSecrets ||= {});
+      if (!value && !ps[name]) throw new Error("give " + name + " a value");
+      ps[name] = { value: value || ps[name].value, desc: (desc || "").trim(), updated: now() };
+      persist();
+    },
+    async DeleteProjectSecret(name) {
+      const ps = (db.projectSecrets ||= {});
+      if (!ps[name]) throw new Error("there is no project secret " + name);
+      delete ps[name];
+      persist();
+    },
+    async SecretRefUses() {
+      const by = {};
+      for (const f of Object.values(db.flows || {})) {
+        const text = JSON.stringify(f);
+        for (const m of text.matchAll(
+          /\{\{\s*(project_secret|keychain)\.([A-Za-z_][A-Za-z0-9_.-]*)\s*\}\}/gi,
+        )) {
+          const store = m[1].toLowerCase(),
+            key = store + "." + m[2];
+          const u = (by[key] ||= {
+            store,
+            name: m[2],
+            flows: [],
+            found: store === "keychain" ? m[2] in kcStore : !!db.projectSecrets?.[m[2]],
+          });
+          if (!u.flows.includes(f.name)) u.flows.push(f.name);
+        }
+      }
+      return Object.keys(by)
+        .sort()
+        .map((k) => by[k]);
+    },
     async RunResults(id) {
       const r = db.runs.find((x) => x.id === id);
       if (!r) throw new Error(`no run ${id}`);

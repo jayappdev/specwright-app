@@ -435,6 +435,7 @@ export const GUIDE = [
       'JSON → JSON (template): write the JSON to produce with {{this.<path>}}; a whole-string placeholder keeps its type; {"{{#each this.lines}}": {…}} repeats for nested lists, with {{parent.…}} and {{root.…}}.',
       "Run a command passes the data on standard input (e.g. jq '.items', sort -u); Ask AI describes the change in words.",
       "Use “Try it with sample data” in the inspector to check the result before running the flow.",
+      "Values from outside the flow work in every step's fields: {{env.NAME}} (a variable), {{project_secret.NAME}} and {{keychain.NAME}} (secrets from Settings › Secrets, looked up when the run starts and hidden in results and history).",
     ],
     settings: [
       ["Transformation", "What to do; grouped as Text, JSON, Convert, Command and AI."],
@@ -1962,6 +1963,7 @@ export const GUIDE = [
       "Add a Chat step after the steps that load what a session needs; connect the Inputs step (directly or through them) into it.",
       "Connect steps after the Chat step: each path out of it is one tool, named after its first step. Leave a tool's fields empty for the AI to fill from the question, or set them; {{chat.message}} is what the AI passes on, {{session.<step id>}} a setup step's result.",
       "In the Chat step: the instructions (what the assistant is for), starter questions, a model and a cost limit per session; and the Chatflow's environment: variables (values) and secrets (names only: their values come from the keychain or are asked for once, and never show in the chat).",
+      "Any field can read them: {{env.NAME}} for a variable (the environment's value of the same name wins), {{project_secret.NAME}} for a secret kept encrypted in the project, {{keychain.NAME}} for one in your computer's keychain (both set in Settings › Secrets, looked up when a session starts, hidden everywhere; keep them out of what the AI reads).",
       "Chat on the Chats screen: + New session asks for the inputs and runs the setup once. Tools that only read run at once; anything that writes asks you first. /refresh runs the setup again, /data and /steps show what the session holds and can run.",
     ],
     settings: [
