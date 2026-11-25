@@ -95,6 +95,9 @@ func TestChatRunsItsTools(t *testing.T) {
 	if len(asked) != 1 || asked[0] != "Save it" {
 		t.Fatalf("asked %v", asked)
 	}
+	if tr, err := h.FlowRun(a.Steps[0].Run); err != nil || tr.Options.Chat == nil || tr.Options.Chat.Role != "tool" || tr.Options.Chat.Session != s.ID || tr.FlowName != "Sales Q&A · Shout" {
+		t.Fatalf("the tool's run %q: %+v %v", a.Steps[0].Run, tr.Options.Chat, err)
+	}
 	out, _ := h.ChatData("sales-qa", s.ID, a.Steps[0].Data)
 	if out != "from the AI / region rows / which region" {
 		t.Fatalf("the branch's result: %q", out)

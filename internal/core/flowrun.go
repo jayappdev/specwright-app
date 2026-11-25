@@ -67,8 +67,18 @@ type FlowRunOptions struct {
 	// SaveSecrets: secret inputs whose typed value is also saved in the
 	// system keychain (at the input's keychain entry) for later runs.
 	SaveSecrets []string `json:"saveSecrets,omitempty"`
+	// Chat: the run is part of a Chatflow: a session's setup, its setup
+	// alone (to try it), or a tool the chat ran
+	Chat *FlowRunChat `json:"chat,omitempty"`
 	// prompt: secret inputs asked in a dialog once the run has started
 	prompt []flow.Input
+}
+
+// FlowRunChat says how a run belongs to a Chatflow.
+type FlowRunChat struct {
+	Role    string `json:"role"`              // setup | setup-only | tool
+	Session string `json:"session,omitempty"` // the chat session (setup, tool)
+	Tool    string `json:"tool,omitempty"`    // the tool's title (tool)
 }
 
 // values: the inputs the steps get, secrets included.
@@ -273,6 +283,13 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 	f, err := flow.Load(root, id)
 	if err != nil {
 		return FlowRunState{}, err
+	}
+	if f.IsChatflow() { // a Chatflow runs its setup: for a chat (the default), or alone to try it
+		if o.Chat != nil && o.Chat.Role == "setup-only" {
+			return h.runChatSetupOnly(root, f, o)
+		}
+		_, run, err := h.startChat(root, f, o)
+		return run, err
 	}
 	if err := h.prepareRun(root, f, &o); err != nil {
 		return FlowRunState{}, err

@@ -300,7 +300,7 @@ func setupCopy(f *flow.Flow) *flow.Flow {
 	}
 	keep["start"] = true
 	g := *f
-	g.Name = f.Name + " · chat setup"
+	g.Name = f.Name // the run says it is the chat's setup (FlowRunOptions.Chat)
 	g.Triggers = nil
 	g.Nodes = nil
 	for _, n := range f.Nodes {
@@ -327,7 +327,7 @@ func randomPart() string {
 // setup steps run in the background (the session's status says when it
 // is ready).
 func (h *Hub) StartChatSession(flowID string, inputs map[string]string) (chat.Session, error) {
-	st, root, err := h.chatStore()
+	_, root, err := h.chatStore()
 	if err != nil {
 		return chat.Session{}, err
 	}
@@ -335,13 +335,21 @@ func (h *Hub) StartChatSession(flowID string, inputs map[string]string) (chat.Se
 	if err != nil {
 		return chat.Session{}, err
 	}
-	o := FlowRunOptions{Inputs: inputs, Review: "none"}
+	sess, _, err := h.startChat(root, f, FlowRunOptions{Inputs: inputs, Review: "none"})
+	return sess, err
+}
+
+// startChat starts a chat with f: its inputs checked, its environment
+// resolved, a session made, and its setup started as a flow run (seen in
+// Run flows) that hands over to the session when it reaches the Chat step.
+func (h *Hub) startChat(root string, f *flow.Flow, o FlowRunOptions) (chat.Session, FlowRunState, error) {
+	st := chat.New(root)
 	if err := h.prepareRun(root, f, &o); err != nil {
-		return chat.Session{}, err
+		return chat.Session{}, FlowRunState{}, err
 	}
 	env, envSec, err := h.chatEnv(h.ctx, f)
 	if err != nil {
-		return chat.Session{}, err
+		return chat.Session{}, FlowRunState{}, err
 	}
 	shown := map[string]string{} // non-secret inputs only
 	for _, in := range f.Inputs {
@@ -358,7 +366,7 @@ func (h *Hub) StartChatSession(flowID string, inputs map[string]string) (chat.Se
 	sess, err := st.Create(chat.Session{ID: chat.NewID(time.Now(), randomPart()), Flow: f.ID, FlowName: f.Name, Status: "setup",
 		Inputs: shown, Agent: agentName, Model: model})
 	if err != nil {
-		return chat.Session{}, err
+		return chat.Session{}, FlowRunState{}, err
 	}
 	key := chatKey(f.ID, sess.ID)
 	h.chats.mu.Lock()
@@ -368,43 +376,88 @@ func (h *Hub) StartChatSession(flowID string, inputs map[string]string) (chat.Se
 	for _, k := range envSec {
 		h.Store.Redactor().Add(env[k])
 	}
-	h.chatPublish(sess, "Setting up")
-	go h.runChatSetup(root, f, sess, o, env, envSec)
-	return sess, nil
+	run, err := h.chatSetupRun(root, f, sess, o, env, envSec, true)
+	if err != nil {
+		return chat.Session{}, run, err
+	}
+	sess, _ = st.Get(f.ID, sess.ID)
+	return sess, run, nil
+}
+
+// runChatSetupOnly runs a Chatflow's setup steps alone, without a chat:
+// to try them (Run flows › Run setup only).
+func (h *Hub) runChatSetupOnly(root string, f *flow.Flow, o FlowRunOptions) (FlowRunState, error) {
+	if err := h.prepareRun(root, f, &o); err != nil {
+		return FlowRunState{}, err
+	}
+	env, envSec, err := h.chatEnv(h.ctx, f)
+	if err != nil {
+		return FlowRunState{}, err
+	}
+	o.Env, o.EnvSecret = env, envSec
+	o.Chat = &FlowRunChat{Role: "setup-only"}
+	return h.startFlow(root, setupCopy(f), o, nil)
 }
 
 // runChatSetup runs a session's setup steps and saves what they gave.
-func (h *Hub) runChatSetup(root string, f *flow.Flow, sess chat.Session, o FlowRunOptions, env map[string]string, envSec []string) {
+// chatSetupRun starts a session's setup as a flow run (seen in Run flows,
+// linked from the session) and finishes it in the background: what the
+// steps gave becomes the session's data. first: the session's first setup,
+// whose failure removes the session (the failed run shows what went
+// wrong); a refresh that fails keeps the session and the data it had.
+func (h *Hub) chatSetupRun(root string, f *flow.Flow, sess chat.Session, o FlowRunOptions, env map[string]string, envSec []string, first bool) (FlowRunState, error) {
 	st := chat.New(root)
-	fail := func(err error) {
-		s, _ := st.Update(sess.Flow, sess.ID, func(s *chat.Session) { s.Status, s.Error = "failed", h.Store.Redactor().String(err.Error()) })
-		h.chatPublish(s, "Setup failed")
-	}
-	g := setupCopy(f)
-	if len(g.Nodes) <= 1 { // nothing to set up
-		s, _ := st.Update(sess.Flow, sess.ID, func(s *chat.Session) { s.Status, s.SetupAt = "ready", time.Now() })
-		h.chatPublish(s, "Ready")
-		return
-	}
 	o.Env, o.EnvSecret = env, envSec
-	run, err := h.startFlow(root, g, o, nil)
+	o.Chat = &FlowRunChat{Role: "setup", Session: sess.ID}
+	run, err := h.startFlow(root, setupCopy(f), o, nil)
 	if err != nil {
-		fail(err)
+		h.chatSetupFailed(st, sess, "", err, first)
+		return run, err
+	}
+	s, _ := st.Update(sess.Flow, sess.ID, func(x *chat.Session) { x.SetupRun, x.Status, x.Error = run.ID, "setup", "" })
+	h.chatPublish(s, "Setting up")
+	go h.chatSetupWait(root, sess, run.ID, first)
+	return run, nil
+}
+
+// chatSetupFailed: a first setup that failed removes its session; a
+// refresh that failed leaves the session as it was, saying why.
+func (h *Hub) chatSetupFailed(st *chat.Store, sess chat.Session, runID string, err error, first bool) {
+	msg := h.Store.Redactor().String(err.Error())
+	if first {
+		_ = st.Delete(sess.Flow, sess.ID)
+		h.chats.mu.Lock()
+		h.chats.ready()
+		key := chatKey(sess.Flow, sess.ID)
+		delete(h.chats.env, key)
+		delete(h.chats.envSec, key)
+		delete(h.chats.inputs, key)
+		h.chats.mu.Unlock()
+		h.Bus.Publish(bus.Event{Type: "chat.session", Summary: "Setup failed",
+			Data: map[string]any{"flow": sess.Flow, "session": sess.ID, "status": "removed", "run": runID, "error": msg}})
 		return
 	}
+	s, _ := st.Update(sess.Flow, sess.ID, func(x *chat.Session) {
+		x.Status, x.Error = "ready", "The refresh did not finish: "+msg+". The session keeps the data it had."
+	})
+	h.chatPublish(s, "Refresh failed")
+}
+
+// chatSetupWait waits for a setup run and hands its results to the session.
+func (h *Hub) chatSetupWait(root string, sess chat.Session, runID string, first bool) {
+	st := chat.New(root)
 	h.mu.RLock()
-	fr := h.flowRuns[run.ID]
+	fr := h.flowRuns[runID]
 	h.mu.RUnlock()
 	if fr != nil {
 		<-fr.done
 	}
-	res, err := h.FlowRun(run.ID)
-	if err != nil {
-		fail(err)
-		return
+	res, err := h.FlowRun(runID)
+	if err == nil && res.Status != "done" {
+		err = fmt.Errorf("the setup did not finish (%s): %s", res.Status, firstNonEmpty(res.Error, "see the run in Run flows"))
 	}
-	if res.Status != "done" {
-		fail(fmt.Errorf("the setup did not finish (%s): %s", res.Status, res.Error))
+	if err != nil {
+		h.chatSetupFailed(st, sess, runID, err, first)
 		return
 	}
 	for _, s := range res.Steps {
@@ -423,6 +476,7 @@ func (h *Hub) runChatSetup(root string, f *flow.Flow, sess chat.Session, o FlowR
 	}
 	upd, _ := st.Update(sess.Flow, sess.ID, func(x *chat.Session) {
 		x.Status, x.SetupAt, x.Error = "ready", time.Now(), ""
+		x.Refreshed = !first && x.AgentSession != ""
 		x.CostUSD += res.Usage.CostUSD
 		x.Tokens += res.Usage.InputTokens + res.Usage.OutputTokens
 		u := chat.Usage{}
@@ -434,7 +488,7 @@ func (h *Hub) runChatSetup(root string, f *flow.Flow, sess chat.Session, o FlowR
 		}
 		x.SetupUsage.Add(u)
 	})
-	h.chatPublish(upd, "Ready")
+	h.chatPublish(upd, map[bool]string{true: "Ready", false: "Refreshed"}[first])
 }
 
 // chatPrompt is the first prompt of a session's AI conversation: the
@@ -784,16 +838,10 @@ func (h *Hub) RefreshChatSession(flowID, id string) (chat.Session, error) {
 	for k := range secretInputs {
 		inputs[k] = flow.SecretMask
 	}
-	s, err = st.Update(flowID, id, func(x *chat.Session) { x.Status, x.Error = "setup", "" })
-	if err != nil {
+	if _, err := h.chatSetupRun(root, f, s, FlowRunOptions{Inputs: inputs, Review: "none", Secrets: secretInputs}, env, envSec, false); err != nil {
 		return s, err
 	}
-	h.chatPublish(s, "Refreshing the data")
-	go func() {
-		h.runChatSetup(root, f, s, FlowRunOptions{Inputs: inputs, Review: "none", Secrets: secretInputs}, env, envSec)
-		upd, _ := st.Update(flowID, id, func(x *chat.Session) { x.Refreshed = x.Status == "ready" })
-		h.chatPublish(upd, "Refreshed")
-	}()
+	s, _ = st.Get(flowID, id)
 	return s, nil
 }
 

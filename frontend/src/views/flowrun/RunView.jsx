@@ -17,6 +17,7 @@ import { REVIEW_HINT } from "./Setup.jsx";
 import { StepFixPanel, TrialBanner, canFix, openFix } from "./StepFix.jsx";
 import { LIVE, STATUS_LABEL, decide, frs, pill } from "../FlowRun.jsx";
 import { RunSimple } from "./RunSimple.jsx";
+import { openChatSession } from "../Chats.jsx";
 
 // the details (steps, outputs, the activity log) or the simple view; the
 // choice is remembered (S.layout is saved with the preferences)
@@ -618,6 +619,75 @@ export function Outputs({ st }) {
   );
 }
 
+// ChatRunNote: how a run belongs to a Chatflow (its setup for a chat, its
+// setup alone, or a tool the chat ran), with the way to the chat
+function ChatRunNote({ st }) {
+  const c = st.options?.chat;
+  if (!c) return null;
+  const live = LIVE.includes(st.status);
+  const open = c.session && (
+    <button className="btn primary" onClick={() => openChatSession(st.flowId, c.session)}>
+      <Icon.chat /> Open chat
+    </button>
+  );
+  if (c.role === "tool")
+    return (
+      <div className="banner fr-chatnote">
+        <span>
+          <Icon.chat /> A tool the chat ran
+          {c.tool ? (
+            <>
+              {" "}
+              (<b>{c.tool}</b>)
+            </>
+          ) : null}
+          , for a question in a chat session.
+        </span>
+        {c.session && (
+          <button className="btn secondary" onClick={() => openChatSession(st.flowId, c.session)}>
+            Open the chat
+          </button>
+        )}
+      </div>
+    );
+  if (c.role === "setup-only")
+    return (
+      <div className="banner fr-chatnote">
+        <span>
+          <Icon.chat /> The chat's setup, run alone to try it: no chat session is made. <b>Start chat</b> runs
+          it for a chat.
+        </span>
+      </div>
+    );
+  if (live)
+    return (
+      <div className="banner fr-chatnote">
+        <span>
+          <Icon.chat /> Setting up a chat: when these steps are done, the chat opens with what they gave. The
+          Chat step and the tools after it are not run here.
+        </span>
+        {open}
+      </div>
+    );
+  if (st.status === "done")
+    return (
+      <div className="banner ok fr-chatnote">
+        <span>
+          <Icon.check /> <b>Chat ready.</b> The session has what these steps gave; ask your questions there.
+        </span>
+        {open}
+      </div>
+    );
+  return (
+    <div className="banner error fr-chatnote">
+      <span>
+        <b>No chat session was made:</b> the setup did not finish. See the step that failed (Details), fix it
+        here or in the playground, then <b>Start chat</b> again.
+      </span>
+    </div>
+  );
+}
+
 export function RunView({ st }) {
   const r = frs(),
     evs = S.events[st.id] || [],
@@ -676,7 +746,7 @@ export function RunView({ st }) {
                 update();
               }}
             >
-              Run again
+              {st.options?.chat?.role === "setup" ? "Start another chat" : "Run again"}
             </button>
           )}
           {!live && !S.runner && (
@@ -692,6 +762,7 @@ export function RunView({ st }) {
           )}
         </div>
       </header>
+      <ChatRunNote st={st} />
       {!details && <RunSimple st={st} runs={r.runs} onDetails={() => setDetails(true)} />}
       {details && st.status === "scheduled" && (
         <div className="banner">

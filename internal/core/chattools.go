@@ -210,7 +210,7 @@ func chatToolFlow(f *flow.Flow, t flow.ChatTool, c chatCall) *flow.Flow {
 	chatID := f.ChatNode().ID
 	keep[chatID] = true
 	g := *f
-	g.Name, g.Triggers, g.Nodes, g.Edges = f.Name+" · chat", nil, nil, nil
+	g.Name, g.Triggers, g.Nodes, g.Edges = f.Name+" · "+t.Title, nil, nil, nil
 	msg := firstNonEmpty(c.Message, c.Why)
 	fill := func(s string) string {
 		s = strings.ReplaceAll(s, "{{chat.message}}", msg)
@@ -305,7 +305,8 @@ func (h *Hub) runChatTool(ctx context.Context, root string, f *flow.Flow, s chat
 	for k, v := range sess.Inputs {
 		inputs[k] = v
 	}
-	o := FlowRunOptions{Inputs: inputs, Review: "none", Reuse: reuse, Env: env, EnvSecret: envSec, Secrets: secretInputs}
+	o := FlowRunOptions{Inputs: inputs, Review: "none", Reuse: reuse, Env: env, EnvSecret: envSec, Secrets: secretInputs,
+		Chat: &FlowRunChat{Role: "tool", Session: s.ID, Tool: t.Title}}
 	for k := range secretInputs {
 		o.Inputs[k] = flow.SecretMask
 	}
@@ -313,6 +314,7 @@ func (h *Hub) runChatTool(ctx context.Context, root string, f *flow.Flow, s chat
 	t0 := time.Now()
 	res, err := h.startFlow(root, chatToolFlow(f, t, c), o, nil)
 	if err == nil {
+		run.Run = res.ID
 		h.mu.RLock()
 		fr := h.flowRuns[res.ID]
 		h.mu.RUnlock()

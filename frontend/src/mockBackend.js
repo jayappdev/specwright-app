@@ -7588,6 +7588,32 @@ export function createMockBackend(methods) {
         }
       }
       runSecrets.set(o, secrets);
+      // a Chatflow runs only its setup (the steps before the Chat step), for a chat or alone
+      const chatNode = f.nodes.find((n) => n.type === "chat");
+      if (chatNode) {
+        const up = new Set(),
+          walk = (id) =>
+            f.edges
+              .filter((e) => e.to === id)
+              .forEach((e) => {
+                if (!up.has(e.from)) {
+                  up.add(e.from);
+                  walk(e.from);
+                }
+              });
+        walk(chatNode.id);
+        const g = clone(f);
+        g.nodes = g.nodes.filter((n) => up.has(n.id));
+        g.edges = g.edges.filter((e) => up.has(e.from) && up.has(e.to));
+        if (o.chat?.role === "setup-only") return startFlowRun(g, { ...o, chat: { role: "setup-only" } });
+        const sess = await api.StartChatSession(id, o.inputs);
+        sess.setupRun = "";
+        const st = startFlowRun(g, { ...o, chat: { role: "setup", session: sess.id } });
+        const rec = db.chats.sessions.find((x) => x.id === sess.id);
+        if (rec) rec.setupRun = st.id;
+        persist();
+        return st;
+      }
       return startFlowRun(clone(f), o);
     },
     async FlowRun(id) {

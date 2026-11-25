@@ -77,8 +77,8 @@ const FLOWRUN_POLL = 30;
 
 async function loadAll() {
   const r = frs();
-  // Chatflows are chatted with (the Chats screen), not run
-  r.flows = ((await backend.Flows().catch(() => [])) || []).filter((f) => !f.chat);
+  // Chatflows are listed too: their run is a chat's setup (Start chat)
+  r.flows = (await backend.Flows().catch(() => [])) || [];
   r.runs = await backend.FlowRuns(100).catch(() => []);
   r.triggers = (await backend.FlowTriggers("").catch(() => [])) || [];
   r.queue = (await backend.TriggerQueue().catch(() => [])) || [];
@@ -167,7 +167,12 @@ export async function openRun(id) {
   update();
 }
 
-export async function start() {
+// isChatflow: the flow has a Chat step (Run flows starts a chat with it)
+export const isChatflow = (f) => !!f?.nodes?.some((n) => n.type === "chat");
+
+// start runs the flow; for a Chatflow it starts a chat (its setup as a run
+// that hands over to a chat session), or with mode "setup-only" its setup alone
+export async function start(mode) {
   const r = frs(),
     f = r.flow,
     o = r.opts;
@@ -204,6 +209,12 @@ export async function start() {
       max: +o.forEach.max || 100,
     };
   if (o.startAt) opts.startAt = new Date(o.startAt).toISOString();
+  if (isChatflow(f)) {
+    opts.chat = { role: mode === "setup-only" ? "setup-only" : "setup" };
+    delete opts.startAt; // a chat starts now
+    delete opts.forEach;
+    opts.repeat = 1;
+  }
   try {
     const st = await backend.RunFlow(f.id, opts);
     S.flowRuns[st.id] = st;

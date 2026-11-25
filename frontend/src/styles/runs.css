@@ -4458,3 +4458,28 @@ main.main[data-view="chats"] {
   margin: 8px 0 0;
   color: var(--muted);
 }
+
+/* a Chatflow's runs and their chats */
+.fr-chatnote,
+.chat-setup-note {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.fr-chatnote > span,
+.chat-setup-note > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chat-head-meta .chat-head-run {
+  font-size: 12px;
+}
+.chat-chip-run {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 12px;
+}

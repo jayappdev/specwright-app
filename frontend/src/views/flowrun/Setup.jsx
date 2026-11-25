@@ -7,7 +7,7 @@ import { S, update, toast, errMsg, kcName, isWindows } from "../../store.js";
 import { Icon } from "../../ui.jsx";
 import { openFlowInDesigner } from "../Flows.jsx";
 import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../../Attachments.jsx";
-import { Commands, frs, loadFlow, start, openRunnerWindow } from "../FlowRun.jsx";
+import { Commands, frs, isChatflow, loadFlow, start, openRunnerWindow } from "../FlowRun.jsx";
 import { TagEditor, allTags } from "../../flowLists.jsx";
 
 // --- setup ------------------------------------------------------------------------
@@ -683,14 +683,36 @@ export function Setup() {
       <Commands />
       <Options />
       <div className="row-actions fr-go">
-        <button
-          className="btn primary fr-run"
-          disabled={(r.cmds || []).some((c) => !c.approved)}
-          aria-describedby={(r.cmds || []).some((c) => !c.approved) ? "fr-why" : undefined}
-          onClick={start}
-        >
-          <Icon.workflow /> {r.opts.startAt ? "Schedule run" : "Run flow"}
-        </button>
+        {isChatflow(f) ? (
+          <>
+            <button
+              className="btn primary fr-run"
+              disabled={(r.cmds || []).some((c) => !c.approved)}
+              aria-describedby={(r.cmds || []).some((c) => !c.approved) ? "fr-why" : undefined}
+              title="Runs the steps before the Chat step here, then opens a chat session with what they gave"
+              onClick={() => start("chat")}
+            >
+              <Icon.chat /> Start chat
+            </button>
+            <button
+              className="btn secondary"
+              disabled={(r.cmds || []).some((c) => !c.approved)}
+              title="Runs the steps before the Chat step and stops: to try them, without a chat session"
+              onClick={() => start("setup-only")}
+            >
+              Run setup only
+            </button>
+          </>
+        ) : (
+          <button
+            className="btn primary fr-run"
+            disabled={(r.cmds || []).some((c) => !c.approved)}
+            aria-describedby={(r.cmds || []).some((c) => !c.approved) ? "fr-why" : undefined}
+            onClick={() => start()}
+          >
+            <Icon.workflow /> {r.opts.startAt ? "Schedule run" : "Run flow"}
+          </button>
+        )}
         {(r.cmds || []).some((c) => !c.approved) && (
           <span id="fr-why" className="muted run-why">
             Needed first: approve the commands above.

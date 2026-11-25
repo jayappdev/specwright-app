@@ -1273,13 +1273,26 @@ export function Flows() {
             </button>
             <button
               className="btn secondary"
-              title={f.dirty ? "Saves the flow, then opens it in Run flows" : "Open this flow in Run flows"}
+              title={
+                (f.dirty ? "Saves the flow, then opens it in Run flows" : "Open this flow in Run flows") +
+                (f.flow.nodes.some((n) => n.type === "chat")
+                  ? ": its setup runs there, then the chat opens"
+                  : "")
+              }
               onClick={async () => {
                 if (f.dirty) await save();
                 openFlowRunner(f.flow.id);
               }}
             >
-              <Icon.run /> Run
+              {f.flow.nodes.some((n) => n.type === "chat") ? (
+                <>
+                  <Icon.chat /> Start chat
+                </>
+              ) : (
+                <>
+                  <Icon.run /> Run
+                </>
+              )}
             </button>
             <button
               className="btn primary"

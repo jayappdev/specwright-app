@@ -15,7 +15,7 @@ import { mdRender } from "../markdown.js";
 import { ago } from "../time.js";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
-import { openRunnerWindow } from "./FlowRun.jsx";
+import { openRunnerWindow, showFlowRun } from "./FlowRun.jsx";
 import { MessageUsage, SessionUsage, UsageDialog } from "./ChatUsage.jsx";
 
 const cs = () =>
@@ -59,6 +59,17 @@ async function loadMessages(flow, id) {
     toast(errMsg(e), "error");
   }
   update();
+}
+
+// openChatSession shows a session on the Chats screen (from a run of its setup)
+export async function openChatSession(flow, id) {
+  const c = cs();
+  S.view = "chats";
+  c.starting = "";
+  c.setupFailed = null;
+  update();
+  if (!c.sessions.some((x) => x.flow === flow && x.id === id)) await loadChats();
+  select(flow, id);
 }
 
 function select(flow, id) {
@@ -152,6 +163,16 @@ export function onChatEvent(e) {
     delete c.live[k];
     delete c.liveSteps[k];
     loadMessages(e.flow, e.session);
+  }
+  if (e.type === "chat.session" && e.status === "removed") {
+    // its first setup failed: no session; the run shows why
+    c.sessions = c.sessions.filter((x) => !(x.flow === e.flow && x.id === e.session));
+    if (c.sel?.flow === e.flow && c.sel?.id === e.session) {
+      c.sel = null;
+      c.setupFailed = { flow: e.flow, run: e.run, error: e.error };
+    }
+    update();
+    return;
   }
   backend
     .ChatSession(e.flow, e.session)
@@ -344,6 +365,11 @@ function StepChip({ r, s, k }) {
               )}
             </div>
           )}
+          {r.run && (
+            <button className="link chat-chip-run" onClick={() => showFlowRun(r.run)}>
+              View its run in Run flows
+            </button>
+          )}
           {result === null && <p className="muted">Loading…</p>}
           {result && <ContentView title={r.title} text={result} name={r.data} compact />}
         </div>
@@ -532,6 +558,16 @@ function Conversation({ s, f }) {
               </span>
             )}
             <span>{(s.messages || 0).toLocaleString()} messages</span>
+            {s.setupRun && (
+              <button
+                className="link chat-head-run"
+                title="The run of this session's setup (the steps before the Chat step), in Run flows"
+                onClick={() => showFlowRun(s.setupRun)}
+              >
+                Setup run
+                {s.setupAt ? " · " + ago(s.setupAt) : ""}
+              </button>
+            )}
           </div>
         </div>
         <div className="chat-head-acts">
@@ -550,7 +586,26 @@ function Conversation({ s, f }) {
       {c.usage && <UsageDialog s={s} msgs={msgs} onClose={() => ((c.usage = false), update())} />}
       <div className="chat-scroll">
         {s.status === "setup" && (
-          <div className="banner">⏳ Setting up the session: {f?.setup?.join(", ")}…</div>
+          <div className="banner chat-setup-note">
+            <span>
+              ⏳ Setting up the session: {f?.setup?.join(", ") || "the steps before the Chat step"}…
+            </span>
+            {s.setupRun && (
+              <button className="link" onClick={() => showFlowRun(s.setupRun)}>
+                Follow it in Run flows
+              </button>
+            )}
+          </div>
+        )}
+        {s.status === "ready" && s.error && (
+          <div className="banner warn chat-setup-note">
+            <span>{s.error}</span>
+            {s.setupRun && (
+              <button className="link" onClick={() => showFlowRun(s.setupRun)}>
+                See the run
+              </button>
+            )}
+          </div>
         )}
         {s.status === "failed" && <div className="banner error">The setup failed: {s.error}</div>}
         {!msgs.length && s.status === "ready" && (
@@ -995,7 +1050,23 @@ export function Chats() {
         ) : s ? (
           <Conversation s={s} f={flows.find((f) => f.id === s.flow)} />
         ) : (
-          <div className="chat-pick muted">{flows.length ? "Pick a session, or start a new one." : ""}</div>
+          <div className="chat-pick">
+            {c.setupFailed ? (
+              <div className="banner error chat-setup-note">
+                <span>
+                  The new session's setup did not finish, so no session was made
+                  {c.setupFailed.error ? ": " + c.setupFailed.error : "."}
+                </span>
+                {c.setupFailed.run && (
+                  <button className="btn secondary" onClick={() => showFlowRun(c.setupFailed.run)}>
+                    See the run
+                  </button>
+                )}
+              </div>
+            ) : (
+              <span className="muted">{flows.length ? "Pick a session, or start a new one." : ""}</span>
+            )}
+          </div>
         )}
       </section>
       {s && !startF && c.panel && <Panel s={s} f={flows.find((f) => f.id === s.flow)} />}

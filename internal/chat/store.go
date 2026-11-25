@@ -49,6 +49,8 @@ type Session struct {
 	// Inputs are the session's non-secret inputs
 	Inputs  map[string]string `json:"inputs,omitempty"`
 	SetupAt time.Time         `json:"setupAt,omitzero"`
+	// SetupRun: the flow run of its (latest) setup, in Run flows
+	SetupRun string `json:"setupRun,omitempty"`
 	// the AI: agent, model, and its conversation (continued each message)
 	Agent        string `json:"agent,omitempty"`
 	Model        string `json:"model,omitempty"`
@@ -147,6 +149,8 @@ type StepRun struct {
 	Files []string `json:"files,omitempty"`
 	// Usage: the AI its steps used (a branch with AI steps)
 	Usage *Usage `json:"usage,omitempty"`
+	// Run: the flow run it was (a Chatflow tool), in Run flows
+	Run string `json:"run,omitempty"`
 }
 
 // Store reads and writes a project's chat sessions.
