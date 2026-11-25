@@ -1,8 +1,8 @@
 // What a chat session took: prompts, premium requests, tokens, cost, tool
 // calls (chat.Usage on the Go side: per answer on each message, totals on
-// the session, the setup apart). A line under each answer; the whole
-// picture in a dialog from the chat's header.
-import { useEffect } from "react";
+// the session, the setup apart). An ⓘ on each answer and one in the chat's
+// header show it on hover; the header's opens the whole picture in a dialog.
+import { useEffect, useState } from "react";
 import { Icon } from "../ui.jsx";
 import { toast } from "../store.js";
 
@@ -44,51 +44,118 @@ export function sessionTotals(s) {
   return t;
 }
 
-// UsageLine: under an answer, what it took
-export function UsageLine({ m }) {
-  const u = m.usage;
-  if (!u) return null;
-  const bits = [];
-  if (m.model) bits.push(m.model);
-  bits.push(plural(u.prompts, "prompt"));
-  if (toolsOf(u)) bits.push(plural(toolsOf(u), "tool call"));
-  bits.push(kfmt(tokensOf(u)) + " tokens");
-  if (u.premiumRequests) bits.push(plural(u.premiumRequests, "premium request"));
-  if (u.costUsd) bits.push(usd(u.costUsd));
-  if (u.durationMs) bits.push(secs(u.durationMs));
-  const title = [
-    `${u.inputTokens || 0} input tokens (${u.cachedTokens || 0} from the cache), ${u.outputTokens || 0} output`,
-    `${u.modelCalls || 0} model calls`,
-    u.toolRuns ? `${u.toolRuns} of the Chatflow's tools` : "",
-    u.dataRuns ? `${u.dataRuns} data queries or searches` : "",
-    u.toolErrors ? `${u.toolErrors} did not run` : "",
-  ]
-    .filter(Boolean)
-    .join(" · ");
+let tipSeq = 0;
+
+// InfoTip: a small ⓘ that shows a card on hover or keyboard focus (and
+// runs onClick when clicked). align: "start" opens to the right, "end" to
+// the left (for icons near the right edge).
+export function InfoTip({ label, children, onClick, align = "start" }) {
+  const [id] = useState(() => "infotip-" + ++tipSeq);
   return (
-    <div className="chat-meta" title={title}>
-      {bits.map((b, i) => (
-        <span key={i}>{b}</span>
-      ))}
-    </div>
+    <span className={"infotip infotip-" + align}>
+      <button
+        type="button"
+        className="infotip-btn"
+        aria-label={label}
+        aria-describedby={id}
+        onClick={onClick}
+        tabIndex={0}
+      >
+        <Icon.info />
+      </button>
+      <div role="tooltip" id={id} className="infotip-card">
+        {children}
+      </div>
+    </span>
   );
 }
 
-// UsageButton: the session's totals, at hand in the header
-export function UsageButton({ s, onClick }) {
-  const t = sessionTotals(s);
-  const tokens = t.tokens;
+function Rows({ rows }) {
   return (
-    <button className="chat-usage-btn" onClick={onClick} title="What this chat took: open the details">
-      <Icon.metrics />
-      <span>{kfmt(tokens)} tokens</span>
-      <span className="chat-usage-sep" />
-      <span>
-        {t.premiumRequests ? plural(t.premiumRequests, "premium req", "premium reqs") : usd(t.costUsd)}
-      </span>
-      <span className="chat-usage-sep" />
-      <span>{plural(toolsOf(t), "tool call")}</span>
-    </button>
+    <dl className="infotip-rows">
+      {rows.filter(Boolean).map(([k, v]) => (
+        <div key={k}>
+          <dt>{k}</dt>
+          <dd>{v}</dd>
+        </div>
+      ))}
+    </dl>
+  );
+}
+
+const cachedNote = (u) =>
+  u.inputTokens ? ` (${Math.round(((u.cachedTokens || 0) / u.inputTokens) * 100)}% cached)` : "";
+
+// MessageUsage: what one answer took, on hover of its ⓘ
+export function MessageUsage({ m }) {
+  const u = m.usage;
+  return (
+    <InfoTip label="What this answer took">
+      <div className="infotip-title">This answer</div>
+      {u ? (
+        <Rows
+          rows={[
+            m.model && ["Model", (m.agent ? m.agent + " · " : "") + m.model],
+            [
+              "AI prompts",
+              `${u.prompts || 0}` + (u.modelCalls ? ` · ${plural(u.modelCalls, "model call")}` : ""),
+            ],
+            u.premiumRequests ? ["Premium requests", u.premiumRequests.toLocaleString()] : null,
+            u.costUsd ? ["Cost", usd(u.costUsd)] : null,
+            ["Tokens", `${kfmt(u.inputTokens)} in${cachedNote(u)} · ${kfmt(u.outputTokens)} out`],
+            [
+              "Tool calls",
+              toolsOf(u)
+                ? `${toolsOf(u)} · ${u.toolRuns || 0} Chatflow, ${u.dataRuns || 0} data` +
+                  (u.toolErrors ? `, ${u.toolErrors} failed` : "")
+                : "none",
+            ],
+            ["Time", secs(u.durationMs)],
+          ]}
+        />
+      ) : (
+        <p className="infotip-note">Not measured: answered before the app recorded usage per answer.</p>
+      )}
+    </InfoTip>
+  );
+}
+
+// SessionUsage: the whole session, on hover of the ⓘ in the chat's
+// header; a click opens the Usage dialog
+export function SessionUsage({ s, msgs, onOpen }) {
+  const t = sessionTotals(s),
+    su = s.setupUsage || {};
+  const questions = (msgs || []).filter((m) => m.role === "assistant").length;
+  return (
+    <InfoTip label="What this chat took (click for details)" onClick={onOpen} align="end">
+      <div className="infotip-title">This chat</div>
+      <Rows
+        rows={[
+          ["Questions", questions.toLocaleString()],
+          [
+            "AI prompts",
+            `${t.prompts || 0}` + (t.modelCalls ? ` · ${plural(t.modelCalls, "model call")}` : ""),
+          ],
+          ["Premium requests", (t.premiumRequests || 0).toLocaleString()],
+          ["Cost", t.costUsd ? usd(t.costUsd) : "—"],
+          [
+            "Tokens",
+            `${kfmt(t.tokens)}` + (t.inputTokens ? ` · ${kfmt(t.inputTokens)} in${cachedNote(t)}` : ""),
+          ],
+          [
+            "Tool calls",
+            toolsOf(t)
+              ? `${toolsOf(t)} · ${t.toolRuns || 0} Chatflow, ${t.dataRuns || 0} data` +
+                (t.toolErrors ? `, ${t.toolErrors} failed` : "")
+              : "none",
+          ],
+          tokensOf(su) || su.durationMs
+            ? ["Setup", `${kfmt(tokensOf(su))} tokens · ${secs(su.durationMs)}`]
+            : null,
+        ]}
+      />
+      <p className="infotip-note">Click for each question and each tool.</p>
+    </InfoTip>
   );
 }
 

@@ -191,6 +191,12 @@ export const Icon = {
     </>,
     14,
   ),
+  info: mk(
+    <>
+      <circle cx="8" cy="8" r="6.2" />
+      <path d="M8 7.2v4M8 4.8v.1" />
+    </>,
+  ),
   pencil: mk(<path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3" />),
   download: mk(<path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M2.5 13.5h11" />),
   archive: mk(

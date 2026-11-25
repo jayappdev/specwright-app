@@ -16,7 +16,7 @@ import { ago } from "../time.js";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { openRunnerWindow } from "./FlowRun.jsx";
-import { UsageButton, UsageDialog, UsageLine } from "./ChatUsage.jsx";
+import { MessageUsage, SessionUsage, UsageDialog } from "./ChatUsage.jsx";
 
 const cs = () =>
   (S.chat ||= {
@@ -369,6 +369,7 @@ function Message({ m, s, last, onAsk }) {
           <div className="chat-who">
             {m.role === "note" ? "Note" : "Assistant"}
             {m.at && <span className="muted"> · {ago(m.at)}</span>}
+            {m.role === "assistant" && <MessageUsage m={m} />}
           </div>
         )}
         {(m.steps || []).map((r, i) => (
@@ -385,7 +386,6 @@ function Message({ m, s, last, onAsk }) {
           </div>
         )}
         {m.error && <div className="banner error chat-err">{m.error}</div>}
-        {m.role === "assistant" && <UsageLine m={m} />}
         {last && (m.followups || []).length > 0 && (
           <div className="chat-follow">
             {m.followups.map((q) => (
@@ -535,7 +535,7 @@ function Conversation({ s, f }) {
           </div>
         </div>
         <div className="chat-head-acts">
-          <UsageButton s={s} onClick={() => ((c.usage = true), update())} />
+          <SessionUsage s={s} msgs={msgs} onOpen={() => ((c.usage = true), update())} />
           <button
             className="icon-btn"
             title={c.panel ? "Hide the session panel" : "Show the session panel"}

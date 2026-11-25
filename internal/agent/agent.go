@@ -86,6 +86,10 @@ type Result struct {
 	PremiumRequests int
 	ExitCode        int
 	SessionID       string // the conversation it ran in ("" when the CLI cannot name one)
+	// UsageSoFar: the usage it reported (tokens, premium requests, cost)
+	// is the conversation's so far, not this run's (Copilot reports a
+	// resumed session's totals)
+	UsageSoFar bool
 }
 
 // Status describes whether a driver can run on this machine.

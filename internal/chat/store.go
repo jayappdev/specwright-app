@@ -58,8 +58,12 @@ type Session struct {
 	Tokens  int     `json:"tokens,omitempty"`
 	// Usage: the questions' (the chat's AI, and its tools); SetupUsage:
 	// the setup steps' (every time they ran)
-	Usage      Usage  `json:"usage,omitzero"`
-	SetupUsage Usage  `json:"setupUsage,omitzero"`
+	Usage      Usage `json:"usage,omitzero"`
+	SetupUsage Usage `json:"setupUsage,omitzero"`
+	// AgentSoFar: what the AI last reported as its conversation's usage so
+	// far (Copilot reports a resumed session's totals), to count each
+	// answer's own part
+	AgentSoFar Usage  `json:"agentSoFar,omitzero"`
 	Messages   int    `json:"messages"`
 	Data       []Data `json:"data,omitempty"`
 	Archived   bool   `json:"archived,omitempty"`

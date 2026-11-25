@@ -297,18 +297,21 @@ func (c *Copilot) env(req Request) []string {
 }
 
 // Run implements Driver.
-func (c *Copilot) Run(ctx context.Context, req Request, emit func(Event)) (Result, error) {
+func (c *Copilot) Run(ctx context.Context, req Request, emit func(Event)) (res Result, err error) {
+	// a resumed session reports its usage so far (both ways of running it
+	// read the session's metrics), not this run's
+	defer func() { res.UsageSoFar = req.Resume }()
 	bin, err := c.bin()
 	if err != nil {
 		return Result{}, err
 	}
 	if useSDK(req) { // a person is watching: SpecWright hosts the session (copilot_sdk.go)
-		res, err := c.runSDK(ctx, bin, req, emit)
-		if !errors.Is(err, errSDKUnavailable) {
-			return res, err
+		sres, serr := c.runSDK(ctx, bin, req, emit)
+		if !errors.Is(serr, errSDKUnavailable) {
+			return sres, serr
 		}
 		emit(Event{Type: "agent.log", Summary: "Copilot could not be hosted by SpecWright; running it as copilot -p, where commands needing approval may be refused",
-			Data: map[string]any{"line": err.Error()}})
+			Data: map[string]any{"line": serr.Error()}})
 	}
 	if c.structured(ctx, bin) {
 		return c.runJSON(ctx, bin, req, emit)
@@ -325,7 +328,7 @@ func (c *Copilot) Run(ctx context.Context, req Request, emit func(Event)) (Resul
 		},
 	}.run(ctx)
 	p.flush()
-	res := p.finish()
+	res = p.finish()
 	if c.hasFlag(ctx, bin, "--session-id") {
 		res.SessionID = req.SessionID
 	}

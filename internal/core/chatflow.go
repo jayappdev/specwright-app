@@ -555,6 +555,10 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 	if err == nil && s.Agent != "" && s.Agent != agentName {
 		s.AgentSession = "" // another agent cannot continue that conversation
 	}
+	soFarLast := s.AgentSoFar // the conversation's usage so far, as last reported
+	if s.AgentSession == "" {
+		soFarLast = chat.Usage{}
+	}
 	req := agent.Request{Purpose: "chat", Step: "chat", Dir: root, Model: s.Model, Env: h.childEnv(), ReadOnly: true}
 	first := chatPrompt(f, data, s, history, question, h.chatToolsText(f, data.toolsText()))
 	if s.Refreshed && s.AgentSession != "" { // the setup ran again: the AI gets the new data
@@ -600,7 +604,9 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 		text.Reset()
 		meter = &chatMeter{}
 		res, err = drv.Run(ctx, req, emit)
-		used.Add(meter.usage(res))
+		own, reported := ownPart(meter.usage(res), res, soFarLast)
+		used.Add(own)
+		soFarLast = reported
 		model = firstNonEmpty(meter.modelName(res), model)
 		reply := strings.TrimSpace(res.Text)
 		if reply == "" {
@@ -682,6 +688,7 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 		if res.SessionID != "" && err == nil {
 			x.AgentSession, x.Agent = res.SessionID, agentName
 			x.Refreshed = false
+			x.AgentSoFar = soFarLast
 		}
 		x.CostUSD += used.CostUSD
 		x.Tokens += used.Tokens()

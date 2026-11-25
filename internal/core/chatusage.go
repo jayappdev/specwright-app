@@ -93,3 +93,35 @@ func usageOf(u store.Usage) *chat.Usage {
 	}
 	return &c
 }
+
+// soFar is the part of a usage an agent may report as its conversation's
+// running total.
+func soFar(u chat.Usage) chat.Usage {
+	return chat.Usage{PremiumRequests: u.PremiumRequests, InputTokens: u.InputTokens, OutputTokens: u.OutputTokens,
+		CachedTokens: u.CachedTokens, CostUSD: u.CostUSD}
+}
+
+// ownPart turns a run's reported usage into its own: when the agent
+// reported the conversation's totals so far, the totals it reported last
+// time are taken off (a total that went down started again: kept as is).
+// It also gives the totals to remember for the next run.
+func ownPart(u chat.Usage, res agent.Result, last chat.Usage) (own, next chat.Usage) {
+	next = soFar(u)
+	if !res.UsageSoFar {
+		return u, next
+	}
+	minus := func(v, p int) int {
+		if v >= p {
+			return v - p
+		}
+		return v
+	}
+	u.PremiumRequests = minus(u.PremiumRequests, last.PremiumRequests)
+	u.InputTokens = minus(u.InputTokens, last.InputTokens)
+	u.OutputTokens = minus(u.OutputTokens, last.OutputTokens)
+	u.CachedTokens = minus(u.CachedTokens, last.CachedTokens)
+	if u.CostUSD >= last.CostUSD {
+		u.CostUSD -= last.CostUSD
+	}
+	return u, next
+}
