@@ -20,14 +20,17 @@ package core
 import (
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"codegen/internal/agent"
 	"codegen/internal/bus"
@@ -60,6 +63,9 @@ type ChatflowInfo struct {
 	Vars     []string        `json:"vars,omitempty"`    // names only
 	Secrets  []string        `json:"secrets,omitempty"` // names only
 	Issues   []string        `json:"issues,omitempty"`  // errors that keep it from chatting
+	// Asks: the tools that ask the person before they run
+	Asks      []string `json:"asks,omitempty"`
+	CostLimit float64  `json:"costLimit,omitempty"`
 }
 
 func chatKey(flowID, id string) string { return flowID + "/" + id }
@@ -132,6 +138,12 @@ func (h *Hub) chatflowInfo(f *flow.Flow) ChatflowInfo {
 	for _, id := range f.ChatSetup() {
 		if n := f.Node(id); n != nil && n.Type != "start" {
 			info.Setup = append(info.Setup, firstNonEmpty(n.Title, n.ID))
+		}
+	}
+	info.CostLimit = c.CostLimit
+	for _, t := range info.Tools {
+		if !h.chatToolReadOnly(f, t) {
+			info.Asks = append(info.Asks, t.ID)
 		}
 	}
 	for _, v := range f.Vars {
@@ -391,13 +403,16 @@ func (h *Hub) runChatSetup(root string, f *flow.Flow, sess chat.Session, o FlowR
 }
 
 // chatDataText is the session's data for the AI's first message.
-func chatDataText(st *chat.Store, s chat.Session) string {
+func chatDataText(st *chat.Store, s chat.Session, setupOnly bool) string {
 	if len(s.Data) == 0 {
 		return ""
 	}
 	var b strings.Builder
 	total := 0
 	for _, d := range s.Data {
+		if setupOnly && !d.Setup {
+			continue
+		}
 		c, err := st.GetData(s.Flow, s.ID, d.Name)
 		if err != nil {
 			continue
@@ -429,10 +444,11 @@ func chatPrompt(f *flow.Flow, st *chat.Store, s chat.Session, history []chat.Mes
 			fmt.Fprintf(&b, "- %s: %s\n", k, clipText(v, 500))
 		}
 	}
-	if d := chatDataText(st, s); d != "" {
+	if d := chatDataText(st, s, false); d != "" {
 		b.WriteString("\nSESSION DATA (from the setup steps; it stays the same for the session):" + d)
 	}
 	b.WriteString(tools)
+	b.WriteString("\nEnd every answer with one last line: `Follow-ups: <question> | <question> | <question>`: two or three short questions the person may want to ask next.\n")
 	if len(history) > 0 {
 		b.WriteString("\nTHE CONVERSATION SO FAR:\n")
 		for _, m := range history {
@@ -447,7 +463,7 @@ func chatPrompt(f *flow.Flow, st *chat.Store, s chat.Session, history []chat.Mes
 
 // SendChatMessage asks the session's AI a question; the answer streams
 // as "chat.text" events and is saved when it ends ("chat.message").
-func (h *Hub) SendChatMessage(flowID, id, text string) (chat.Message, error) {
+func (h *Hub) SendChatMessage(flowID, id, text string, files []string) (chat.Message, error) {
 	st, root, err := h.chatStore()
 	if err != nil {
 		return chat.Message{}, err
@@ -484,7 +500,7 @@ func (h *Hub) SendChatMessage(flowID, id, text string) (chat.Message, error) {
 	h.chats.answers[key] = cancel
 	h.chats.mu.Unlock()
 	history, _ := st.Messages(flowID, id)
-	q, err := st.Append(flowID, id, chat.Message{Role: "user", Text: text})
+	q, err := st.Append(flowID, id, chat.Message{Role: "user", Text: text, Files: files})
 	if err != nil {
 		cancel()
 		h.chats.mu.Lock()
@@ -494,7 +510,7 @@ func (h *Hub) SendChatMessage(flowID, id, text string) (chat.Message, error) {
 	}
 	s, _ = st.Get(flowID, id)
 	h.chatPublish(s, "Question")
-	go h.answerChat(ctx, cancel, root, f, s, history, text)
+	go h.answerChat(ctx, cancel, root, f, s, history, text+chatAttachments(st, s, files))
 	return q, nil
 }
 
@@ -528,6 +544,9 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 	}
 	req := agent.Request{Purpose: "chat", Step: "chat", Dir: root, Model: s.Model, Env: h.childEnv(), ReadOnly: true}
 	first := chatPrompt(f, st, s, history, question, h.chatToolsText(f))
+	if s.Refreshed && s.AgentSession != "" { // the setup ran again: the AI gets the new data
+		question = "THE SESSION DATA WAS REFRESHED (it replaces what you had):" + chatDataText(st, s, true) + "\n\n" + question
+	}
 	if s.AgentSession != "" {
 		req.SessionID, req.Resume, req.Prompt = s.AgentSession, true, question
 	} else {
@@ -603,7 +622,8 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 		}
 	}
 	res.CostUSD = cost
-	m := chat.Message{Role: "assistant", Text: h.Store.Redactor().String(answer), Steps: steps}
+	answer, followups := splitFollowups(answer)
+	m := chat.Message{Role: "assistant", Text: h.Store.Redactor().String(answer), Steps: steps, Followups: followups}
 	switch {
 	case ctx.Err() != nil:
 		m.Error = "Stopped."
@@ -616,10 +636,127 @@ func (h *Hub) answerChat(ctx context.Context, cancel context.CancelFunc, root st
 	upd, _ := st.Update(s.Flow, s.ID, func(x *chat.Session) {
 		if res.SessionID != "" && err == nil {
 			x.AgentSession, x.Agent = res.SessionID, agentName
+			x.Refreshed = false
 		}
 		x.CostUSD += res.CostUSD
 		x.Tokens += tokens
 	})
 	h.Bus.Publish(bus.Event{Type: "chat.message", Summary: clipLine(m.Text, 120), Data: map[string]any{"flow": s.Flow, "session": s.ID}})
 	h.chatPublish(upd, "Answered")
+}
+
+var followupRE = regexp.MustCompile(`(?im)^[ \t*_` + "`" + `]*follow-?ups?\s*:[ \t]*(.+?)[ \t*_` + "`" + `]*$`)
+
+// splitFollowups takes the "Follow-ups: a | b | c" line off an answer.
+func splitFollowups(answer string) (string, []string) {
+	ms := followupRE.FindAllStringSubmatchIndex(answer, -1)
+	if len(ms) == 0 {
+		return answer, nil
+	}
+	m := ms[len(ms)-1]
+	var out []string
+	for _, q := range strings.Split(answer[m[2]:m[3]], "|") {
+		if q = strings.Trim(strings.TrimSpace(q), "`*_\"'"); q != "" && len(out) < 3 {
+			out = append(out, q)
+		}
+	}
+	return strings.TrimSpace(answer[:m[0]] + answer[m[1]:]), out
+}
+
+// chatAttachments: what the person attached to a message, for the AI.
+func chatAttachments(st *chat.Store, s chat.Session, names []string) string {
+	if len(names) == 0 {
+		return ""
+	}
+	var b strings.Builder
+	b.WriteString("\n\nATTACHED BY THE PERSON:")
+	for _, n := range names {
+		c, err := st.GetData(s.Flow, s.ID, n)
+		if err != nil {
+			continue
+		}
+		fmt.Fprintf(&b, "\n### %s\n```\n%s\n```", n, clipText(c, 20000))
+	}
+	return b.String()
+}
+
+// AttachChatFile keeps a file the person attached to a session: text is
+// session data the AI reads (the name to pass with the message); other
+// files are kept in the session folder and named by their path.
+func (h *Hub) AttachChatFile(flowID, id, name, base64Content string) (chat.Data, error) {
+	st, _, err := h.chatStore()
+	if err != nil {
+		return chat.Data{}, err
+	}
+	b, err := base64.StdEncoding.DecodeString(base64Content)
+	if err != nil {
+		return chat.Data{}, fmt.Errorf("the file could not be read: %v", err)
+	}
+	if len(b) > 10<<20 {
+		return chat.Data{}, errors.New("attach files up to 10 MB")
+	}
+	safe := strings.Trim(regexp.MustCompile(`[^A-Za-z0-9._-]+`).ReplaceAllString(filepath.Base(name), "-"), "-.")
+	if safe == "" {
+		safe = "file"
+	}
+	path, err := st.PutFile(flowID, id, safe, b)
+	if err != nil {
+		return chat.Data{}, err
+	}
+	content := string(b)
+	if !utf8.Valid(b) || strings.ContainsRune(content, 0) || len(b) > 2<<20 {
+		content = fmt.Sprintf("(a %d-byte file, %s: not text; it is saved at %s)", len(b), safe, path)
+	}
+	return st.PutData(flowID, id, chat.Data{Name: "file-" + safe, Title: name, Step: "attachment"}, content)
+}
+
+// RefreshChatSession runs the session's setup again (new data, same
+// conversation: the next message gives the AI the new data).
+func (h *Hub) RefreshChatSession(flowID, id string) (chat.Session, error) {
+	st, root, err := h.chatStore()
+	if err != nil {
+		return chat.Session{}, err
+	}
+	f, err := h.chatflow(root, flowID)
+	if err != nil {
+		return chat.Session{}, err
+	}
+	s, err := st.Get(flowID, id)
+	if err != nil {
+		return chat.Session{}, err
+	}
+	if s.Status == "setup" {
+		return s, errors.New("the session is already setting up")
+	}
+	key := chatKey(flowID, id)
+	h.chats.mu.Lock()
+	h.chats.ready()
+	env, envSec, secretInputs := h.chats.env[key], h.chats.envSec[key], h.chats.inputs[key]
+	h.chats.mu.Unlock()
+	if env == nil {
+		if env, envSec, err = h.chatEnv(h.ctx, f); err != nil {
+			return s, err
+		}
+		h.chats.mu.Lock()
+		h.chats.env[key], h.chats.envSec[key] = env, envSec
+		h.chats.mu.Unlock()
+	}
+	inputs := map[string]string{}
+	for k, v := range s.Inputs {
+		inputs[k] = v
+	}
+	for k := range secretInputs {
+		inputs[k] = flow.SecretMask
+	}
+	s, err = st.Update(flowID, id, func(x *chat.Session) { x.Status, x.Error = "setup", "" })
+	if err != nil {
+		return s, err
+	}
+	h.chatPublish(s, "Refreshing the data")
+	go func() {
+		h.runChatSetup(root, f, s, FlowRunOptions{Inputs: inputs, Review: "none", Secrets: secretInputs}, env, envSec)
+		upd, _ := st.Update(flowID, id, func(x *chat.Session) { x.Refreshed = x.Status == "ready" })
+		h.chatPublish(upd, "Refreshed")
+	}()
+	return s, nil
 }

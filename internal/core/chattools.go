@@ -329,6 +329,9 @@ func (h *Hub) runChatTool(ctx context.Context, root string, f *flow.Flow, s chat
 		h.Bus.Publish(chatStepEvent(s, run, "failed"))
 		return run, run.Error
 	}
+	for _, o := range res.Outputs { // files the branch saved
+		run.Files = append(run.Files, o.Saved...)
+	}
 	out := chatToolResult(root, t, res)
 	out = h.Store.Redactor().String(out)
 	name := fmt.Sprintf("m%03d-%s.%s", n, c.Tool, contentExt(out))

@@ -3713,3 +3713,161 @@ main.main[data-view="chats"] {
   font-size: 12px;
   margin: 0;
 }
+/* three columns: sessions | conversation | session panel */
+.files.chats.with-panel {
+  grid-template-columns: var(--pane-l, 260px) 1fr 270px;
+}
+.chat-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+}
+.chat-panel {
+  border-left: 1px solid var(--border);
+  overflow: auto;
+  padding: 12px 14px;
+  font-size: 13px;
+}
+.chat-panel section {
+  margin-bottom: 16px;
+}
+.chat-panel h4 {
+  margin: 0 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.chat-refresh {
+  display: flex;
+  margin-top: 8px;
+}
+.chat-dl {
+  margin: 0;
+}
+.chat-dl div {
+  display: flex;
+  gap: 8px;
+}
+.chat-dl dt {
+  color: var(--muted);
+}
+.chat-dl dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.chat-data {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 3px 0;
+  cursor: pointer;
+  color: inherit;
+}
+.chat-data:hover {
+  color: var(--link);
+}
+.chat-tool {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+  padding: 2px 0;
+}
+.chat-budget {
+  height: 6px;
+  background: var(--border);
+  border-radius: 99px;
+  margin-top: 6px;
+  overflow: hidden;
+}
+.chat-budget i {
+  display: block;
+  height: 100%;
+  background: var(--focus);
+}
+.chat-chip-files {
+  font-size: 12px;
+  margin-left: 8px;
+  color: var(--muted);
+}
+.chat-chart {
+  margin: 6px 0;
+  max-width: 560px;
+}
+.chat-files {
+  font-size: 12px;
+  margin-top: 4px;
+  opacity: 0.85;
+}
+.chat-follow {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.chat-note .chat-bubble {
+  background: transparent;
+  border-style: dashed;
+}
+.chat-composer {
+  flex-direction: column;
+  align-items: stretch;
+  position: relative;
+}
+.chat-compose-row {
+  display: flex;
+  gap: 8px;
+  align-items: flex-end;
+}
+.chat-compose-row textarea {
+  flex: 1;
+  resize: vertical;
+}
+.chat-attach {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.chat-attach .icon-btn {
+  margin-left: 2px;
+}
+.chat-slash {
+  position: absolute;
+  bottom: 100%;
+  left: 20px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.12);
+  display: flex;
+  flex-direction: column;
+  min-width: 320px;
+  z-index: 5;
+}
+.chat-slash button {
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: inherit;
+}
+.chat-slash button:hover {
+  background: var(--select-bg);
+}
+.chat-preview {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.chat-preview .card {
+  width: min(900px, 92vw);
+  max-height: 84vh;
+  overflow: auto;
+}

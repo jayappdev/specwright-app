@@ -59,6 +59,8 @@ type Session struct {
 	Messages int     `json:"messages"`
 	Data     []Data  `json:"data,omitempty"`
 	Archived bool    `json:"archived,omitempty"`
+	// Refreshed: the setup ran again; the next message tells the AI
+	Refreshed bool `json:"refreshed,omitempty"`
 }
 
 // Data is one thing the session keeps: a setup step's result, or what a
@@ -80,8 +82,10 @@ type Message struct {
 	At   time.Time `json:"at"`
 	// the steps the assistant ran for it, and files the person attached
 	Steps []StepRun `json:"steps,omitempty"`
-	Files []string  `json:"files,omitempty"`
+	Files []string  `json:"files,omitempty"` // attachments (data names)
 	Error string    `json:"error,omitempty"`
+	// Followups: questions the assistant suggests next
+	Followups []string `json:"followups,omitempty"`
 }
 
 // StepRun is one of the chat's tools run for a message.
@@ -92,6 +96,8 @@ type StepRun struct {
 	Data       string         `json:"data,omitempty"` // its result, in data/
 	DurationMS int64          `json:"durationMs"`
 	Error      string         `json:"error,omitempty"`
+	// Files the step saved in the project (workspace paths)
+	Files []string `json:"files,omitempty"`
 }
 
 // Store reads and writes a project's chat sessions.
@@ -341,6 +347,25 @@ func (s *Store) PutData(flow, id string, item Data, content string) (Data, error
 		x.Data = append(x.Data, item)
 	})
 	return item, err
+}
+
+// PutFile keeps a file the person attached (files/<name>) and returns
+// its path relative to the project.
+func (s *Store) PutFile(flow, id, name string, content []byte) (string, error) {
+	d, err := s.dir(flow, id)
+	if err != nil {
+		return "", err
+	}
+	if !dataRE.MatchString(name) {
+		return "", fmt.Errorf("file name %q", name)
+	}
+	if err := os.MkdirAll(filepath.Join(d, "files"), 0o755); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(filepath.Join(d, "files", name), content, 0o644); err != nil {
+		return "", err
+	}
+	return s.Path(flow, id) + "/files/" + name, nil
 }
 
 // GetData reads a data item's content.

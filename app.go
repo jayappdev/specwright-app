@@ -777,9 +777,19 @@ func (a *App) StartChatSession(flowID string, inputs map[string]string) (chat.Se
 	return ok(a.hub.StartChatSession(flowID, inputs))
 }
 
-// SendChatMessage asks the session's AI a question.
-func (a *App) SendChatMessage(flowID, id, text string) (chat.Message, error) {
-	return ok(a.hub.SendChatMessage(flowID, id, text))
+// SendChatMessage asks the session's AI a question (with attached files: their data names).
+func (a *App) SendChatMessage(flowID, id, text string, files []string) (chat.Message, error) {
+	return ok(a.hub.SendChatMessage(flowID, id, text, files))
+}
+
+// AttachChatFile keeps a file attached to a chat session (base64 content).
+func (a *App) AttachChatFile(flowID, id, name, content string) (chat.Data, error) {
+	return ok(a.hub.AttachChatFile(flowID, id, name, content))
+}
+
+// RefreshChatSession runs a chat session's setup again.
+func (a *App) RefreshChatSession(flowID, id string) (chat.Session, error) {
+	return ok(a.hub.RefreshChatSession(flowID, id))
 }
 
 // StopChatMessage stops the answer being written.

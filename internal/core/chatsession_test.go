@@ -2,6 +2,7 @@ package core
 
 import (
 	"context"
+	"encoding/base64"
 	"os"
 	"path/filepath"
 	"strings"
@@ -114,7 +115,7 @@ func TestChatSessionSetupAndConversation(t *testing.T) {
 	}
 
 	// the first question: instructions, data and the question, in a new conversation
-	if _, err := h.SendChatMessage("sales-qa", s.ID, "Which region is it?"); err != nil {
+	if _, err := h.SendChatMessage("sales-qa", s.ID, "Which region is it?", nil); err != nil {
 		t.Fatal(err)
 	}
 	ms := waitAnswer(t, h, "sales-qa", s.ID, 2)
@@ -131,7 +132,7 @@ func TestChatSessionSetupAndConversation(t *testing.T) {
 		t.Fatalf("%+v", s)
 	}
 	// the next: only the question, in the same conversation
-	if _, err := h.SendChatMessage("sales-qa", s.ID, "And the year?"); err != nil {
+	if _, err := h.SendChatMessage("sales-qa", s.ID, "And the year?", nil); err != nil {
 		t.Fatal(err)
 	}
 	waitAnswer(t, h, "sales-qa", s.ID, 4)
@@ -145,7 +146,7 @@ func TestChatSessionSetupAndConversation(t *testing.T) {
 	h.mu.Lock()
 	h.agentName = "other"
 	h.mu.Unlock()
-	if _, err := h.SendChatMessage("sales-qa", s.ID, "Summarize."); err != nil {
+	if _, err := h.SendChatMessage("sales-qa", s.ID, "Summarize.", nil); err != nil {
 		t.Fatal(err)
 	}
 	waitAnswer(t, h, "sales-qa", s.ID, 6)
@@ -169,5 +170,70 @@ func TestChatSessionSetupAndConversation(t *testing.T) {
 	}
 	if l, _ := h.ChatSessions("sales-qa"); len(l) != 0 {
 		t.Fatal("deleted")
+	}
+}
+
+func TestSplitFollowups(t *testing.T) {
+	a, f := splitFollowups("EU grew most.\n\nFollow-ups: Why EU? | And the US? | `Last year?`")
+	if a != "EU grew most." || len(f) != 3 || f[2] != "Last year?" {
+		t.Fatalf("%q %q", a, f)
+	}
+	a, f = splitFollowups("No follow-ups here.")
+	if a != "No follow-ups here." || f != nil {
+		t.Fatal(a, f)
+	}
+}
+
+func TestChatAttachmentsAndRefresh(t *testing.T) {
+	h, ws := flowHub(t)
+	rec := &chatRec{Mock: agent.NewMock(), name: "mock"}
+	rec.Mock.Delay = time.Millisecond
+	h.Agents.Add(rec)
+	f := flow.New("notes-qa", "Notes Q&A")
+	f.Nodes = append(f.Nodes,
+		flow.Node{ID: "load", Type: "transform", Op: "template", Template: "loaded at {{now}}", Title: "Load"},
+		flow.Node{ID: "chat", Type: "chat"})
+	f.Edges = []flow.Edge{{From: "start", To: "load"}, {From: "load", To: "chat"}}
+	if err := flow.Save(ws, f); err != nil {
+		t.Fatal(err)
+	}
+	s, err := h.StartChatSession("notes-qa", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	waitChat(t, h, "notes-qa", s.ID, func(x chat.Session) bool { return x.Status == "ready" })
+	// a text attachment is data the AI reads; a binary one is named by its path
+	d, err := h.AttachChatFile("notes-qa", s.ID, "my notes.txt", base64.StdEncoding.EncodeToString([]byte("remember the milk")))
+	if err != nil || d.Name != "file-my-notes.txt" {
+		t.Fatalf("%+v %v", d, err)
+	}
+	bin, err := h.AttachChatFile("notes-qa", s.ID, "pic.png", base64.StdEncoding.EncodeToString([]byte{0x89, 0x50, 0, 0xff}))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, _ := h.ChatData("notes-qa", s.ID, bin.Name); !strings.Contains(c, "not text") || !strings.Contains(c, "/files/pic.png") {
+		t.Fatal(c)
+	}
+	if _, err := h.SendChatMessage("notes-qa", s.ID, "What did I attach?", []string{d.Name}); err != nil {
+		t.Fatal(err)
+	}
+	ms := waitAnswer(t, h, "notes-qa", s.ID, 2)
+	if !strings.Contains(rec.last().Prompt, "remember the milk") || len(ms[0].Files) != 1 {
+		t.Fatalf("%q %+v", rec.last().Prompt, ms[0])
+	}
+	// refresh: the setup runs again; the next message gives the AI the new data
+	if _, err := h.RefreshChatSession("notes-qa", s.ID); err != nil {
+		t.Fatal(err)
+	}
+	waitChat(t, h, "notes-qa", s.ID, func(x chat.Session) bool { return x.Status == "ready" && x.Refreshed })
+	if _, err := h.SendChatMessage("notes-qa", s.ID, "Anything new?", nil); err != nil {
+		t.Fatal(err)
+	}
+	waitAnswer(t, h, "notes-qa", s.ID, 4)
+	if q := rec.last(); !q.Resume || !strings.Contains(q.Prompt, "THE SESSION DATA WAS REFRESHED") || !strings.Contains(q.Prompt, "loaded at") {
+		t.Fatalf("%+v", q)
+	}
+	if x, _ := h.ChatSession("notes-qa", s.ID); x.Refreshed {
+		t.Fatal("told once")
 	}
 }

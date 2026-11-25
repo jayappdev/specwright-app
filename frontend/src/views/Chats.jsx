@@ -1,8 +1,13 @@
 // Chats: talk with Chatflows (docs/design/2026-11-24-chatflows.md).
-// Step 2: the Chatflows and their sessions, starting a session (its
-// inputs; the setup steps run once), and the conversation, streamed. The
-// session panel, rich answers, attachments and commands come in step 4.
+// Three columns: the Chatflows and their sessions | the conversation |
+// the session panel (setup, inputs, variables, data, what it can run,
+// budget). Answers stream; the steps the chat ran show as chips whose
+// results open in the content viewer (tables, charts with Export PNG);
+// charts show at once. Files can be attached; suggested follow-ups and
+// /refresh, /data and /steps work in the message box.
 import { useEffect, useRef } from "react";
+import { ContentView, chartOf, RenderPreview } from "../ContentView.jsx";
+import { FileLink } from "../FileLinks.jsx";
 import { backend } from "../backend.js";
 import { S, update, toast, errMsg, setChatListener } from "../store.js";
 import { Icon } from "../ui.jsx";
@@ -20,7 +25,12 @@ const cs = () =>
     messages: {}, // "<flow>/<id>" → Message[]
     live: {}, // "<flow>/<id>" → the answer being written
     liveSteps: {}, // "<flow>/<id>" → the steps run for it so far
-    open: {}, // a chip shown open: "<flow>/<id>/<message>/<n>" → its result
+    open: {}, // chips shown open: "<flow>/<id>/<message>/<n>" → true
+    results: {}, // a step's result by "<flow>/<id>/<data name>"
+    attach: {}, // "<flow>/<id>" → files attached to the next message [{name, data}]
+    notes: {}, // "<flow>/<id>" → answers to /data, /steps, /help (not saved)
+    panel: true, // the session panel is shown
+    preview: null, // { title, text }: a data item shown over the screen
     draft: "",
   });
 const keyOf = (s) => s.flow + "/" + s.id;
@@ -198,22 +208,36 @@ function StartForm({ f }) {
   );
 }
 
-// StepChip: a step the chat ran ("▸ ran Query sales · 0.8 s"); open, its
-// fields and what it gave
+// result reads a step's result once (kept for the screen's life)
+function useResult(s, name) {
+  const c = cs(),
+    rk = keyOf(s) + "/" + name;
+  useEffect(() => {
+    if (!name || c.results[rk] !== undefined) return;
+    c.results[rk] = null;
+    backend
+      .ChatData(s.flow, s.id, name)
+      .then((t) => {
+        c.results[rk] = t;
+        update();
+      })
+      .catch(() => {});
+  }, [rk]);
+  return name ? c.results[rk] : undefined;
+}
+
+// StepChip: a step the chat ran ("▸ ran Query sales · 0.8 s"); open, the
+// fields it got and what it gave (a table, a chart, text). A chart shows
+// at once.
 function StepChip({ r, s, k }) {
   const c = cs();
-  const open = c.open[k];
-  const toggle = async () => {
-    if (open !== undefined) {
-      delete c.open[k];
-      return update();
-    }
-    c.open[k] = r.data ? "…" : "";
+  const result = useResult(s, r.status === "running" ? "" : r.data);
+  const chart = result ? chartOf(result) : "";
+  const open = !!c.open[k];
+  const toggle = () => {
+    if (open) delete c.open[k];
+    else c.open[k] = true;
     update();
-    if (r.data) {
-      c.open[k] = await backend.ChatData(s.flow, s.id, r.data).catch((e) => errMsg(e));
-      update();
-    }
   };
   const label =
     r.status === "running"
@@ -223,20 +247,30 @@ function StepChip({ r, s, k }) {
         : "ran " + r.title + (r.durationMs ? " · " + (r.durationMs / 1000).toFixed(1) + " s" : "");
   return (
     <div className={"chat-chip-wrap" + (r.error ? " bad" : "")}>
-      <button
-        className="chat-chip"
-        onClick={toggle}
-        disabled={r.status === "running"}
-        aria-expanded={open !== undefined}
-      >
+      <button className="chat-chip" onClick={toggle} disabled={r.status === "running"} aria-expanded={open}>
         {r.status === "running" ? (
           <span className="spinner" />
         ) : (
-          <span aria-hidden="true">{open !== undefined ? "▾" : "▸"}</span>
+          <span aria-hidden="true">{open ? "▾" : "▸"}</span>
         )}{" "}
         {label}
       </button>
-      {open !== undefined && (
+      {(r.files || []).length > 0 && (
+        <span className="chat-chip-files">
+          Saved:{" "}
+          {r.files.map((p) => (
+            <FileLink key={p} path={p}>
+              {p}
+            </FileLink>
+          ))}
+        </span>
+      )}
+      {chart && !open && (
+        <div className="chat-chart">
+          <RenderPreview text={chart} format="html" />
+        </div>
+      )}
+      {open && (
         <div className="chat-chip-body">
           {r.error && <div className="banner error">{r.error}</div>}
           {r.args && Object.keys(r.args).length > 0 && (
@@ -248,57 +282,156 @@ function StepChip({ r, s, k }) {
               ))}
             </div>
           )}
-          {open && <pre className="code chat-chip-out">{open}</pre>}
+          {result === null && <p className="muted">Loading…</p>}
+          {result && <ContentView title={r.title} text={result} name={r.data} compact />}
         </div>
       )}
     </div>
   );
 }
 
-function Message({ m, s }) {
+function Message({ m, s, last, onAsk }) {
   return (
     <div className={"chat-msg chat-" + m.role}>
       <div className="chat-avatar" aria-hidden="true">
-        {m.role === "user" ? "🧑" : "🤖"}
+        {m.role === "user" ? "🧑" : m.role === "note" ? "ℹ️" : "🤖"}
       </div>
       <div className="chat-bubble">
         {(m.steps || []).map((r, i) => (
           <StepChip key={i} r={r} s={s} k={keyOf(s) + "/" + m.id + "/" + i} />
         ))}
-        {m.role === "assistant" ? (
-          <div className="rich md" dangerouslySetInnerHTML={{ __html: mdRender(m.text || "") }} />
-        ) : (
+        {m.role === "user" ? (
           <div className="chat-q">{m.text}</div>
+        ) : (
+          <div className="rich md" dangerouslySetInnerHTML={{ __html: mdRender(m.text || "") }} />
+        )}
+        {(m.files || []).length > 0 && (
+          <div className="chat-files">📎 {m.files.map((f) => f.replace(/^file-/, "")).join(", ")}</div>
         )}
         {m.error && <div className="banner error chat-err">{m.error}</div>}
+        {last && (m.followups || []).length > 0 && (
+          <div className="chat-follow">
+            {m.followups.map((q) => (
+              <button key={q} className="chip" onClick={() => onAsk(q)}>
+                {q}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
 }
+
+const SLASH = [
+  ["/refresh", "Run the setup again: fresh data for the rest of the session"],
+  ["/data", "What this session holds"],
+  ["/steps", "What the chat can run"],
+  ["/help", "These commands"],
+];
+
+// readFile: a dropped, pasted or picked file as base64
+const readFile = (file) =>
+  new Promise((res, rej) => {
+    const r = new FileReader();
+    r.onload = () => res(String(r.result).replace(/^data:[^,]*,/, ""));
+    r.onerror = () => rej(r.error);
+    r.readAsDataURL(file);
+  });
 
 function Conversation({ s, f }) {
   const c = cs(),
     k = keyOf(s),
     msgs = c.messages[k] || [],
     live = c.live[k],
-    end = useRef(null);
+    notes = c.notes[k] || [],
+    files = c.attach[k] || [],
+    end = useRef(null),
+    picker = useRef(null);
   const answering = live !== undefined || (msgs.length && msgs[msgs.length - 1].role === "user");
   useEffect(() => {
     end.current?.scrollIntoView({ block: "end" }); // it returns a promise in some browsers: not a clean-up
-  }, [msgs.length, live]);
+  }, [msgs.length, live, notes.length]);
+  const note = (text) => {
+    (c.notes[k] ||= []).push({ id: "n" + Date.now(), role: "note", text, after: msgs.length });
+    update();
+  };
+  const command = async (t) => {
+    const [cmd] = t.split(/\s+/);
+    if (cmd === "/refresh") {
+      try {
+        await backend.RefreshChatSession(s.flow, s.id);
+        note("Refreshing the session's data: the setup runs again; the next answer uses the new data.");
+      } catch (e) {
+        toast(errMsg(e), "error");
+      }
+    } else if (cmd === "/data")
+      note(
+        (s.data || []).length
+          ? "This session holds:\n\n" +
+              s.data
+                .map(
+                  (d) =>
+                    `- **${d.title || d.name}** · ${d.setup ? "setup" : d.step === "attachment" ? "attached" : "from a question"} · ${d.bytes} bytes`,
+                )
+                .join("\n")
+          : "This session holds no data yet.",
+      );
+    else if (cmd === "/steps")
+      note(
+        (f?.tools || []).length
+          ? "The chat can run:\n\n" +
+              f.tools
+                .map((x) => `- **${x.title}**${(f.asks || []).includes(x.id) ? " (asks you first)" : ""}`)
+                .join("\n")
+          : "This Chatflow has nothing to run: only the setup's data.",
+      );
+    else note(SLASH.map(([a, b]) => `- \`${a}\` ${b}`).join("\n"));
+  };
   const send = async (text) => {
     const t = (text ?? c.draft).trim();
     if (!t) return;
+    if (t.startsWith("/")) {
+      if (text === undefined) c.draft = "";
+      return command(t);
+    }
     try {
-      const q = await backend.SendChatMessage(s.flow, s.id, t);
+      const q = await backend.SendChatMessage(
+        s.flow,
+        s.id,
+        t,
+        files.map((x) => x.data),
+      );
       (c.messages[k] ||= []).push(q);
       c.live[k] = "";
+      c.attach[k] = [];
       if (text === undefined) c.draft = "";
       update();
     } catch (e) {
       toast(errMsg(e), "error");
     }
   };
+  const attach = async (list) => {
+    for (const file of list) {
+      try {
+        const d = await backend.AttachChatFile(s.flow, s.id, file.name, await readFile(file));
+        (c.attach[k] ||= []).push({ name: file.name, data: d.name });
+      } catch (e) {
+        toast(errMsg(e), "error");
+      }
+    }
+    update();
+  };
+  // notes (/data, /steps) sit after the message they followed
+  const rows = [];
+  msgs.forEach((m, i) => {
+    rows.push(
+      <Message key={m.id} m={m} s={s} last={i === msgs.length - 1 && live === undefined} onAsk={send} />,
+    );
+    notes.filter((n) => n.after === i + 1).forEach((n) => rows.push(<Message key={n.id} m={n} s={s} />));
+  });
+  notes.filter((n) => n.after === 0).forEach((n) => rows.unshift(<Message key={n.id} m={n} s={s} />));
+  const slash = c.draft.startsWith("/") ? SLASH.filter(([a]) => a.startsWith(c.draft.split(/\s/)[0])) : [];
   return (
     <section className="chat-main">
       <header className="chat-head">
@@ -306,14 +439,17 @@ function Conversation({ s, f }) {
           <h2>{s.title || "New session"}</h2>
           <small className="muted">
             {s.flowName} · {s.status === "ready" ? "ready" : s.status === "setup" ? "setting up…" : s.status}
-            {s.setupAt ? ` · data loaded ${ago(s.setupAt)}` : ""}
-            {Object.keys(s.inputs || {}).length > 0 &&
-              " · " +
-                Object.entries(s.inputs)
-                  .map(([a, b]) => `${a}: ${b}`)
-                  .join(", ")}
           </small>
         </div>
+        <button
+          className="icon-btn"
+          title={c.panel ? "Hide the session panel" : "Show the session panel"}
+          aria-label="Session panel"
+          aria-pressed={c.panel}
+          onClick={() => ((c.panel = !c.panel), update())}
+        >
+          <Icon.panelR />
+        </button>
       </header>
       <div className="chat-scroll">
         {s.status === "setup" && (
@@ -322,7 +458,7 @@ function Conversation({ s, f }) {
         {s.status === "failed" && <div className="banner error">The setup failed: {s.error}</div>}
         {!msgs.length && s.status === "ready" && (
           <div className="chat-empty">
-            <p className="muted">Ask anything about this session's data.</p>
+            <p className="muted">Ask anything about this session's data. Type / for commands.</p>
             {(f?.starters || []).map((q) => (
               <button key={q} className="chip" onClick={() => send(q)}>
                 {q}
@@ -330,9 +466,7 @@ function Conversation({ s, f }) {
             ))}
           </div>
         )}
-        {msgs.map((m) => (
-          <Message key={m.id} m={m} s={s} />
-        ))}
+        {rows}
         {live !== undefined && (
           <div className="chat-msg chat-assistant">
             <div className="chat-avatar" aria-hidden="true">
@@ -343,7 +477,10 @@ function Conversation({ s, f }) {
                 <StepChip key={i} r={r} s={s} k={k + "/live/" + i} />
               ))}
               {live ? (
-                <div className="rich md" dangerouslySetInnerHTML={{ __html: mdRender(live) }} />
+                <div
+                  className="rich md"
+                  dangerouslySetInnerHTML={{ __html: mdRender(live.replace(/\n?\s*Follow-ups?:.*$/is, "")) }}
+                />
               ) : (
                 <span className="chat-typing" aria-label="Thinking">
                   <i />
@@ -356,43 +493,212 @@ function Conversation({ s, f }) {
         )}
         <div ref={end} />
       </div>
-      <div className="chat-composer">
-        <textarea
-          rows={2}
-          value={c.draft}
-          disabled={s.status !== "ready"}
-          placeholder={
-            s.status === "ready" ? "Ask about the data…  (Enter to send, Shift+Enter for a new line)" : ""
-          }
-          onChange={(e) => {
-            c.draft = e.target.value;
-            update();
-          }}
-          onKeyDown={(e) => {
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              if (!answering) send();
-            }
-          }}
-        />
-        {answering ? (
-          <button
-            className="btn secondary"
-            onClick={() => backend.StopChatMessage(s.flow, s.id).catch((e) => toast(errMsg(e), "error"))}
-          >
-            Stop
-          </button>
-        ) : (
-          <button
-            className="btn primary"
-            disabled={s.status !== "ready" || !c.draft.trim()}
-            onClick={() => send()}
-          >
-            Send
-          </button>
+      <div
+        className="chat-composer"
+        onDragOver={(e) => e.preventDefault()}
+        onDrop={(e) => {
+          e.preventDefault();
+          if (e.dataTransfer.files.length) attach([...e.dataTransfer.files]);
+        }}
+      >
+        {slash.length > 0 && (
+          <div className="chat-slash" role="listbox" aria-label="Commands">
+            {slash.map(([a, b]) => (
+              <button key={a} role="option" onClick={() => ((c.draft = a), update())}>
+                <code>{a}</code> {b}
+              </button>
+            ))}
+          </div>
         )}
+        {files.length > 0 && (
+          <div className="chat-attach">
+            {files.map((x, i) => (
+              <span key={i} className="chip">
+                📎 {x.name}
+                <button
+                  className="icon-btn"
+                  aria-label={"Remove " + x.name}
+                  onClick={() => ((c.attach[k] = files.filter((_, j) => j !== i)), update())}
+                >
+                  <Icon.x />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="chat-compose-row">
+          <button
+            className="icon-btn"
+            title="Attach files (or drop or paste them here)"
+            aria-label="Attach files"
+            disabled={s.status !== "ready"}
+            onClick={() => picker.current?.click()}
+          >
+            📎
+          </button>
+          <input
+            ref={picker}
+            type="file"
+            multiple
+            hidden
+            onChange={(e) => {
+              attach([...e.target.files]);
+              e.target.value = "";
+            }}
+          />
+          <textarea
+            rows={2}
+            value={c.draft}
+            disabled={s.status !== "ready"}
+            placeholder={s.status === "ready" ? "Ask about the data…  (Enter to send · / for commands)" : ""}
+            onChange={(e) => {
+              c.draft = e.target.value;
+              update();
+            }}
+            onPaste={(e) => {
+              const list = [...(e.clipboardData?.files || [])];
+              if (list.length) {
+                e.preventDefault();
+                attach(list);
+              }
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                if (!answering || c.draft.trim().startsWith("/")) send();
+              }
+            }}
+          />
+          {answering ? (
+            <button
+              className="btn secondary"
+              onClick={() => backend.StopChatMessage(s.flow, s.id).catch((e) => toast(errMsg(e), "error"))}
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              className="btn primary"
+              disabled={s.status !== "ready" || !c.draft.trim()}
+              onClick={() => send()}
+            >
+              Send
+            </button>
+          )}
+        </div>
       </div>
     </section>
+  );
+}
+
+// Panel: the session at a glance (names only: never a secret's value)
+function Panel({ s, f }) {
+  const c = cs();
+  const show = async (d) => {
+    try {
+      c.preview = {
+        title: d.title || d.name,
+        name: d.name,
+        text: await backend.ChatData(s.flow, s.id, d.name),
+      };
+      update();
+    } catch (e) {
+      toast(errMsg(e), "error");
+    }
+  };
+  const limit = f?.costLimit || 0;
+  return (
+    <aside className="chat-panel" aria-label="Session">
+      <section>
+        <h4>Setup</h4>
+        <div>
+          {s.status === "ready"
+            ? "✔ Ready"
+            : s.status === "setup"
+              ? "⏳ Setting up…"
+              : s.status === "failed"
+                ? "✖ Failed"
+                : s.status}
+          {s.setupAt && <small className="muted"> · loaded {ago(s.setupAt)}</small>}
+        </div>
+        {(f?.setup || []).length > 0 && <small className="muted">{f.setup.join(" → ")}</small>}
+        <button
+          className="btn secondary chat-refresh"
+          disabled={s.status === "setup"}
+          onClick={() =>
+            backend
+              .RefreshChatSession(s.flow, s.id)
+              .then(() => toast("Refreshing the data: the setup runs again."))
+              .catch((e) => toast(errMsg(e), "error"))
+          }
+        >
+          <Icon.refresh /> Refresh data
+        </button>
+      </section>
+      {Object.keys(s.inputs || {}).length > 0 && (
+        <section>
+          <h4>Inputs</h4>
+          <dl className="chat-dl">
+            {Object.entries(s.inputs).map(([a, b]) => (
+              <div key={a}>
+                <dt>{a}</dt>
+                <dd>{b || "—"}</dd>
+              </div>
+            ))}
+          </dl>
+        </section>
+      )}
+      {((f?.vars || []).length > 0 || (f?.secrets || []).length > 0) && (
+        <section>
+          <h4>Environment</h4>
+          {(f.vars || []).map((v) => (
+            <div key={v} className="chat-env-name">
+              <code>{v}</code>
+            </div>
+          ))}
+          {(f.secrets || []).map((v) => (
+            <div key={v} className="chat-env-name" title="A secret: its value is never shown">
+              <code>{v}</code> 🔒
+            </div>
+          ))}
+        </section>
+      )}
+      <section>
+        <h4>Data · {(s.data || []).length}</h4>
+        {(s.data || []).map((d) => (
+          <button key={d.name} className="chat-data" onClick={() => show(d)} title="Show it">
+            {d.setup ? "⚙" : d.step === "attachment" ? "📎" : "▸"} {d.title || d.name}
+            <small className="muted">
+              {" "}
+              {d.bytes > 1024 ? Math.round(d.bytes / 1024) + " KB" : d.bytes + " B"}
+            </small>
+          </button>
+        ))}
+        {!(s.data || []).length && <small className="muted">Nothing yet.</small>}
+      </section>
+      <section>
+        <h4>Can run · {(f?.tools || []).length}</h4>
+        {(f?.tools || []).map((t) => (
+          <div key={t.id} className="chat-tool">
+            {t.title}
+            {(f.asks || []).includes(t.id) && <span className="badge badge-warn">asks you</span>}
+          </div>
+        ))}
+      </section>
+      <section>
+        <h4>Budget</h4>
+        <div>
+          ${(s.costUsd || 0).toFixed(3)}
+          {limit > 0 && <span className="muted"> of ${limit.toFixed(2)}</span>} ·{" "}
+          {(s.tokens || 0).toLocaleString()} tokens
+        </div>
+        {limit > 0 && (
+          <div className="chat-budget">
+            <i style={{ width: Math.min(100, ((s.costUsd || 0) / limit) * 100) + "%" }} />
+          </div>
+        )}
+      </section>
+    </aside>
   );
 }
 
@@ -406,7 +712,7 @@ export function Chats() {
   const s = c.sel && c.sessions.find((x) => x.flow === c.sel.flow && x.id === c.sel.id);
   const startF = c.starting && flows.find((f) => f.id === c.starting);
   return (
-    <div className="files chats">
+    <div className={"files chats" + (s && !startF && c.panel ? " with-panel" : "")}>
       <nav className="ftree" aria-label="Chatflows and sessions">
         <h1 className="list-head" style={{ padding: "0 8px 8px" }}>
           Chats
@@ -465,6 +771,25 @@ export function Chats() {
           <div className="chat-pick muted">{flows.length ? "Pick a session, or start a new one." : ""}</div>
         )}
       </section>
+      {s && !startF && c.panel && <Panel s={s} f={flows.find((f) => f.id === s.flow)} />}
+      {c.preview && (
+        <div
+          className="chat-preview"
+          role="dialog"
+          aria-label={c.preview.title}
+          onClick={() => ((c.preview = null), update())}
+        >
+          <div className="card" onClick={(e) => e.stopPropagation()}>
+            <div className="card-head">
+              <h3>{c.preview.title}</h3>
+              <button className="icon-btn" aria-label="Close" onClick={() => ((c.preview = null), update())}>
+                <Icon.x />
+              </button>
+            </div>
+            <ContentView title={c.preview.title} text={c.preview.text} name={c.preview.name} />
+          </div>
+        </div>
+      )}
     </div>
   );
 }

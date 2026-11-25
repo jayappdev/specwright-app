@@ -6617,6 +6617,8 @@ export function createMockBackend(methods) {
               }),
             vars: (f.vars || []).map((v) => v.name),
             secrets: (f.secrets || []).map((v) => v.name),
+            asks: [],
+            costLimit: chat.costLimit || 0,
           };
         });
     },
@@ -6681,14 +6683,14 @@ export function createMockBackend(methods) {
       }, 900);
       return clone(sess);
     },
-    async SendChatMessage(flow, id, text) {
+    async SendChatMessage(flow, id, text, files = []) {
       const c = db.chats;
       const sess = c?.sessions.find((s) => s.flow === flow && s.id === id);
       if (!sess) throw new Error("no session " + id);
       if (sess.status !== "ready") throw new Error("the session is still setting up");
       const k = flow + "/" + id;
       const msgs = (c.messages[k] ||= []);
-      const q = { id: "m" + Date.now(), role: "user", text: text.trim(), at: now() };
+      const q = { id: "m" + Date.now(), role: "user", text: text.trim(), at: now(), files };
       msgs.push(q);
       sess.messages++;
       if (!sess.title) sess.title = text.trim().slice(0, 60);
@@ -6756,7 +6758,16 @@ export function createMockBackend(methods) {
       );
       setTimeout(
         () => {
-          msgs.push({ id: "m" + Date.now(), role: "assistant", text: answer, at: now(), steps });
+          msgs.push({
+            id: "m" + Date.now(),
+            role: "assistant",
+            text: answer,
+            at: now(),
+            steps,
+            followups: ["Why is EU ahead?", "How about last year?", "Chart it by region"],
+          });
+          sess.costUsd = (sess.costUsd || 0) + 0.004;
+          sess.tokens = (sess.tokens || 0) + 3200;
           sess.messages++;
           sess.updated = now();
           persist();
@@ -6767,6 +6778,42 @@ export function createMockBackend(methods) {
       return clone(q);
     },
     async StopChatMessage() {},
+    async AttachChatFile(flow, id, name, content) {
+      const c = db.chats;
+      const sess = c?.sessions.find((s) => s.flow === flow && s.id === id);
+      if (!sess) throw new Error("no session " + id);
+      const safe = name.replace(/[^A-Za-z0-9._-]+/g, "-");
+      const d = {
+        name: "file-" + safe,
+        title: name,
+        step: "attachment",
+        bytes: Math.round((content.length * 3) / 4),
+        at: now(),
+      };
+      let text = "";
+      try {
+        text = atob(content);
+      } catch {
+        text = "(binary)";
+      }
+      ((c.data ||= {})[flow + "/" + id] ||= {})[d.name] = text;
+      sess.data = [...(sess.data || []).filter((x) => x.name !== d.name), d];
+      persist();
+      return clone(d);
+    },
+    async RefreshChatSession(flow, id) {
+      const sess = db.chats?.sessions.find((s) => s.flow === flow && s.id === id);
+      if (!sess) throw new Error("no session " + id);
+      sess.status = "setup";
+      persist();
+      emit({ type: "chat.session", flow, session: id, status: "setup", summary: "Refreshing" });
+      setTimeout(() => {
+        Object.assign(sess, { status: "ready", setupAt: now(), refreshed: true });
+        persist();
+        emit({ type: "chat.session", flow, session: id, status: "ready", summary: "Refreshed" });
+      }, 900);
+      return clone(sess);
+    },
     async RenameChatSession(flow, id, title) {
       const sess = db.chats?.sessions.find((s) => s.flow === flow && s.id === id);
       if (!sess) throw new Error("no session " + id);

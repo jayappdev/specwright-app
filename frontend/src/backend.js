@@ -184,6 +184,8 @@ const METHODS = [
   "StopChatMessage",
   "RenameChatSession",
   "DeleteChatSession",
+  "AttachChatFile",
+  "RefreshChatSession",
   "GenerateToolGuide",
   "RunToolExample",
   "RunToolTests",

@@ -79,7 +79,7 @@ func TestChatRunsItsTools(t *testing.T) {
 		t.Fatal(err)
 	}
 	waitChat(t, h, "sales-qa", s.ID, func(x chat.Session) bool { return x.Status == "ready" })
-	if _, err := h.SendChatMessage("sales-qa", s.ID, "Which region?"); err != nil {
+	if _, err := h.SendChatMessage("sales-qa", s.ID, "Which region?", nil); err != nil {
 		t.Fatal(err)
 	}
 	ms := waitAnswer(t, h, "sales-qa", s.ID, 2)
