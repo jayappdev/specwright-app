@@ -9,12 +9,36 @@ import { STEP_TYPES, StepIcon, addNode, builtinTools, fl, projectTools, togglePa
 // --- palette ---------------------------------------------------------------------------
 
 // Visualization: a chart step (the built-in chart tool, as a tool step).
-const VISUALIZATION = {
-  type: "visualization",
-  name: "Visualization",
-  help: "A chart from rows: bar, line, pie, donut, area, scatter, heatmap…; shown as a picture, Export PNG",
-  keywords: "chart graph plot bar line pie donut area scatter heatmap png",
-};
+// steps made of a built-in tool, listed with the step types
+const VIZ = [
+  {
+    type: "visualization",
+    name: "Visualization",
+    tool: "builtin:chart",
+    title: "Chart",
+    args: { type: "bar" },
+    help: "A chart from rows: bar, line, pie, donut, area, scatter, heatmap, KPI tiles, gauges, bullets, sparklines; shown as a picture, Export PNG",
+    keywords: "chart graph plot bar line pie donut area scatter heatmap png kpi gauge bullet sparkline tiles",
+  },
+  {
+    type: "formattedtable",
+    name: "Formatted table",
+    tool: "builtin:table",
+    title: "Table",
+    args: {},
+    help: "Rows as an HTML table: formats, sorting, totals, colours by thresholds, data bars, sparklines",
+    keywords: "table grid report format currency percent totals conditional sparkline",
+  },
+  {
+    type: "dashboard",
+    name: "Dashboard",
+    tool: "builtin:dashboard",
+    title: "Dashboard",
+    args: { columns: "2" },
+    help: "Several charts, tables and notes on one page, saved as HTML",
+    keywords: "dashboard report page panels html summary",
+  },
+];
 
 export function Palette() {
   const f = fl(),
@@ -83,7 +107,7 @@ export function Palette() {
           update();
         }}
       />
-      {[...STEP_TYPES, VISUALIZATION]
+      {[...STEP_TYPES, ...VIZ]
         .filter(
           (s) =>
             !f.q ||
@@ -91,12 +115,12 @@ export function Palette() {
         )
         .sort((a, b) => (a.type === "output") - (b.type === "output")) // Output stays last
         .map((s) =>
-          s === VISUALIZATION
+          s.tool
             ? item(
-                { type: "tool", tool: "builtin:chart", title: "Chart", args: { type: "bar" } },
+                { type: "tool", tool: s.tool, title: s.title, args: { ...s.args } },
                 s.name,
                 s.help,
-                <StepIcon n={{ type: "tool", tool: "builtin:chart" }} tools={builtinTools()} size={30} />,
+                <StepIcon n={{ type: "tool", tool: s.tool }} tools={builtinTools()} size={30} />,
               )
             : item({ type: s.type }, s.name, s.help, <StepIcon n={{ type: s.type }} tools={[]} size={30} />),
         )}
@@ -124,7 +148,7 @@ export function Palette() {
       {!!f.q &&
         !ts.length &&
         !bs.length &&
-        ![...STEP_TYPES, VISUALIZATION].some((s) =>
+        ![...STEP_TYPES, ...VIZ].some((s) =>
           (s.name + " " + s.help + " " + (s.keywords || "")).toLowerCase().includes(f.q.toLowerCase()),
         ) && (
           <p className="muted" style={{ padding: "0 6px" }}>

@@ -57,6 +57,11 @@ type Data struct {
 	// step (those on the paths taken)
 	Branches map[string][]string `json:"-"`
 	Live     []string            `json:"-"`
+	// Env: {{env.NAME}} (the flow's variables, then the environment);
+	// Secrets: {{project_secret.NAME}} and {{keychain.NAME}}, by
+	// SecretRef.Key (looked up when the run starts; never saved)
+	Env     map[string]string `json:"-"`
+	Secrets map[string]string `json:"-"`
 }
 
 // LoopItem is one loop's current item.
@@ -108,6 +113,9 @@ func TableCell(v string) string {
 
 func lookup(v string, d Data) (string, bool) {
 	head, rest, _ := strings.Cut(v, ".")
+	if store, ok := refHead(head); ok {
+		return lookupRef(store, rest, d)
+	}
 	switch head {
 	case "inputs":
 		name, path, _ := strings.Cut(rest, ".")

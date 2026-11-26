@@ -58,6 +58,7 @@ type BundledTool struct {
 	OutputBy map[string]map[string]*flow.Schema `json:"outputBy,omitempty"`
 	Prompt   string                             `json:"prompt,omitempty"` // what it was asked to do, when the AI wrote it
 	Tags     []string                           `json:"tags,omitempty"`
+	Guide    *ToolGuide                         `json:"guide,omitempty"`
 	// Files of a tool with its own folder (helpers, templates, data, lock
 	// files), relative to the folder → base64; the entry script is Script.
 	Files map[string]string `json:"files,omitempty"`
@@ -97,7 +98,7 @@ func Bundle(root string, e Extension, tags []string) (BundledTool, error) {
 		}
 	}
 	t := BundledTool{Name: e.Name, Desc: e.Desc, Lang: e.Lang, Params: e.Params, Secrets: e.Secrets, Perms: e.Perms,
-		Command: e.Command, Script: script, Deps: e.Deps, Output: e.Output, OutputBy: e.OutputBy, Prompt: e.Prompt, Tags: tags}
+		Command: e.Command, Script: script, Deps: e.Deps, Output: e.Output, OutputBy: e.OutputBy, Prompt: e.Prompt, Tags: tags, Guide: e.Guide}
 	if e.Dir != "" {
 		files, err := folderFiles(filepath.Join(root, filepath.FromSlash(e.Dir)), EntryFile(e.Lang))
 		if err != nil {
@@ -186,6 +187,9 @@ func (t BundledTool) check() error {
 	if err := checkFiles(t.Files); err != nil {
 		return err
 	}
+	if _, err := CleanGuide(t.Guide); err != nil {
+		return err
+	}
 	for _, s := range t.Secrets {
 		if strings.TrimSpace(s.Name) == "" {
 			return errors.New("a secret has no name")
@@ -199,7 +203,7 @@ func (t BundledTool) check() error {
 func (t BundledTool) Extension() Extension {
 	return Extension{Name: t.Name, Desc: t.Desc, Kind: "script", Scope: "project", Lang: t.Lang, Params: t.Params, Secrets: t.Secrets,
 		Perms: t.Perms, Command: t.Command, Script: t.Script, Deps: t.Deps, Output: t.Output, OutputBy: t.OutputBy, Prompt: t.Prompt,
-		Status: "needs approval"}
+		Guide: t.Guide, Status: "needs approval"}
 }
 
 // MarkUnapproved marks a saved tool as needing approval (an imported tool:

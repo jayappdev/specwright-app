@@ -34,6 +34,13 @@ describe("navigation history", () => {
     h.push({ view: "flows", key: "other" }); // another flow: a new place
     expect(h.size()).toBe(2);
   });
+  it("keeps an empty selection as its own place when asked (the list of flows)", () => {
+    const h = createHistory();
+    h.push({ view: "flows", key: "" }, { keepEmpty: true });
+    h.push({ view: "flows", key: "todo" }, { keepEmpty: true });
+    expect(h.size()).toBe(2);
+    expect(h.back()).toEqual({ view: "flows", key: "" });
+  });
   it("keeps at most cap entries", () => {
     const h = createHistory(3);
     for (const v of ["a", "b", "c", "d", "e"]) h.push({ view: v });

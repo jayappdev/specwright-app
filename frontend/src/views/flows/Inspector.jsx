@@ -5,6 +5,7 @@ import { LessonsEditor } from "./Lessons.jsx";
 import { TagEditor, allTags, allGroups } from "../../flowLists.jsx";
 import { HeadingPicker } from "../../listLayout.jsx";
 import { ContextInspector } from "./ContextStep.jsx";
+import { ChatInspector } from "./ChatInspector.jsx";
 import { StepGuidance, aiStep } from "./StepGuidance.jsx";
 import { Reliability } from "../../ToolTile.jsx";
 import { TriggersEditor } from "./Triggers.jsx";
@@ -17,6 +18,15 @@ import { Icon } from "../../ui.jsx";
 import { AttachBar, onPasteAttach } from "../../Attachments.jsx";
 import { FileLink } from "../../FileLinks.jsx";
 import { openFlowGuide, GUIDE_TYPES } from "../FlowGuide.jsx";
+import { hasToolGuide } from "../flowGuide.js";
+
+// tools with a guide section of their own
+const GUIDE_TOOLS = {
+  "builtin:chart": "visualization",
+  "builtin:table": "formattedtable",
+  "builtin:dashboard": "dashboard",
+  duckdb_data_query: "dataquery",
+};
 import { paths as schemaPaths, compact, typeName } from "../../schema.js";
 import {
   FILE_PARAM,
@@ -805,11 +815,20 @@ function StepInspector({ n }) {
           </small>
         </div>
         <span style={{ marginLeft: "auto", display: "flex", gap: 10 }}>
-          {(GUIDE_TYPES.has(n.type) || n.tool === "builtin:chart") && (
+          {(GUIDE_TYPES.has(n.type) ||
+            GUIDE_TOOLS[n.tool] ||
+            hasToolGuide(n.type === "tool" && tools().find((x) => x.name === n.tool))) && (
             <button
               className="link"
               title="How this step works, with examples"
-              onClick={() => openFlowGuide(n.tool === "builtin:chart" ? "visualization" : n.type)}
+              onClick={() =>
+                openFlowGuide(
+                  GUIDE_TOOLS[n.tool] ||
+                    (hasToolGuide(n.type === "tool" && tools().find((x) => x.name === n.tool))
+                      ? "tool:" + n.tool
+                      : n.type),
+                )
+              }
             >
               How to use ↗
             </button>
@@ -977,6 +996,7 @@ function StepInspector({ n }) {
           {n.type === "filter" && <FilterInspector n={n} set={set} />}
           {n.type === "aggregate" && <AggregateInspector n={n} set={set} />}
           {n.type === "context" && <ContextInspector n={n} set={set} />}
+          {n.type === "chat" && <ChatInspector n={n} set={set} flow={flow} />}
           {n.type === "merge" && (
             <>
               <Field label="How to merge">
@@ -1381,11 +1401,13 @@ function StepInspector({ n }) {
               <Preview node={n} />
             </>
           )}
-          <label className="check fl-review">
-            <input type="checkbox" checked={!!n.review} onChange={(e) => set("review", e.target.checked)} />{" "}
-            Pause for review after this step{" "}
-            <span className="muted">(accept, refine, run a command or stop)</span>
-          </label>
+          {n.type !== "chat" && (
+            <label className="check fl-review">
+              <input type="checkbox" checked={!!n.review} onChange={(e) => set("review", e.target.checked)} />{" "}
+              Pause for review after this step{" "}
+              <span className="muted">(accept, refine, run a command or stop)</span>
+            </label>
+          )}
           <Field label="Note">
             <textarea
               rows={2}

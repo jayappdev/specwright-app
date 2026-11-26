@@ -36,7 +36,9 @@ type SecretState struct {
 	Source string `json:"source"`
 	Env    string `json:"env"`    // variable that is read
 	EnvSet bool   `json:"envSet"` // that variable is set
-	Via    string `json:"via"`    // session | env | keychain | ask | missing
+	Via    string `json:"via"`    // session | env | keychain | ask | missing | optional (not set, not needed)
+	// Optional: passed when it has a value, never asked for or missing
+	Optional bool `json:"optional,omitempty"`
 }
 
 // SecretRequest is published as a "secret.request" event when a tool
@@ -163,6 +165,11 @@ func (h *Hub) SecretInfo(secrets []extension.Secret) []SecretState {
 		if !inSession && !st.EnvSet && (st.Source == "auto" || st.Source == "keychain") {
 			_, inKeychain = kcGet(s.Name)
 		}
+		if extension.IsSecretFamily(s) { // its members are asked for when a call names them
+			st.Optional, st.Via, st.EnvSet = true, "optional", false
+			out = append(out, st)
+			continue
+		}
 		switch st.Source {
 		case "env":
 			st.Via = map[bool]string{true: "env", false: "missing"}[st.EnvSet]
@@ -185,6 +192,12 @@ func (h *Hub) SecretInfo(secrets []extension.Secret) []SecretState {
 				st.Via = "keychain"
 			default:
 				st.Via = "ask"
+			}
+		}
+		if s.Optional {
+			st.Optional = true
+			if st.Via == "ask" || st.Via == "missing" {
+				st.Via = "optional" // not set, and not needed: never asked for
 			}
 		}
 		out = append(out, st)
@@ -216,8 +229,21 @@ func (h *Hub) ResolveSecrets(ctx context.Context, e extension.Extension) (map[st
 	var missing []string
 	h.sec.mu.RLock()
 	for _, s := range e.Secrets {
+		if extension.IsSecretFamily(s) { // its members are named by the call (WithArgSecrets)
+			continue
+		}
 		src := firstNonEmpty(s.Source, "auto")
 		sv, inSession := h.sec.values[s.Name]
+		if s.Optional { // passed when known, never asked for
+			if inSession {
+				vals[s.Name] = sv
+			} else if v, ok := lookupEnv(envName(s)); ok && src != "keychain" {
+				vals[s.Name] = v
+			} else if v, ok := kcGet(s.Name); ok {
+				vals[s.Name] = v
+			}
+			continue
+		}
 		switch {
 		case (src == "auto" || src == "session" || src == "ask" || src == "keychain") && inSession:
 			vals[s.Name] = sv

@@ -1,17 +1,16 @@
 /* Flow designer: canvas, palette, inspector. */
 
 /* ---- flow designer ------------------------------------------------------------ */
+/* one at a time: the list of flows (FlowLibrary), or the open flow at full width */
 .flows {
-  grid-template-columns: var(--pane-l, 230px) 1fr;
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  position: relative;
 }
-.flows.list-c {
-  grid-template-columns: 1fr;
-}
-.flows.list-c > .ftree {
-  display: none;
-}
-.flows.list-c .fl-switch {
-  display: inline-block;
+.flows.is-editing > .fl-main {
+  flex: 1;
 }
 .fl-main {
   display: flex;
@@ -23,18 +22,47 @@
   display: flex;
   align-items: center;
   gap: 8px;
-  padding: 8px 12px;
+  padding: 8px 16px;
+  min-height: 52px;
   border-bottom: 1px solid var(--border);
   background: var(--surface);
   flex-wrap: wrap;
 }
+.fl-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  height: 30px;
+  padding: 0 10px 0 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  cursor: pointer;
+}
+.fl-back:hover,
+.fl-back:focus-visible {
+  color: var(--fg);
+  background: var(--hover);
+  border-color: var(--border);
+}
+.fl-crumb {
+  color: var(--muted);
+  opacity: 0.6;
+  margin: 0 -2px;
+}
 .fl-name {
-  font-size: 1.15em;
+  font-size: 15px;
   font-weight: 600;
+  letter-spacing: -0.01em;
   border-color: transparent;
   background: transparent;
   min-width: 160px;
-  max-width: 360px;
+  max-width: 420px;
+  height: 32px;
+  border-radius: 8px;
 }
 .fl-name:hover,
 .fl-name:focus {
@@ -42,7 +70,11 @@
   background: var(--input-bg);
 }
 .fl-saved {
-  font-size: 0.85em;
+  font-size: 12px;
+}
+.fl-bar .btn {
+  height: 30px;
+  border-radius: 8px;
 }
 .fl-work {
   flex: 1;
@@ -515,4 +547,191 @@
   .fl-bar .btn {
     padding: 4px 9px;
   }
+}
+
+/* ---- the list of flows (FlowLibrary) ------------------------------------------ */
+.fl-lib-view {
+  overflow: auto;
+  height: 100%;
+  padding: 0;
+}
+.fl-lib {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+  padding: 24px 28px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+.fl-lib-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  flex-wrap: wrap;
+  padding-bottom: 14px;
+  border-bottom: 1px solid var(--border);
+}
+.fl-lib-head h1 {
+  margin: 0 0 4px;
+  font-size: 22px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+}
+.fl-lib-head p {
+  margin: 0;
+  font-size: 13px;
+}
+.fl-lib-acts {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.fl-lib-acts .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+}
+.fl-lib .fls-bar {
+  padding: 0;
+}
+.fl-lib .fls-bar .hk-search {
+  max-width: 420px;
+}
+.fl-lib .fls-group {
+  margin-top: 6px;
+}
+.fl-cards {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 8px 0 4px;
+}
+.fl-card {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  text-align: left;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  min-height: 108px;
+  transition:
+    border-color 0.12s,
+    box-shadow 0.12s,
+    transform 0.12s;
+}
+.fl-card:hover,
+.fl-card:focus-visible {
+  border-color: var(--focus);
+  box-shadow: 0 8px 24px -16px rgb(0 0 0 / 0.5);
+  transform: translateY(-1px);
+}
+.fl-card-icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  border-radius: 9px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--focus) 16%, transparent);
+  color: var(--focus);
+}
+.fl-card-icon.is-chat {
+  background: color-mix(in srgb, var(--info, var(--focus)) 18%, transparent);
+  color: var(--info, var(--focus));
+}
+.fl-card-body {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  min-width: 0;
+  flex: 1;
+}
+.fl-card-top {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.fl-card-top b {
+  font-size: 14px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.fl-card-desc {
+  font-size: 12.5px;
+  color: var(--muted);
+  line-height: 1.4;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.fl-card-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  margin-top: auto;
+  font-variant-numeric: tabular-nums;
+}
+.fl-lib-empty {
+  text-align: center;
+  padding: 48px 24px;
+  border: 1px dashed var(--border);
+  border-radius: 14px;
+  color: var(--muted);
+}
+.fl-lib-empty > svg {
+  width: 32px;
+  height: 32px;
+  color: var(--focus);
+}
+.fl-lib-empty h3 {
+  color: var(--fg);
+  margin: 10px 0 6px;
+}
+.fl-lib-empty p {
+  max-width: 560px;
+  margin: 0 auto 14px;
+}
+.fl-lib-empty .row-actions {
+  justify-content: center;
+}
+
+/* palette and inspector, matching the chat's look */
+.fl-palette {
+  padding: 10px 8px;
+}
+.fl-pal-head {
+  font-size: 11px;
+  letter-spacing: 0.06em;
+}
+.fl-palette .fl-search {
+  border-radius: 8px;
+}
+.fl-pal-item {
+  padding: 7px 8px;
+  border-radius: 8px;
+  border: 1px solid transparent;
+}
+.fl-pal-item:hover {
+  border-color: var(--border);
+  background: var(--surface);
+}
+.fl-name {
+  width: auto;
+}
+.fl-lib .fls-bar {
+  justify-items: start;
+}
+.fl-lib .fls-bar .hk-search {
+  width: min(420px, 100%);
 }

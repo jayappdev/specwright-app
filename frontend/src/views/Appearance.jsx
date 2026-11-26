@@ -8,6 +8,7 @@ import { agentLabel } from "./Setup.jsx";
 import { HousekeepingCard, HistoryDBCard } from "../RunHousekeeping.jsx";
 import { PackagesCard } from "./Packages.jsx";
 import { RunSettings } from "../components/RunSettings.jsx";
+import { SecretsSettings } from "../components/SecretsSettings.jsx";
 
 // Settings: one place for the app's settings, in tabs. The same settings stay
 // where they were used before too (Run settings on the workflow, Packages &
@@ -17,6 +18,7 @@ const TABS = [
   ["agent", "Agent and model"],
   ["runs", "Runs"],
   ["network", "Network and packages"],
+  ["secrets", "Secrets"],
 ];
 export function openSettings(tab) {
   S.settingsTab = tab;
@@ -340,6 +342,7 @@ export function Appearance() {
             </div>
           </>
         )}
+        {tab === "secrets" && <SecretsSettings />}
         {tab === "network" &&
           (S.ws ? (
             <PackagesCard />

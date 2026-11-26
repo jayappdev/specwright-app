@@ -338,6 +338,23 @@ function seed() {
         testPrompt: "Regenerate the DTOs",
         call: { spec: "api/openapi.yaml" },
         sampleOutput: "Generated 6 model classes in build/generated",
+        guide: {
+          summary: "Regenerates the Java DTOs from an OpenAPI file, so the code matches the API.",
+          when: ["The OpenAPI file changed.", "Before a build that uses the generated models."],
+          how: [
+            "Give spec the path of the OpenAPI file.",
+            "A later step can read the summary line it prints.",
+          ],
+          examples: [
+            {
+              title: "Regenerate from the main spec",
+              text: "Runs the generator on the project's OpenAPI file.",
+              args: { spec: "api/openapi.yaml" },
+              sample: "",
+              result: "Generated 6 model classes in build/generated",
+            },
+          ],
+        },
       }),
       ext({
         name: "sonar-scan",
@@ -2826,6 +2843,7 @@ export function createMockBackend(methods) {
   const flowSummary = (f) => ({
     id: f.id,
     name: f.name,
+    chat: f.nodes.some((n) => n.type === "chat") || undefined, // a Chatflow (flow/chatflow.go)
     description: f.description,
     steps: f.nodes.filter((n) => !["start", "output"].includes(n.type)).length,
     outputs: f.nodes.filter((n) => n.type === "output").length,
@@ -2887,7 +2905,7 @@ export function createMockBackend(methods) {
       inputs = new Set(f.inputs.map((i) => i.name)),
       ids = new Set(f.nodes.map((n) => n.id));
     if (!f.name?.trim()) add("", "error", "Give the flow a name.");
-    if (!f.nodes.some((n) => n.type === "output"))
+    if (!f.nodes.some((n) => n.type === "output") && !f.nodes.some((n) => n.type === "chat"))
       add("", "warning", "Add an output so the flow produces something.");
     for (const i of f.inputs)
       if (i.type === "secret" && i.default)
@@ -3028,7 +3046,12 @@ export function createMockBackend(methods) {
                 ),
             ),
         );
-        if (feeders.length && !(n.instruction || "").trim() && !uses)
+        if (
+          feeders.length &&
+          !(n.instruction || "").trim() &&
+          !uses &&
+          !feeders.some((x) => x.type === "chat")
+        )
           add(
             n.id,
             "warning",
@@ -6554,6 +6577,323 @@ export function createMockBackend(methods) {
         rowFormats: ["auto", "json", "csv", "lines"],
       };
     },
+    // --- Chatflows (core/chatflow.go): sessions in memory, answers made up ---
+    async Chatflows() {
+      return Object.values(db.flows)
+        .filter((f) => f.nodes.some((n) => n.type === "chat"))
+        .map((f) => {
+          const chat = f.nodes.find((n) => n.type === "chat");
+          const reach = (id, up) => {
+            const seen = new Set();
+            const walk = (x) =>
+              f.edges
+                .filter((e) => (up ? e.to === x : e.from === x))
+                .forEach((e) => {
+                  const y = up ? e.from : e.to;
+                  if (!seen.has(y)) {
+                    seen.add(y);
+                    walk(y);
+                  }
+                });
+            walk(id);
+            return seen;
+          };
+          const setupIds = reach(chat.id, true);
+          return {
+            id: f.id,
+            name: f.name,
+            desc: f.description || "",
+            inputs: f.inputs || [],
+            starters: (chat.starters || []).filter((x) => x.trim()),
+            setup: f.nodes
+              .filter((n) => setupIds.has(n.id) && n.type !== "start")
+              .map((n) => n.title || n.id),
+            tools: f.edges
+              .filter((e) => e.from === chat.id)
+              .map((e) => {
+                const n = f.nodes.find((x) => x.id === e.to);
+                const set = reach(n.id, false);
+                set.add(n.id);
+                return {
+                  id: n.id,
+                  title: n.title || n.id,
+                  steps: f.nodes.filter((x) => set.has(x.id)).map((x) => x.id),
+                };
+              }),
+            vars: (f.vars || []).map((v) => v.name),
+            secrets: (f.secrets || []).map((v) => v.name),
+            asks: [],
+            costLimit: chat.costLimit || 0,
+          };
+        });
+    },
+    async ChatSessions(flow) {
+      const c = (db.chats ||= { sessions: [], messages: {}, data: {} });
+      return clone(
+        c.sessions
+          .filter((x) => !flow || x.flow === flow)
+          .sort((a, b) => String(b.updated).localeCompare(String(a.updated))),
+      );
+    },
+    async ChatSession(flow, id) {
+      const x = (db.chats?.sessions || []).find((s) => s.flow === flow && s.id === id);
+      if (!x) throw new Error("no session " + id);
+      return clone(x);
+    },
+    async ChatMessages(flow, id) {
+      return clone(db.chats?.messages[flow + "/" + id] || []);
+    },
+    async ChatData(flow, id, name) {
+      return db.chats?.data[flow + "/" + id]?.[name] ?? "";
+    },
+    // a rough copy of the Go index: CSV-like data is a table, the rest text
+    async ChatCatalog(flow, id) {
+      const s = db.chats?.sessions.find((x) => x.flow === flow && x.id === id);
+      if (!s) throw new Error("no session " + id);
+      return (s.data || [])
+        .filter((d) => !(d.step || "").startsWith("data."))
+        .map((d) => {
+          const text = db.chats.data[flow + "/" + id]?.[d.name] ?? "";
+          let rows = null;
+          try {
+            const v = JSON.parse(text);
+            if (Array.isArray(v) && v.length && v.every((x) => x && typeof x === "object"))
+              rows = [Object.keys(v[0]).join(","), ...v.map(() => "")];
+          } catch {
+            /* not JSON */
+          }
+          const lines = rows || text.trim().split("\n");
+          const sep = [",", "\t", "|"].find((x) => lines[0].includes(x));
+          const table = lines.length > 1 && !!sep;
+          return table
+            ? {
+                name: d.name,
+                title: d.title,
+                kind: "table",
+                table: d.name
+                  .replace(/\.[^.]+$/, "")
+                  .replace(/[^a-z0-9]+/gi, "_")
+                  .toLowerCase(),
+                columns: lines[0]
+                  .split(sep)
+                  .map((n) => n.trim())
+                  .filter(Boolean)
+                  .map((n) => ({ name: n, type: "TEXT" })),
+                rows: lines.length - 1,
+                bytes: text.length,
+              }
+            : {
+                name: d.name,
+                title: d.title,
+                kind: "text",
+                passages: Math.max(1, Math.ceil(text.length / 1200)),
+                bytes: text.length,
+              };
+        });
+    },
+    async StartChatSession(flow, inputs = {}) {
+      const info = (await api.Chatflows()).find((f) => f.id === flow);
+      if (!info) throw new Error(flow + " is not a Chatflow");
+      const c = (db.chats ||= { sessions: [], messages: {}, data: {} });
+      const t = new Date();
+      const id =
+        t.toISOString().slice(0, 19).replace(/[-:]/g, "").replace("T", "-") +
+        "-" +
+        Math.random().toString(36).slice(2, 8);
+      const shown = {};
+      for (const i of info.inputs) if (i.type !== "secret") shown[i.name] = inputs[i.name] ?? i.default ?? "";
+      const sess = {
+        id,
+        flow,
+        flowName: info.name,
+        title: "",
+        created: now(),
+        updated: now(),
+        status: "setup",
+        inputs: shown,
+        messages: 0,
+        data: [],
+      };
+      c.sessions.push(sess);
+      persist();
+      setTimeout(() => {
+        const k = flow + "/" + id;
+        c.data[k] = {};
+        for (const step of info.setup) {
+          const name = "setup-" + step.toLowerCase().replace(/[^a-z0-9]+/g, "-") + ".json";
+          c.data[k][name] = JSON.stringify([
+            { region: "EU", revenue: 182400 },
+            { region: "US", revenue: 161000 },
+          ]);
+          sess.data.push({ name, title: step, setup: true, bytes: c.data[k][name].length, at: now() });
+        }
+        Object.assign(sess, { status: "ready", setupAt: now(), updated: now() });
+        persist();
+        emit({ type: "chat.session", flow, session: id, status: "ready", summary: "Ready" });
+      }, 900);
+      return clone(sess);
+    },
+    async SendChatMessage(flow, id, text, files = []) {
+      const c = db.chats;
+      const sess = c?.sessions.find((s) => s.flow === flow && s.id === id);
+      if (!sess) throw new Error("no session " + id);
+      if (sess.status !== "ready") throw new Error("the session is still setting up");
+      const k = flow + "/" + id;
+      const msgs = (c.messages[k] ||= []);
+      const q = { id: "m" + Date.now(), role: "user", text: text.trim(), at: now(), files };
+      msgs.push(q);
+      sess.messages++;
+      if (!sess.title) sess.title = text.trim().slice(0, 60);
+      sess.updated = now();
+      persist();
+      const answer =
+        `From this session's data (${sess.data.map((d) => d.title).join(", ") || "no setup data"}):\n\n` +
+        `| region | revenue |\n| --- | ---: |\n| EU | 182,400 |\n| US | 161,000 |\n\n` +
+        `**EU** is ahead on “${text.trim().slice(0, 60)}”.`;
+      // the chat runs its first tool (a mock result), shown as a chip
+      const info = (await api.Chatflows()).find((f) => f.id === flow);
+      const tool = info?.tools?.[0];
+      const steps = [];
+      if (tool) {
+        const dataName = `m${String(sess.messages).padStart(3, "0")}-${tool.id}.json`;
+        ((c.data ||= {})[k] ||= {})[dataName] = JSON.stringify(
+          [
+            { region: "EU", growth: 0.18 },
+            { region: "US", growth: 0.06 },
+          ],
+          null,
+          2,
+        );
+        steps.push({
+          tool: tool.id,
+          title: tool.title,
+          args: { [tool.id + ".question"]: text.trim() },
+          data: dataName,
+          durationMs: 800,
+        });
+        setTimeout(
+          () =>
+            emit({
+              type: "chat.step",
+              flow,
+              session: id,
+              tool: tool.id,
+              title: tool.title,
+              status: "running",
+            }),
+          200,
+        );
+        setTimeout(
+          () =>
+            emit({
+              type: "chat.step",
+              flow,
+              session: id,
+              tool: tool.id,
+              title: tool.title,
+              status: "done",
+              durationMs: 800,
+              data: dataName,
+            }),
+          1000,
+        );
+      }
+      const t0 = tool ? 1100 : 400;
+      const parts = answer.split("\n\n");
+      parts.forEach((p, i) =>
+        setTimeout(
+          () => emit({ type: "chat.text", flow, session: id, text: p, summary: p.slice(0, 80) }),
+          t0 + i * 350,
+        ),
+      );
+      setTimeout(
+        () => {
+          // what the answer took (as the Go side measures it)
+          const copilot = db.setup?.provider === "copilot";
+          const usage = {
+            prompts: steps.length + 1,
+            modelCalls: steps.length + 2,
+            premiumRequests: copilot ? steps.length + 1 : 0,
+            inputTokens: 2600 + 900 * steps.length + Math.round(Math.random() * 400),
+            outputTokens: 380 + Math.round(Math.random() * 200),
+            cachedTokens: 1900 + 700 * steps.length,
+            costUsd: copilot ? 0 : 0.004 + 0.002 * steps.length,
+            toolRuns: steps.length,
+            durationMs: t0 + parts.length * 350 + 200,
+          };
+          msgs.push({
+            id: "m" + Date.now(),
+            role: "assistant",
+            text: answer,
+            at: now(),
+            steps,
+            followups: ["Why is EU ahead?", "How about last year?", "Chart it by region"],
+            usage,
+            agent: copilot ? "copilot" : "claude",
+            model: copilot ? "gpt-5" : "claude-sonnet",
+          });
+          const su = (sess.usage ||= {});
+          for (const [key, v] of Object.entries(usage)) su[key] = (su[key] || 0) + v;
+          sess.costUsd = (sess.costUsd || 0) + usage.costUsd;
+          sess.tokens = (sess.tokens || 0) + usage.inputTokens + usage.outputTokens;
+          sess.messages++;
+          sess.updated = now();
+          persist();
+          emit({ type: "chat.message", flow, session: id, summary: "Answered" });
+        },
+        t0 + parts.length * 350 + 200,
+      );
+      return clone(q);
+    },
+    async StopChatMessage() {},
+    async AttachChatFile(flow, id, name, content) {
+      const c = db.chats;
+      const sess = c?.sessions.find((s) => s.flow === flow && s.id === id);
+      if (!sess) throw new Error("no session " + id);
+      const safe = name.replace(/[^A-Za-z0-9._-]+/g, "-");
+      const d = {
+        name: "file-" + safe,
+        title: name,
+        step: "attachment",
+        bytes: Math.round((content.length * 3) / 4),
+        at: now(),
+      };
+      let text = "";
+      try {
+        text = atob(content);
+      } catch {
+        text = "(binary)";
+      }
+      ((c.data ||= {})[flow + "/" + id] ||= {})[d.name] = text;
+      sess.data = [...(sess.data || []).filter((x) => x.name !== d.name), d];
+      persist();
+      return clone(d);
+    },
+    async RefreshChatSession(flow, id) {
+      const sess = db.chats?.sessions.find((s) => s.flow === flow && s.id === id);
+      if (!sess) throw new Error("no session " + id);
+      sess.status = "setup";
+      persist();
+      emit({ type: "chat.session", flow, session: id, status: "setup", summary: "Refreshing" });
+      setTimeout(() => {
+        Object.assign(sess, { status: "ready", setupAt: now(), refreshed: true });
+        persist();
+        emit({ type: "chat.session", flow, session: id, status: "ready", summary: "Refreshed" });
+      }, 900);
+      return clone(sess);
+    },
+    async RenameChatSession(flow, id, title) {
+      const sess = db.chats?.sessions.find((s) => s.flow === flow && s.id === id);
+      if (!sess) throw new Error("no session " + id);
+      sess.title = title.trim().slice(0, 60);
+      persist();
+      return clone(sess);
+    },
+    async DeleteChatSession(flow, id) {
+      const c = db.chats;
+      if (c) c.sessions = c.sessions.filter((s) => !(s.flow === flow && s.id === id));
+      persist();
+    },
     async Flows() {
       return Object.values(db.flows)
         .map(flowSummary)
@@ -6919,6 +7259,25 @@ export function createMockBackend(methods) {
       persist();
       return clone(db.lists[db.root]);
     },
+    // a tool file's tools, for the Admin screen to publish one (core/toolshare.go)
+    async ReadToolFile(data) {
+      let b;
+      try {
+        b = JSON.parse(data);
+      } catch (e) {
+        throw new Error("not a tool file: " + e.message);
+      }
+      if (b.format !== "specwright-tools" || !(b.tools || []).length)
+        throw new Error("the file has no tools");
+      return b.tools.map((t) => ({
+        ...t,
+        kind: "script",
+        scope: "project",
+        status: "untested",
+        secrets: t.secrets || [],
+        params: t.params || [],
+      }));
+    },
     // chart (builtin/chart.go): a PNG of a chart, saved in the project
     async ChartPNG(svg, path) {
       if (!/data-specwright-chart="1"/.test(svg || ""))
@@ -7229,6 +7588,32 @@ export function createMockBackend(methods) {
         }
       }
       runSecrets.set(o, secrets);
+      // a Chatflow runs only its setup (the steps before the Chat step), for a chat or alone
+      const chatNode = f.nodes.find((n) => n.type === "chat");
+      if (chatNode) {
+        const up = new Set(),
+          walk = (id) =>
+            f.edges
+              .filter((e) => e.to === id)
+              .forEach((e) => {
+                if (!up.has(e.from)) {
+                  up.add(e.from);
+                  walk(e.from);
+                }
+              });
+        walk(chatNode.id);
+        const g = clone(f);
+        g.nodes = g.nodes.filter((n) => up.has(n.id));
+        g.edges = g.edges.filter((e) => up.has(e.from) && up.has(e.to));
+        if (o.chat?.role === "setup-only") return startFlowRun(g, { ...o, chat: { role: "setup-only" } });
+        const sess = await api.StartChatSession(id, o.inputs);
+        sess.setupRun = "";
+        const st = startFlowRun(g, { ...o, chat: { role: "setup", session: sess.id } });
+        const rec = db.chats.sessions.find((x) => x.id === sess.id);
+        if (rec) rec.setupRun = st.id;
+        persist();
+        return st;
+      }
       return startFlowRun(clone(f), o);
     },
     async FlowRun(id) {
@@ -7400,6 +7785,49 @@ export function createMockBackend(methods) {
     },
     async RemoveSecretFromKeychain(name) {
       delete kcStore[name];
+    },
+    // project secrets: encrypted in the project on the Go side; values never come back
+    async ProjectSecrets() {
+      const ps = (db.projectSecrets ||= {});
+      return Object.keys(ps)
+        .sort()
+        .map((name) => ({ name, desc: ps[name].desc, updated: ps[name].updated, readable: true }));
+    },
+    async SetProjectSecret(name, value, desc) {
+      if (!/^[A-Za-z_][A-Za-z0-9_.-]{0,127}$/.test(name || ""))
+        throw new Error(`name "${name}": start with a letter or _, then letters, digits, _ . or -`);
+      const ps = (db.projectSecrets ||= {});
+      if (!value && !ps[name]) throw new Error("give " + name + " a value");
+      ps[name] = { value: value || ps[name].value, desc: (desc || "").trim(), updated: now() };
+      persist();
+    },
+    async DeleteProjectSecret(name) {
+      const ps = (db.projectSecrets ||= {});
+      if (!ps[name]) throw new Error("there is no project secret " + name);
+      delete ps[name];
+      persist();
+    },
+    async SecretRefUses() {
+      const by = {};
+      for (const f of Object.values(db.flows || {})) {
+        const text = JSON.stringify(f);
+        for (const m of text.matchAll(
+          /\{\{\s*(project_secret|keychain)\.([A-Za-z_][A-Za-z0-9_.-]*)\s*\}\}/gi,
+        )) {
+          const store = m[1].toLowerCase(),
+            key = store + "." + m[2];
+          const u = (by[key] ||= {
+            store,
+            name: m[2],
+            flows: [],
+            found: store === "keychain" ? m[2] in kcStore : !!db.projectSecrets?.[m[2]],
+          });
+          if (!u.flows.includes(f.name)) u.flows.push(f.name);
+        }
+      }
+      return Object.keys(by)
+        .sort()
+        .map((k) => by[k]);
     },
     async RunResults(id) {
       const r = db.runs.find((x) => x.id === id);
@@ -7785,6 +8213,58 @@ export function createMockBackend(methods) {
       });
       persist();
       return clone(db.exts[i]);
+    },
+    async SaveToolGuide(name, g) {
+      await wait(80);
+      const i = db.exts.findIndex((x) => x.name === name);
+      if (i < 0) throw new Error(`no tool named ${name}`);
+      if (db.exts[i].managed) throw new Error("admin-managed tools are changed in the catalog");
+      const empty = !g || (!g.summary?.trim() && !g.when?.length && !g.how?.length && !g.examples?.length);
+      db.exts[i].guide = empty ? null : { ...clone(g), updated: now() };
+      persist();
+      return clone(db.exts[i]);
+    },
+    async GenerateToolGuide(d, _model, ask) {
+      await wait(1200);
+      const params = d.params || [];
+      const ex = (title, text, pick) => ({
+        title,
+        text,
+        args: Object.fromEntries(params.filter(pick).map((p) => [p.name, p.example || p.default || ""])),
+        sample: "",
+        result: "",
+      });
+      return {
+        why: "Read its parameters and description (preview: a sample guide)" + (ask ? `; asked: ${ask}` : ""),
+        guide: {
+          summary: d.desc || `Runs ${d.name}.`,
+          when: [`You need ${d.name} as one step of a flow.`, "A later step should use what it prints."],
+          how: [
+            "Fill its required fields; the others keep their defaults.",
+            "Use {{input}} or {{input_file}} to give it the previous step's output.",
+          ],
+          examples: [
+            ex("Required fields only", "The smallest call that works.", (p) => p.required),
+            ex("Every field", "Every parameter with its example value.", (p) => p.example || p.default),
+          ],
+        },
+      };
+    },
+    async RunToolExample(d, ex, secrets = {}) {
+      const data = {
+        input: ex.sample || "",
+        input_file: ex.sample ? "/tmp/specwright-example/input.txt" : "",
+      };
+      const render = (t) =>
+        String(t ?? "").replace(/\{\{\s*([a-z_.]+)\s*\}\}/g, (m, v) =>
+          v === "input" || v === "sample.buffer_output" || v === "steps.sample" || v === "sample.output"
+            ? data.input
+            : v === "input_file" || v === "sample.output_file"
+              ? data.input_file
+              : m,
+        );
+      const args = Object.fromEntries(Object.entries(ex.args || {}).map(([k, v]) => [k, render(v)]));
+      return api.RunToolWith(d, args, secrets, null);
     },
     async RunToolWith(d, args = {}, secrets = {}, expect = null) {
       await wait(500);

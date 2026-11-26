@@ -4,9 +4,12 @@ import { useEffect, useState } from "react";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg } from "../store.js";
-import { GUIDE, exampleFlow } from "./flowGuide.js";
+import { GUIDE, exampleFlow, hasToolGuide, toolGuideSection } from "./flowGuide.js";
 import { StepIcon, openFlowInDesigner } from "./Flows.jsx";
 import { RenderPreview, chartOf } from "../ContentView.jsx";
+
+// the guides of the workspace's tools (project, global, managed, Copilot)
+const toolSections = () => (S.ws?.extensions || []).filter(hasToolGuide).map(toolGuideSection);
 
 // Open the guide at a step type (from the Flow designer).
 export function openFlowGuide(type) {
@@ -36,6 +39,12 @@ function Rich({ text }) {
 }
 
 const previews = {}; // "<type>/<n>" → { output, error }
+// built-in tool steps the app can preview (drawn, nothing saved)
+const PREVIEWED = new Set(["builtin:chart", "builtin:table", "builtin:dashboard"]);
+
+// fixedResult: the section's examples show the result written with them
+// (AI steps; tools that reach real data, which a preview must not run).
+const fixedResult = (g) => g.type === "ai" || g.type === "improve" || !!g.resultLabel;
 
 function stepSettings(n) {
   const c = { ...n };
@@ -43,7 +52,7 @@ function stepSettings(n) {
   return JSON.stringify(c, null, 2);
 }
 
-async function tryExample(g, ex) {
+export async function tryExample(g, ex) {
   if (!S.ws)
     return toast(
       "Open a workspace first (Development wizard or Choose input): the example is saved as a flow in it.",
@@ -58,7 +67,10 @@ async function tryExample(g, ex) {
     await backend.SaveFlow({
       ...base,
       name,
-      description: `An example from the Flow step guide (${g.name}). Its first steps produce sample data; replace them with your own tools.`,
+      description: g.tool
+        ? `An example from the guide of the tool ${g.name}.` +
+          (ex.toolExample?.sample ? " Its first step is sample input; replace it with your own step." : "")
+        : `An example from the Flow step guide (${g.name}). Its first steps produce sample data; replace them with your own tools.`,
       inputs: flow.inputs,
       nodes: flow.nodes,
       edges: flow.edges,
@@ -72,7 +84,8 @@ async function tryExample(g, ex) {
 
 function Example({ g, ex, k }) {
   const key = g.type + "/" + k,
-    [, redraw] = useState(0);
+    [, redraw] = useState(0),
+    [live, setLive] = useState(null);
   const { flow, steps } = exampleFlow(ex);
   const node = flow.nodes.find((n) => n.id === ex.focus);
   const title = (id) => flow.nodes.find((n) => n.id === id)?.title || id;
@@ -81,14 +94,29 @@ function Example({ g, ex, k }) {
     .map((e) => e.from)
     .filter((id) => id in steps);
   const after = flow.edges.filter((e) => e.from === ex.focus);
+  // the path: every step in order, the example's step highlighted
+  const order = [];
+  const visit = (id) => {
+    if (order.includes(id)) return;
+    order.push(id);
+    flow.edges.filter((e) => e.from === id).forEach((e) => visit(e.to));
+  };
+  visit("start");
   useEffect(() => {
-    if (previews[key] || g.type === "ai" || g.type === "improve") return;
+    if (previews[key] || fixedResult(g)) return;
     previews[key] = { busy: true };
-    backend
-      .PreviewFlowStep({ id: "guide", name: "guide", ...flow, skills: [], context: { text: "" } }, ex.focus, {
-        inputs: {},
-        steps,
-      })
+    const fl = { id: "guide", name: "guide", ...flow, skills: [], context: { text: "" } };
+    (async () => {
+      // charts and tables before the step are drawn first (a dashboard shows them)
+      const all = { ...steps };
+      for (const id of order) {
+        const n = flow.nodes.find((x) => x.id === id);
+        if (id === ex.focus || !n || id in all || !PREVIEWED.has(n.tool)) continue;
+        const r = await backend.PreviewFlowStep(fl, id, { inputs: {}, steps: all }).catch(() => null);
+        if (r?.output) all[id] = r.output;
+      }
+      return backend.PreviewFlowStep(fl, ex.focus, { inputs: {}, steps: all });
+    })()
       .then((r) => {
         previews[key] = r || {};
         redraw((x) => x + 1);
@@ -98,18 +126,7 @@ function Example({ g, ex, k }) {
         redraw((x) => x + 1);
       });
   }, [key]);
-  const res =
-    g.type === "ai" || g.type === "improve"
-      ? { output: ex.result, ai: true }
-      : previews[key] || { busy: true };
-  // the path: every step in order, the example's step highlighted
-  const order = [];
-  const visit = (id) => {
-    if (order.includes(id)) return;
-    order.push(id);
-    flow.edges.filter((e) => e.from === id).forEach((e) => visit(e.to));
-  };
-  visit("start");
+  const res = fixedResult(g) ? { output: ex.result, ai: true } : previews[key] || { busy: true };
   return (
     <div className="guide-ex">
       <h4>{ex.title}</h4>
@@ -150,7 +167,9 @@ function Example({ g, ex, k }) {
         </div>
         <div>
           <div className="muted">
-            {res.ai ? "Result · an example answer (the AI's will vary)" : "Result · previewed by the app"}
+            {res.ai
+              ? g.resultLabel || "Result · an example answer (the AI's will vary)"
+              : "Result · previewed by the app"}
           </div>
           {res.busy ? (
             <p className="muted">Previewing…</p>
@@ -158,6 +177,15 @@ function Example({ g, ex, k }) {
             <div className="banner error">{res.error}</div>
           ) : chartOf(res.output) && node.type !== "output" ? (
             <RenderPreview text={res.output} format="html" />
+          ) : /^\s*<!doctype html/i.test(res.output || "") ? (
+            <iframe
+              className={
+                "fl-html guide-html" + (res.output.includes("data-specwright-dashboard") ? " guide-dash" : "")
+              }
+              sandbox=""
+              srcDoc={res.output}
+              title="HTML preview"
+            />
           ) : node.type === "output" && node.format === "html" ? (
             <iframe className="fl-html guide-html" sandbox="" srcDoc={res.output} title="HTML preview" />
           ) : (
@@ -168,7 +196,44 @@ function Example({ g, ex, k }) {
           )}
         </div>
       </div>
+      {live && (
+        <div className="guide-live">
+          <div className="muted">Result · just run</div>
+          {live.busy ? (
+            <p className="muted">Running {g.name}…</p>
+          ) : (
+            <>
+              {(live.problems?.length || live.error) && (
+                <div className="banner error">{(live.problems || []).join("; ") || live.error}</div>
+              )}
+              {live.output && <pre className="code guide-pre">{live.output}</pre>}
+              {live.durationMs != null && (
+                <small className="muted">
+                  {live.ok ? "OK" : "Failed"} · {live.durationMs} ms
+                </small>
+              )}
+            </>
+          )}
+        </div>
+      )}
       <div className="row-actions">
+        {ex.toolExample && (
+          <button
+            className="btn secondary"
+            disabled={live?.busy}
+            title="Runs the tool with this example's arguments (the sample is the previous step's output)"
+            onClick={async () => {
+              setLive({ busy: true });
+              try {
+                setLive(await backend.RunToolExample(g.tool, ex.toolExample, {}));
+              } catch (e) {
+                setLive({ error: errMsg(e) });
+              }
+            }}
+          >
+            Run example
+          </button>
+        )}
         <button
           className="btn secondary"
           onClick={() => tryExample(g, ex)}
@@ -236,6 +301,7 @@ function Section({ g }) {
 
 export function FlowGuide() {
   const [cur, setCur] = useState(S.guide || GUIDE[0].type);
+  const tools = toolSections();
   useEffect(() => {
     if (!S.guide) return;
     const el = document.getElementById("guide-" + S.guide);
@@ -275,6 +341,27 @@ export function FlowGuide() {
             </span>
           </button>
         ))}
+        <div className="guide-group muted">Your tools</div>
+        {tools.length === 0 && (
+          <p className="muted guide-none">
+            No tool has a guide yet. Open a tool on the Tools screen, then Test › Guide &amp; examples.
+          </p>
+        )}
+        {tools.map((g) => (
+          <button
+            key={g.type}
+            className={"run-item guide-nav" + (cur === g.type ? " active" : "")}
+            onClick={() => go(g.type)}
+          >
+            <StepIcon n={g.icon} tools={S.ws?.extensions || []} size={22} />
+            <span>
+              <b>{g.name}</b>
+              <small>
+                {g.examples.length} examples · {g.tool.scope || "project"}
+              </small>
+            </span>
+          </button>
+        ))}
       </nav>
       <section className="view guide-main">
         <div className="card">
@@ -309,6 +396,19 @@ export function FlowGuide() {
           </p>
         </div>
         {GUIDE.map((g) => (
+          <Section key={g.type} g={g} />
+        ))}
+        {tools.length > 0 && (
+          <div className="card">
+            <h2>Your tools</h2>
+            <p className="wf-desc">
+              Guides written for the tools of this project and of your global library (and admin-managed
+              tools). Edit a guide on the Tools screen: open the tool, then Test › Guide &amp; examples.
+              <b> Run example</b> runs the tool; <b>Try it in the designer</b> saves the example as a flow.
+            </p>
+          </div>
+        )}
+        {tools.map((g) => (
           <Section key={g.type} g={g} />
         ))}
       </section>

@@ -219,3 +219,13 @@ export function HeadingPicker({ list, id, label = "Heading" }) {
     </label>
   );
 }
+
+// flow files changed (the AI saved a version, another window): its heading
+// may have been set for it, so read the arrangement again
+if (typeof window !== "undefined") {
+  let t = 0;
+  window.addEventListener("specwright:flows-changed", () => {
+    clearTimeout(t);
+    t = setTimeout(() => loadLayout(true), 200);
+  });
+}

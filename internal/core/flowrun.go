@@ -60,11 +60,25 @@ type FlowRunOptions struct {
 	// Inputs holds flow.SecretMask in their place, so the values never reach
 	// the screen, run history or saved results.
 	Secrets map[string]string `json:"-"`
+	// Env: more environment for the run's tool steps (a Chatflow's
+	// variables and secrets; secret values are redacted like Secrets)
+	Env       map[string]string `json:"-"`
+	EnvSecret []string          `json:"-"` // the Env names that are secrets
 	// SaveSecrets: secret inputs whose typed value is also saved in the
 	// system keychain (at the input's keychain entry) for later runs.
 	SaveSecrets []string `json:"saveSecrets,omitempty"`
+	// Chat: the run is part of a Chatflow: a session's setup, its setup
+	// alone (to try it), or a tool the chat ran
+	Chat *FlowRunChat `json:"chat,omitempty"`
 	// prompt: secret inputs asked in a dialog once the run has started
 	prompt []flow.Input
+}
+
+// FlowRunChat says how a run belongs to a Chatflow.
+type FlowRunChat struct {
+	Role    string `json:"role"`              // setup | setup-only | tool
+	Session string `json:"session,omitempty"` // the chat session (setup, tool)
+	Tool    string `json:"tool,omitempty"`    // the tool's title (tool)
 }
 
 // values: the inputs the steps get, secrets included.
@@ -213,7 +227,10 @@ type flowRun struct {
 	seq      int
 	t0       time.Time
 	noReview bool
-	gathered map[string][]flow.ItemResult // a Gather's results, for execStep
+	// refSecrets: {{project_secret.X}} and {{keychain.X}}, looked up at
+	// the start (memory only)
+	refSecrets map[string]string
+	gathered   map[string][]flow.ItemResult // a Gather's results, for execStep
 	// toolArgs: the arguments each tool step last ran with (secrets in
 	// place; memory only), for an Improve step that runs it again
 	toolArgs map[string]map[string]any
@@ -266,6 +283,13 @@ func (h *Hub) RunFlow(id string, o FlowRunOptions) (FlowRunState, error) {
 	f, err := flow.Load(root, id)
 	if err != nil {
 		return FlowRunState{}, err
+	}
+	if f.IsChatflow() { // a Chatflow runs its setup: for a chat (the default), or alone to try it
+		if o.Chat != nil && o.Chat.Role == "setup-only" {
+			return h.runChatSetupOnly(root, f, o)
+		}
+		_, run, err := h.startChat(root, f, o)
+		return run, err
 	}
 	if err := h.prepareRun(root, f, &o); err != nil {
 		return FlowRunState{}, err
@@ -326,7 +350,14 @@ func (h *Hub) prepareRun(root string, f *flow.Flow, o *FlowRunOptions) error {
 // startFlow starts a run of f (a saved flow, or a trial copy).
 func (h *Hub) startFlow(root string, f *flow.Flow, o FlowRunOptions, trial *FlowTrial) (FlowRunState, error) {
 	// every way to run a flow (Run flows, trials, the built-in tool, headless) passes here
+	if f.IsChatflow() {
+		return FlowRunState{}, fmt.Errorf("%s is a Chatflow: chat with it on the Chats screen (it is not run as a flow)", f.Name)
+	}
 	if err := h.checkFlowCommands(root, f); err != nil {
+		return FlowRunState{}, err
+	}
+	refs, err := h.refSecrets(root, f)
+	if err != nil {
 		return FlowRunState{}, err
 	}
 	h.mu.RLock()
@@ -338,8 +369,13 @@ func (h *Hub) startFlow(root string, f *flow.Flow, o FlowRunOptions, trial *Flow
 	for _, v := range o.Secrets { // hidden from every output, event and saved file
 		h.Store.Redactor().Add(v)
 	}
+	for _, k := range o.EnvSecret {
+		if v := o.Env[k]; v != "" {
+			h.Store.Redactor().Add(v)
+		}
+	}
 	runID := workflow.NewRunID()
-	fr := &flowRun{flow: f, decide: make(chan FlowDecision, 1), done: make(chan struct{}), t0: time.Now()}
+	fr := &flowRun{flow: f, decide: make(chan FlowDecision, 1), done: make(chan struct{}), t0: time.Now(), refSecrets: refs}
 	fr.st = FlowRunState{ID: runID, FlowID: f.ID, FlowName: f.Name, Status: "running", Started: time.Now(), Options: o, Agent: agentName, Model: model,
 		Outputs: []FlowOutputState{}, MinutesSaved: f.EstimatedMinutes(), Trial: trial}
 	fr.st.Steps = stepStates(f)
@@ -495,13 +531,23 @@ func (h *Hub) FlowCredentials(id string) ([]FlowCredential, error) {
 		return nil, err
 	}
 	used := map[string]bool{}
+	argsOf := map[string]map[string]any{} // a tool's arguments in every step (for ${DB_SALES} of a DB_* family)
+	note := func(tool, at string, args map[string]string) {
+		used[tool] = true
+		if argsOf[tool] == nil {
+			argsOf[tool] = map[string]any{}
+		}
+		for k, v := range args {
+			argsOf[tool][at+"."+k] = v
+		}
+	}
 	for _, n := range f.Nodes {
 		if n.Type == "tool" {
-			used[n.Tool] = true
+			note(n.Tool, n.ID, n.Args)
 		}
-		for _, a := range n.Actions {
+		for i, a := range n.Actions {
 			if a.Type == "tool" {
-				used[a.Tool] = true
+				note(a.Tool, fmt.Sprintf("%s.action%d", n.ID, i), a.Args)
 			}
 		}
 	}
@@ -511,7 +557,10 @@ func (h *Hub) FlowCredentials(id string) ([]FlowCredential, error) {
 		if !used[e.Name] {
 			continue
 		}
-		for _, s := range e.Secrets {
+		for _, s := range extension.WithArgSecrets(e, argsOf[e.Name]).Secrets {
+			if extension.IsSecretFamily(s) { // its members are listed as the steps name them
+				continue
+			}
 			c := byName[s.Name]
 			if c == nil {
 				st := h.SecretInfo([]extension.Secret{s})[0]

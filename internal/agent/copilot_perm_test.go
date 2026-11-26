@@ -71,15 +71,15 @@ func TestCopilotTokenEnvAndWeb(t *testing.T) {
 	c.help = "--secret-env-vars --allow-url" // as `copilot --help` lists them
 	c.helpOnce.Do(func() {})
 	ctx := context.Background()
-	if a := c.extraArgs(ctx, "copilot"); !slices.Equal(a, []string{"--secret-env-vars=COPILOT_GITHUB_TOKEN,GH_TOKEN,GITHUB_TOKEN"}) {
+	if a := c.extraArgs(ctx, "copilot", Request{}); !slices.Equal(a, []string{"--secret-env-vars=COPILOT_GITHUB_TOKEN,GH_TOKEN,GITHUB_TOKEN"}) {
 		t.Fatalf("default: %q", a)
 	}
 	c.SetWeb(WebAccess{Mode: "sites", Sites: []string{"docs.github.com", " "}})
-	if a := c.extraArgs(ctx, "copilot"); !slices.Contains(a, "--allow-url") || !slices.Contains(a, "docs.github.com") || len(a) != 3 {
+	if a := c.extraArgs(ctx, "copilot", Request{}); !slices.Contains(a, "--allow-url") || !slices.Contains(a, "docs.github.com") || len(a) != 3 {
 		t.Fatalf("sites: %q", a)
 	}
 	c.SetWeb(WebAccess{Mode: "all"})
-	if a := c.extraArgs(ctx, "copilot"); !slices.Contains(a, "--allow-all-urls") {
+	if a := c.extraArgs(ctx, "copilot", Request{}); !slices.Contains(a, "--allow-all-urls") {
 		t.Fatalf("all: %q", a)
 	}
 }

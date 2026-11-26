@@ -1,5 +1,6 @@
 import { registerPlace } from "../navigation.js";
 import { ToolTester } from "./tools/ToolTester.jsx";
+import { ToolGuideEditor } from "./tools/ToolGuide.jsx";
 import { DecisionLog, openToolInPlayground } from "./tools/DecisionLog.jsx";
 import { genTurns, testText } from "./tools/toolHistory.js";
 import { useEffect } from "react";
@@ -484,7 +485,9 @@ async function testAndMaybeFix() {
   const tb = S.tb;
   tb.fix = null;
   await runTest();
-  const missing = (tb.draft?.secrets || []).some((s) => S.secretInfo[s.name]?.via === "missing");
+  const missing = (tb.draft?.secrets || []).some(
+    (s) => !s.optional && S.secretInfo[s.name]?.via === "missing",
+  );
   if (tb.test && !tb.test.pass && tb.autoFix !== false && !missing && !tb.ro) autoFix();
 }
 
@@ -557,6 +560,7 @@ function TestTabs({ tb }) {
       {[
         ["args", "Run with arguments"],
         ["ai", "Test with AI"],
+        ["guide", "Guide & examples"],
       ].map(([k, l]) => (
         <button
           key={k}
@@ -606,7 +610,7 @@ export function Tools() {
     update();
   };
   // only secrets with no way to get a value block a test; "ask" ones prompt
-  const missing = (d?.secrets || []).filter((s) => S.secretInfo[s.name]?.via === "missing");
+  const missing = (d?.secrets || []).filter((s) => !s.optional && S.secretInfo[s.name]?.via === "missing");
   let body = null;
 
   if (tb.stage === "describe") {
@@ -1042,6 +1046,18 @@ export function Tools() {
           </div>
         </fieldset>
         <DecisionLog tb={tb} />
+      </>
+    );
+  } else if (tb.stage === "test" && d && tb.testTab === "guide") {
+    body = (
+      <>
+        <TestTabs tb={tb} />
+        <ToolGuideEditor tb={tb} d={d} />
+        <div className="row-actions">
+          <button className="btn secondary" onClick={() => set("stage", "review")}>
+            Back to review
+          </button>
+        </div>
       </>
     );
   } else if (tb.stage === "test" && d && (tb.testTab || "args") === "args") {

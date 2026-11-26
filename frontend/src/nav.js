@@ -12,11 +12,12 @@ export function createHistory(cap = 50) {
   return {
     current: () => list[at] || null,
     // push records a new place; a change of selection with nothing selected
-    // before, in the same view, completes the current entry instead
-    push(e) {
+    // before, in the same view, completes the current entry instead (unless
+    // keepEmpty: nothing selected is a place of its own, e.g. the list of flows)
+    push(e, { keepEmpty = false } = {}) {
       const cur = list[at];
       if (sameEntry(cur, e)) return false;
-      if (cur && cur.view === e.view && !cur.key && e.key) {
+      if (!keepEmpty && cur && cur.view === e.view && !cur.key && e.key) {
         list[at] = { ...e };
         return false;
       }

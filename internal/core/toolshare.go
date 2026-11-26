@@ -283,12 +283,22 @@ func (h *Hub) importTool(t extension.BundledTool, action string) (string, string
 		_, _ = h.SetToolTags(t.Name, t.Tags) // tags are a convenience: an error does not stop the import
 	}
 	note := ""
-	if len(t.Secrets) > 0 {
-		var names []string
-		for _, s := range t.Secrets {
-			names = append(names, s.Name)
+	var needed, optional []string
+	for _, s := range t.Secrets {
+		if s.Optional {
+			optional = append(optional, s.Name)
+		} else {
+			needed = append(needed, s.Name)
 		}
-		note = fmt.Sprintf("%s needs secret(s) %s: no values come with the file", t.Name, strings.Join(names, ", "))
+	}
+	switch {
+	case len(needed) > 0:
+		note = fmt.Sprintf("%s needs secret(s) %s: no values come with the file", t.Name, strings.Join(needed, ", "))
+		if len(optional) > 0 {
+			note += fmt.Sprintf(" (and can use %s, only where needed)", strings.Join(optional, ", "))
+		}
+	case len(optional) > 0:
+		note = fmt.Sprintf("%s can use the optional secrets %s, only for the sources that need them; nothing is asked for", t.Name, strings.Join(optional, ", "))
 	}
 	return t.Name, note, nil
 }
@@ -382,4 +392,24 @@ func (h *Hub) importFlowTools(data string) []string {
 		notes = append(notes, "the flow uses this project's own "+strings.Join(kept, ", ")+" (the file's copies were not imported)")
 	}
 	return notes
+}
+
+// ReadToolFile reads the tools in a tool file (*.tools.json) without saving
+// anything: an admin opens one in the tool editor to publish it as a
+// managed tool (library/tools has the app's own).
+func (h *Hub) ReadToolFile(data string) ([]extension.Extension, error) {
+	b, err := extension.ParseToolFile(data)
+	if err != nil {
+		return nil, err
+	}
+	out := []extension.Extension{}
+	for _, t := range b.Tools {
+		e := t.Extension()
+		e.Status = "untested"
+		out = append(out, e)
+	}
+	if len(out) == 0 {
+		return nil, errors.New("the file has no tools (only Copilot extensions, which are not published this way)")
+	}
+	return out, nil
 }

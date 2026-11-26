@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -114,4 +115,26 @@ func (h *Hub) AnswerQuestions(id string, answers []builtin.Answer, recommended b
 	default:
 		return errors.New("these questions were answered already")
 	}
+}
+
+// askAgentQuestion puts an agent's question to the person (Copilot hosted
+// through its SDK asks this way): its choices, or their own words.
+func (h *Hub) askAgentQuestion(ctx context.Context, question string, choices []string, freeform bool) (string, bool, error) {
+	q := builtin.Question{ID: "answer", Question: question, Options: choices, AllowOther: freeform || len(choices) == 0}
+	r, err := h.askQuestions(ctx, builtin.AskRequest{Title: "The AI asks", Questions: []builtin.Question{q}, Timeout: AskPermissionTimeout})
+	if err != nil {
+		return "", false, err
+	}
+	for _, a := range r.Answers {
+		if a.ID != "answer" {
+			continue
+		}
+		if strings.TrimSpace(a.Other) != "" {
+			return a.Other, true, nil
+		}
+		if len(a.Selected) > 0 {
+			return strings.Join(a.Selected, ", "), false, nil
+		}
+	}
+	return "", false, builtin.ErrNoAnswer
 }

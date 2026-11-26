@@ -936,10 +936,13 @@ export const BUILTINS = [
     "name": "chart",
     "title": "Chart",
     "group": "chart",
-    "description": "Draw a chart from data and save it (out/charts/…, or path): bar, hbar (horizontal bars, for long labels), stacked_bar, line (one line per series: multiline), area, stacked_area, scatter, pie, donut or heatmap. Give labels and series ([{name, values}]), or rows (a JSON array of objects, e.g. a tool's or a query's result) with x (the label field) and y (the number field or fields; empty: every number field). pie and donut draw the first series, a slice per label. scatter needs numbers on x (name the x field). heatmap: rows with x (the columns), y (the rows) and value, or labels (columns) and series (rows). show_values writes each value on its bar, point, slice or cell. It returns the chart as SVG, which SpecWright shows as a picture (with Export PNG); format png or both also saves a PNG.",
+    "description": "Draw a chart from data and save it (out/charts/…, or path): bar, hbar (horizontal bars, for long labels), stacked_bar, line (one line per series: multiline), area, stacked_area, scatter, pie, donut, heatmap, kpi (a tile per label: its value, and its change against a second series such as last month or the target), gauge (a half dial per label), bullet (a bar per label over its bands, the second series as a target mark) or sparklines (a small trend line per series, with its last value and change). Give labels and series ([{name, values}]), or rows (a JSON array of objects, e.g. a tool's or a query's result) with x (the label field) and y (the number field or fields; empty: every number field). pie and donut draw the first series, a slice per label. scatter needs numbers on x (name the x field). heatmap: rows with x (the columns), y (the rows) and value, or labels (columns) and series (rows). kpi, gauge and bullet: bands are the thresholds between bad, so-so and good (e.g. [90, 98]; lower_is_better turns them round), unit is written with the values ($, %, \" ms\"), min and max set the scale. sparklines from long rows: x (the points), y (the field naming each line) and value. show_values writes each value on its bar, point, slice or cell. It returns the chart as SVG, which SpecWright shows as a picture (with Export PNG); format png or both also saves a PNG.",
     "inputSchema": {
       "additionalProperties": false,
       "properties": {
+        "bands": {
+          "description": "kpi, gauge, bullet: the thresholds between bad, so-so and good, e.g. [90, 98]"
+        },
         "format": {
           "description": "What to save: svg (default), png, or both",
           "enum": [
@@ -950,7 +953,7 @@ export const BUILTINS = [
           "type": "string"
         },
         "height": {
-          "description": "Height in pixels (default 480)",
+          "description": "Height in pixels (default 480; kpi, gauge, bullet and sparklines: sized to fit)",
           "type": "integer"
         },
         "labels": {
@@ -959,6 +962,18 @@ export const BUILTINS = [
             "type": "string"
           },
           "type": "array"
+        },
+        "lower_is_better": {
+          "description": "kpi, gauge, bullet, sparklines: smaller values are good (latency, cost, errors)",
+          "type": "boolean"
+        },
+        "max": {
+          "description": "kpi, gauge, bullet: the scale's end (default from the data; 100 for %)",
+          "type": "number"
+        },
+        "min": {
+          "description": "kpi, gauge, bullet: the scale's start (default 0)",
+          "type": "number"
         },
         "path": {
           "description": "Where to save, without the extension (default out/charts/\u003ctitle\u003e-\u003ctime\u003e)",
@@ -1012,8 +1027,16 @@ export const BUILTINS = [
             "scatter",
             "pie",
             "donut",
-            "heatmap"
+            "heatmap",
+            "kpi",
+            "gauge",
+            "bullet",
+            "sparklines"
           ],
+          "type": "string"
+        },
+        "unit": {
+          "description": "Written with the values: $ € £ ¥ before them, anything else after (%, \" ms\", k)",
           "type": "string"
         },
         "value": {
@@ -1040,6 +1063,135 @@ export const BUILTINS = [
           "type": "string"
         }
       },
+      "type": "object"
+    },
+    "readOnly": false,
+    "enabled": true
+  },
+  {
+    "name": "table",
+    "title": "Formatted table",
+    "group": "chart",
+    "description": "Make a formatted HTML table from rows (a JSON array of objects, e.g. a query's result) and save it (out/tables/…, or path). columns picks and orders them (names, or objects {field, label, format, decimals, unit, align, bands, lower_is_better, rules, total}); formats: number, integer, percent, currency, date, datetime, bytes, duration_ms, bar (a data bar), sparkline (a list of numbers drawn as a small line), json, text (default: guessed). sort by a field (-field or \"field desc\" for largest first); totals: true sums the number columns, or {\"field\": \"sum|avg|min|max|count\"}. Colours: bands on a number column (good/so-so/bad), or rules [{op: \u003e \u003e= \u003c \u003c= = != contains empty, value, color: good|warn|bad|info|#hex, row: true to colour the row}]. It returns the page (SpecWright shows it; opened in a browser, its headers sort); format markdown returns a Markdown table instead.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "caption": {
+          "description": "A line under the title",
+          "type": "string"
+        },
+        "columns": {
+          "description": "The columns: [\"region\", {\"field\": \"revenue\", \"format\": \"currency\", \"bands\": [1000, 5000]}, {\"field\": \"trend\", \"format\": \"sparkline\"}] or \"region, revenue\" (default: every field)"
+        },
+        "format": {
+          "description": "html (default; saved as a page) or markdown",
+          "enum": [
+            "html",
+            "markdown"
+          ],
+          "type": "string"
+        },
+        "formats": {
+          "description": "A shortcut: {\"field\": \"format\"} for columns you do not otherwise describe"
+        },
+        "max_rows": {
+          "description": "At most this many rows (default 500)",
+          "type": "integer"
+        },
+        "path": {
+          "description": "Where to save the page (default out/tables/\u003ctitle\u003e-\u003ctime\u003e.html)",
+          "type": "string"
+        },
+        "rows": {
+          "description": "A JSON array of objects (or its JSON text), e.g. {{query.buffer_output}}"
+        },
+        "sort": {
+          "description": "The field to sort by; -field or \"field desc\" for descending",
+          "type": "string"
+        },
+        "title": {
+          "description": "The table's title",
+          "type": "string"
+        },
+        "totals": {
+          "description": "true: a totals row summing the number columns; or {\"field\": \"sum|avg|min|max|count\"}"
+        }
+      },
+      "required": [
+        "rows"
+      ],
+      "type": "object"
+    },
+    "readOnly": false,
+    "enabled": true
+  },
+  {
+    "name": "dashboard",
+    "title": "Dashboard",
+    "group": "chart",
+    "description": "Put several results on one HTML page and save it (out/dashboards/…, or path): panel_1 … panel_8 are earlier steps' outputs (e.g. {{revenue_chart.buffer_output}}): charts, formatted tables, JSON rows (shown as a table), Markdown or text. They are laid out in a grid (columns, default 2; wide lists the panels that take a whole row; wide tables do by themselves) under the title, an intro (Markdown) and when it was made. It returns the page, which SpecWright shows.",
+    "inputSchema": {
+      "additionalProperties": false,
+      "properties": {
+        "columns": {
+          "description": "Panels per row, 1 to 4 (default 2)",
+          "type": "integer"
+        },
+        "intro": {
+          "description": "Markdown under the title, e.g. what it shows and for whom",
+          "type": "string"
+        },
+        "panel_1": {
+          "description": "The first panel: a step's output, e.g. {{chart.buffer_output}}",
+          "type": "string"
+        },
+        "panel_2": {
+          "description": "The second panel",
+          "type": "string"
+        },
+        "panel_3": {
+          "description": "The third panel",
+          "type": "string"
+        },
+        "panel_4": {
+          "description": "The fourth panel",
+          "type": "string"
+        },
+        "panel_5": {
+          "description": "The fifth panel",
+          "type": "string"
+        },
+        "panel_6": {
+          "description": "The sixth panel",
+          "type": "string"
+        },
+        "panel_7": {
+          "description": "The seventh panel",
+          "type": "string"
+        },
+        "panel_8": {
+          "description": "The eighth panel",
+          "type": "string"
+        },
+        "path": {
+          "description": "Where to save the page (default out/dashboards/\u003ctitle\u003e-\u003ctime\u003e.html)",
+          "type": "string"
+        },
+        "title": {
+          "description": "The dashboard's title",
+          "type": "string"
+        },
+        "titles": {
+          "description": "Panel titles, in order, separated by | (charts and tables show their own)",
+          "type": "string"
+        },
+        "wide": {
+          "description": "Panel numbers that take a whole row, e.g. [3]"
+        }
+      },
+      "required": [
+        "panel_1"
+      ],
       "type": "object"
     },
     "readOnly": false,

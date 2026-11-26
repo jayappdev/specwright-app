@@ -20,6 +20,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"sort"
 	"strconv"
 	"strings"
 	"sync"
@@ -48,6 +49,14 @@ type ChartSpec struct {
 	Height int           `json:"height,omitempty"`
 	// ShowValues writes each value on its bar, point, slice or cell.
 	ShowValues bool `json:"show_values,omitempty"`
+	// kpi, gauge, bullet, sparklines: the scale (default from the data),
+	// the thresholds between bad, so-so and good, whether lower is better,
+	// and the unit written with the values ($, %, " ms").
+	Min         *float64  `json:"min,omitempty"`
+	Max         *float64  `json:"max,omitempty"`
+	Bands       []float64 `json:"bands,omitempty"`
+	LowerBetter bool      `json:"lower_is_better,omitempty"`
+	Unit        string    `json:"unit,omitempty"`
 }
 
 // chartTypes: each type and the names it is also asked by.
@@ -62,10 +71,18 @@ var chartTypes = map[string][]string{
 	"pie":          {"pie", "pie_chart"},
 	"donut":        {"donut", "doughnut", "ring"},
 	"heatmap":      {"heatmap", "heat", "heat_map", "matrix"},
+	"kpi":          {"kpi", "kpis", "tiles", "stat", "stats", "scorecard", "big_number"},
+	"gauge":        {"gauge", "gauges", "dial"},
+	"bullet":       {"bullet", "bullets", "bullet_chart", "progress"},
+	"sparklines":   {"sparklines", "sparkline", "trends", "small_multiples"},
 }
 
+// oneValue: the chart types that show each label's value on its own (a
+// second series is the comparison or target, not more data).
+var oneValue = map[string]bool{"kpi": true, "gauge": true, "bullet": true}
+
 // ChartTypeNames lists the chart types, for the tool's description.
-const ChartTypeNames = "bar, hbar (horizontal bars), stacked_bar, line (or multiline), area, stacked_area, scatter, pie, donut, heatmap"
+const ChartTypeNames = "bar, hbar (horizontal bars), stacked_bar, line (or multiline), area, stacked_area, scatter, pie, donut, heatmap, kpi (tiles), gauge, bullet, sparklines"
 
 func chartType(t string) (string, bool) {
 	t = strings.ToLower(strings.TrimSpace(t))
@@ -142,8 +159,13 @@ func parseChart(a args) (ChartSpec, error) {
 			ys = strList(a["y"])
 		}
 		var err error
-		if s.Type == "heatmap" {
-			err = heatFromRows(&s, list, x, firstStr(strField(get("y")), a.str("y")), firstStr(strField(get("value")), a.str("value")))
+		value := firstStr(strField(get("value")), a.str("value"))
+		if s.Type == "heatmap" || s.Type == "sparklines" && value != "" {
+			xl, yl := s.XLabel, s.YLabel
+			err = heatFromRows(&s, list, x, firstStr(strField(get("y")), a.str("y")), value)
+			if s.Type == "sparklines" { // a line per row value; no axis captions
+				s.XLabel, s.YLabel = xl, yl
+			}
 		} else {
 			err = fromRows(&s, list, x, ys)
 		}
@@ -173,7 +195,62 @@ func parseChart(a args) (ChartSpec, error) {
 			}
 		}
 	}
-	return s, checkChart(&s)
+	s.Unit = a.str("unit")
+	s.LowerBetter = a.flag("lower_is_better")
+	s.Min, s.Max = number(a["min"]), number(a["max"])
+	for _, v := range floatList(a["bands"]) {
+		s.Bands = append(s.Bands, v)
+	}
+	sort.Float64s(s.Bands)
+	if err := checkChart(&s); err != nil {
+		return s, err
+	}
+	if a["height"] == nil { // sized to what it shows
+		top := 24.0
+		if s.Title != "" {
+			top += 24
+		}
+		n := float64(len(s.Labels))
+		switch s.Type {
+		case "kpi", "gauge":
+			L := &chartLayout{W: float64(s.Width), top: top}
+			_, rows, cw, _ := L.grid(len(s.Labels))
+			per := 130.0
+			if s.Type == "gauge" {
+				per = math.Min(cw/2-16, 150) + 76
+			}
+			s.Height = int(top + 16 + float64(rows)*per + float64(rows-1)*16)
+		case "bullet":
+			s.Height = int(top + n*40 + 70)
+		case "sparklines":
+			s.Height = int(top + float64(len(s.Series))*40 + 20)
+		}
+		s.Height = max(120, min(s.Height, 1600))
+	}
+	return s, nil
+}
+
+// floatList reads numbers given as a list, JSON text or "60, 80".
+func floatList(v any) []float64 {
+	if t, ok := v.(string); ok {
+		t = strings.TrimSpace(t)
+		var l []any
+		if json.Unmarshal([]byte(t), &l) == nil {
+			v = l
+		} else {
+			for _, f := range strings.FieldsFunc(t, func(r rune) bool { return r == ',' || r == ' ' || r == ';' }) {
+				l = append(l, f)
+			}
+			v = l
+		}
+	}
+	var out []float64
+	for _, x := range anyList(v) {
+		if n := number(x); n != nil {
+			out = append(out, *n)
+		}
+	}
+	return out
 }
 
 func fromRows(s *ChartSpec, rows []any, x string, ys []string) error {
@@ -310,8 +387,19 @@ func checkChart(s *ChartSpec) error {
 	if len(s.Series) == 0 {
 		return errors.New("give the data: labels and series ([{name, values}]), or rows with x and y")
 	}
-	if len(s.Series) > maxChartSeries && s.Type != "heatmap" {
+	if len(s.Series) > maxChartSeries && s.Type != "heatmap" && s.Type != "sparklines" {
 		return fmt.Errorf("at most %d series in one chart", maxChartSeries)
+	}
+	if s.Type == "sparklines" && len(s.Series) > 40 {
+		return errors.New("at most 40 sparklines in one chart")
+	}
+	if lim := map[string]int{"kpi": 24, "gauge": 8, "bullet": 40}[s.Type]; lim > 0 {
+		if len(s.Series) > 2 {
+			s.Series = s.Series[:2] // the value, and what it is compared with
+		}
+		if n := max(len(s.Labels), len(s.Series[0].Values)); n > lim {
+			return fmt.Errorf("at most %d %s in one chart (there are %d)", lim, map[string]string{"kpi": "tiles", "gauge": "gauges", "bullet": "bars"}[s.Type], n)
+		}
 	}
 	if s.Type == "heatmap" && len(s.Series) > 200 {
 		return errors.New("at most 200 rows in a heatmap")
@@ -492,13 +580,14 @@ func niceStep(span float64, ticks int) float64 {
 
 func fmtNum(v float64) string {
 	a := math.Abs(v)
+	short := func(x float64) string { return strconv.FormatFloat(math.Round(x*100)/100, 'f', -1, 64) }
 	switch {
 	case a >= 1e9:
-		return strconv.FormatFloat(v/1e9, 'f', -1, 64) + "B"
+		return short(v/1e9) + "B"
 	case a >= 1e6:
-		return strconv.FormatFloat(v/1e6, 'f', -1, 64) + "M"
+		return short(v/1e6) + "M"
 	case a >= 1e4:
-		return strconv.FormatFloat(v/1e3, 'f', -1, 64) + "k"
+		return short(v/1e3) + "k"
 	}
 	return strconv.FormatFloat(math.Round(v*1000)/1000, 'f', -1, 64)
 }
@@ -524,6 +613,14 @@ func layout(s ChartSpec) []prim {
 		L.hbar()
 	case "scatter":
 		L.scatter()
+	case "kpi":
+		L.kpi()
+	case "gauge":
+		L.gauge()
+	case "bullet":
+		L.bullet()
+	case "sparklines":
+		L.sparklines()
 	default:
 		L.axes()
 	}
@@ -554,7 +651,7 @@ func (L *chartLayout) header() {
 		L.text(L.W/2, 28, chartClip(s.Title, 90), 18, "middle", true, "#1f2328")
 		L.top = 44
 	}
-	if len(s.Series) > 1 && s.Type != "pie" && s.Type != "donut" && s.Type != "heatmap" {
+	if len(s.Series) > 1 && s.Type != "pie" && s.Type != "donut" && s.Type != "heatmap" && s.Type != "sparklines" && !oneValue[s.Type] {
 		x, y := 64.0, L.top+8
 		for i, sr := range s.Series {
 			label := chartClip(sr.Name, 24)
@@ -568,7 +665,7 @@ func (L *chartLayout) header() {
 		}
 		L.top = y + 20
 	}
-	if s.YLabel != "" && s.Type != "pie" && s.Type != "donut" {
+	if s.YLabel != "" && s.Type != "pie" && s.Type != "donut" && !oneValue[s.Type] && s.Type != "sparklines" {
 		L.text(16, L.top+4, chartClip(s.YLabel, 60), 12, "start", true, "#57606a")
 		L.top += 14
 	}

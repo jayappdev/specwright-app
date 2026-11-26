@@ -1576,3 +1576,18 @@
   max-width: 100%;
   height: auto;
 }
+
+/* optional secrets: folded away (ToolTester, Run flows) and marked in the editor */
+.tt-optional,
+.fr-cred-optional {
+  margin-top: 8px;
+}
+.tt-optional summary,
+.fr-cred-optional summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+.secret-optional {
+  font-size: 12px;
+  margin-top: 2px;
+}

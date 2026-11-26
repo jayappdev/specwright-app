@@ -16,6 +16,16 @@ import { CopyButton } from "../../CopyButton.jsx";
 import { REVIEW_HINT } from "./Setup.jsx";
 import { StepFixPanel, TrialBanner, canFix, openFix } from "./StepFix.jsx";
 import { LIVE, STATUS_LABEL, decide, frs, pill } from "../FlowRun.jsx";
+import { RunSimple } from "./RunSimple.jsx";
+import { openChatSession } from "../Chats.jsx";
+
+// the details (steps, outputs, the activity log) or the simple view; the
+// choice is remembered (S.layout is saved with the preferences)
+const DETAILS = "frun:details";
+const setDetails = (on) => {
+  S.layout[DETAILS] = on;
+  update();
+};
 
 // --- run view -----------------------------------------------------------------------
 
@@ -609,16 +619,94 @@ export function Outputs({ st }) {
   );
 }
 
+// ChatRunNote: how a run belongs to a Chatflow (its setup for a chat, its
+// setup alone, or a tool the chat ran), with the way to the chat
+function ChatRunNote({ st }) {
+  const c = st.options?.chat;
+  if (!c) return null;
+  const live = LIVE.includes(st.status);
+  const open = c.session && (
+    <button className="btn primary" onClick={() => openChatSession(st.flowId, c.session)}>
+      <Icon.chat /> Open chat
+    </button>
+  );
+  if (c.role === "tool")
+    return (
+      <div className="banner fr-chatnote">
+        <span>
+          <Icon.chat /> A tool the chat ran
+          {c.tool ? (
+            <>
+              {" "}
+              (<b>{c.tool}</b>)
+            </>
+          ) : null}
+          , for a question in a chat session.
+        </span>
+        {c.session && (
+          <button className="btn secondary" onClick={() => openChatSession(st.flowId, c.session)}>
+            Open the chat
+          </button>
+        )}
+      </div>
+    );
+  if (c.role === "setup-only")
+    return (
+      <div className="banner fr-chatnote">
+        <span>
+          <Icon.chat /> The chat's setup, run alone to try it: no chat session is made. <b>Start chat</b> runs
+          it for a chat.
+        </span>
+      </div>
+    );
+  if (live)
+    return (
+      <div className="banner fr-chatnote">
+        <span>
+          <Icon.chat /> Setting up a chat: when these steps are done, the chat opens with what they gave. The
+          Chat step and the tools after it are not run here.
+        </span>
+        {open}
+      </div>
+    );
+  if (st.status === "done")
+    return (
+      <div className="banner ok fr-chatnote">
+        <span>
+          <Icon.check /> <b>Chat ready.</b> The session has what these steps gave; ask your questions there.
+        </span>
+        {open}
+      </div>
+    );
+  return (
+    <div className="banner error fr-chatnote">
+      <span>
+        <b>No chat session was made:</b> the setup did not finish. See the step that failed (Details), fix it
+        here or in the playground, then <b>Start chat</b> again.
+      </span>
+    </div>
+  );
+}
+
 export function RunView({ st }) {
   const r = frs(),
     evs = S.events[st.id] || [],
-    live = LIVE.includes(st.status);
+    live = LIVE.includes(st.status),
+    details = !!S.layout[DETAILS];
   return (
     <>
       <header className="view-head">
         <h1>{st.flowName}</h1>
         <Pill s={pill(st.status)} label={STATUS_LABEL[st.status] || st.status} />
         <div className="head-controls">
+          <div className="seg frs-switch" role="group" aria-label="How much to show">
+            <button className={details ? "" : "on"} aria-pressed={!details} onClick={() => setDetails(false)}>
+              Simple
+            </button>
+            <button className={details ? "on" : ""} aria-pressed={details} onClick={() => setDetails(true)}>
+              Details
+            </button>
+          </div>
           {live && (
             <button
               className="btn secondary danger-text"
@@ -627,19 +715,21 @@ export function RunView({ st }) {
               <Icon.x /> Stop
             </button>
           )}
-          <button
-            className="btn secondary"
-            onClick={() => {
-              S.pg ||= { prompt: "", tools: true, model: "", runs: [], sel: "", loaded: false };
-              S.pg.loaded = false;
-              S.pg.sel = st.id;
-              S.view = "playground";
-              update();
-            }}
-          >
-            Watch in the playground
-          </button>
-          {!live && (
+          {!S.runner && (
+            <button
+              className="btn secondary"
+              onClick={() => {
+                S.pg ||= { prompt: "", tools: true, model: "", runs: [], sel: "", loaded: false };
+                S.pg.loaded = false;
+                S.pg.sel = st.id;
+                S.view = "playground";
+                update();
+              }}
+            >
+              Watch in the playground
+            </button>
+          )}
+          {!live && !S.runner && (
             <button
               className="btn secondary"
               title="Ask follow-up questions about this run's results"
@@ -656,10 +746,10 @@ export function RunView({ st }) {
                 update();
               }}
             >
-              Run again
+              {st.options?.chat?.role === "setup" ? "Start another chat" : "Run again"}
             </button>
           )}
-          {!live && (
+          {!live && !S.runner && (
             <button
               className="btn secondary fr-switch"
               onClick={() => {
@@ -672,14 +762,16 @@ export function RunView({ st }) {
           )}
         </div>
       </header>
-      {st.status === "scheduled" && (
+      <ChatRunNote st={st} />
+      {!details && <RunSimple st={st} runs={r.runs} onDetails={() => setDetails(true)} />}
+      {details && st.status === "scheduled" && (
         <div className="banner">
           Starts at {new Date(st.options.startAt).toLocaleString()}. Keep the app open; you can stop it before
           then.
         </div>
       )}
       {st.trial && <TrialBanner st={st} />}
-      {st.error && st.status !== "done" && (
+      {details && st.error && st.status !== "done" && (
         <div className={"banner " + (st.status === "stopped" ? "" : "error")}>{st.error}</div>
       )}
       {!live && <ResultsLink id={st.id} ended />}
@@ -689,18 +781,20 @@ export function RunView({ st }) {
         </div>
       )}
       {st.status === "review" && st.review && <Review st={st} />}
-      {st.status === "running" && <AiProgress evs={evs} />}
+      {details && st.status === "running" && <AiProgress evs={evs} />}
       {!live && st.outputs?.length > 0 && <Outputs st={st} />}
-      <Steps st={st} />
-      {(live || !st.outputs?.length) && <Outputs st={st} />}
-      <details className="fr-activity">
-        <summary className="muted">Activity and debug log · {evs.length} events</summary>
-        <RunPanel
-          st={{ id: "flow", cmd: st.flowName, status: live ? "running" : st.status, lastRun: st.id }}
-          evs={evs}
-          running={live}
-        />
-      </details>
+      {details && <Steps st={st} />}
+      {details && (live || !st.outputs?.length) && <Outputs st={st} />}
+      {details && (
+        <details className="fr-activity">
+          <summary className="muted">Activity and debug log · {evs.length} events</summary>
+          <RunPanel
+            st={{ id: "flow", cmd: st.flowName, status: live ? "running" : st.status, lastRun: st.id }}
+            evs={evs}
+            running={live}
+          />
+        </details>
+      )}
     </>
   );
 }

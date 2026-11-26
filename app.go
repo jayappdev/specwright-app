@@ -10,6 +10,7 @@ import (
 
 	"codegen/internal/agent"
 	"codegen/internal/bus"
+	"codegen/internal/chat"
 	"codegen/internal/core"
 	"codegen/internal/extension"
 	"codegen/internal/flow"
@@ -31,12 +32,16 @@ type App struct {
 func NewApp() (*App, error) { return newApp("") }
 
 // newApp creates the hub with its data in storeDir ("" = the app's usual folder).
-func newApp(storeDir string) (*App, error) {
+func newApp(storeDir string) (*App, error) { return newAppWith(core.Options{StoreDir: storeDir}) }
+
+// newAppWith creates the hub with these options (a runner window's, say).
+func newAppWith(o core.Options) (*App, error) {
 	// a Finder-launched app gets a minimal PATH: borrow the login shell's so
 	// claude, copilot, node, go and mvn are found
 	core.UseLoginShellPath()
 	exe, _ := os.Executable()
-	h, err := core.New(core.Options{AIShimExe: exe, StoreDir: storeDir})
+	o.AIShimExe = exe
+	h, err := core.New(o)
 	if err != nil {
 		return nil, err
 	}
@@ -68,6 +73,10 @@ func (a *App) Info() core.Info                            { return val(a.hub.Inf
 func (a *App) DetectCredentials() []core.CredentialSource { return val(a.hub.DetectCredentials()) }
 func (a *App) SetAgent(name, token, model string) error   { return a.hub.SetAgent(name, token, model) }
 func (a *App) ClearToken()                                { a.hub.ClearToken() }
+
+// OpenRunnerWindow opens a flow in a SpecWright window of its own, where
+// it can be run and watched apart from the rest of the app.
+func (a *App) OpenRunnerWindow(flowID string) error { return a.hub.OpenRunnerWindow(flowID) }
 
 // ExportTools returns a tool file (*.tools.json) with the named tools.
 func (a *App) ExportTools(names, exts []string) (core.ToolExport, error) {
@@ -219,6 +228,11 @@ func (a *App) ListLayout() (core.ListLayout, error) { return ok(a.hub.Layout()) 
 // SaveListLayout stores the headings of the Tools and Flows lists.
 func (a *App) SaveListLayout(l core.ListLayout) (core.ListLayout, error) {
 	return ok(a.hub.SaveLayout(l))
+}
+
+// ReadToolFile reads the tools in a tool file without saving them.
+func (a *App) ReadToolFile(data string) ([]extension.Extension, error) {
+	return ok(a.hub.ReadToolFile(data))
 }
 
 // ChartPNG saves a PNG of a chart (its SVG) in the project.
@@ -422,6 +436,21 @@ func (a *App) SaveToolMeta(name string, m extension.ToolMeta) (extension.Extensi
 	return ok(a.hub.SaveToolMeta(name, m))
 }
 
+// SaveToolGuide saves a tool's usage guide (nil removes it).
+func (a *App) SaveToolGuide(name string, g *extension.ToolGuide) (extension.Extension, error) {
+	return ok(a.hub.SaveToolGuide(name, g))
+}
+
+// GenerateToolGuide drafts a tool's usage guide with AI.
+func (a *App) GenerateToolGuide(e extension.Extension, model, ask string) (core.ToolGuideDraft, error) {
+	return ok(a.hub.GenerateToolGuide(e, model, ask))
+}
+
+// RunToolExample runs one example of a tool's guide.
+func (a *App) RunToolExample(e extension.Extension, ex extension.ToolExample, secrets map[string]string) (core.ToolRun, error) {
+	return ok(a.hub.RunToolExample(e, ex, secrets))
+}
+
 // RunToolWith runs a tool with the test form's arguments.
 func (a *App) RunToolWith(e extension.Extension, args map[string]any, secrets map[string]string, expect *extension.ToolExpect) (core.ToolRun, error) {
 	return ok(a.hub.RunToolWith(e, args, secrets, expect))
@@ -583,6 +612,21 @@ func (a *App) RemoveSecretFromKeychain(name string) error {
 	return a.hub.RemoveSecretFromKeychain(name)
 }
 
+// ProjectSecrets lists the project's encrypted secrets (names only).
+func (a *App) ProjectSecrets() ([]core.ProjectSecret, error) { return ok(a.hub.ProjectSecrets()) }
+
+// SetProjectSecret saves a project secret ({{project_secret.NAME}}); an
+// empty value changes only its description.
+func (a *App) SetProjectSecret(name, value, desc string) error {
+	return a.hub.SetProjectSecret(name, value, desc)
+}
+
+// DeleteProjectSecret removes a project secret.
+func (a *App) DeleteProjectSecret(name string) error { return a.hub.DeleteProjectSecret(name) }
+
+// SecretRefUses lists the project and keychain secrets the flows read.
+func (a *App) SecretRefUses() ([]core.SecretRefUse, error) { return ok(a.hub.SecretRefUses()) }
+
 // KeychainAvailable reports whether the system keychain can be used.
 func (a *App) KeychainAvailable() bool { return core.KeychainAvailable() }
 
@@ -716,4 +760,75 @@ func (a *App) CheckRegistries() ([]extension.RegistryCheck, error) {
 func (a *App) PickCAFile() (string, error) {
 	return runtime.OpenFileDialog(a.ctx, runtime.OpenDialogOptions{Title: "Choose the corporate CA bundle",
 		Filters: []runtime.FileFilter{{DisplayName: "Certificates", Pattern: "*.pem;*.crt;*.cer"}}})
+}
+
+// --- Chatflows (core/chatflow.go) ---------------------------------------------
+
+// Chatflows lists the project's Chatflows.
+func (a *App) Chatflows() ([]core.ChatflowInfo, error) { return ok(a.hub.Chatflows()) }
+
+// ChatSessions lists a Chatflow's chat sessions ("" for all).
+func (a *App) ChatSessions(flowID string) ([]chat.Session, error) {
+	return ok(a.hub.ChatSessions(flowID))
+}
+
+// ChatSession reads one chat session.
+func (a *App) ChatSession(flowID, id string) (chat.Session, error) {
+	return ok(a.hub.ChatSession(flowID, id))
+}
+
+// ChatMessages reads a chat session's conversation.
+func (a *App) ChatMessages(flowID, id string) ([]chat.Message, error) {
+	return ok(a.hub.ChatMessages(flowID, id))
+}
+
+// ChatCatalog lists a chat session's indexed data: tables and documents.
+func (a *App) ChatCatalog(flowID, id string) ([]chat.Entry, error) {
+	return ok(a.hub.ChatCatalog(flowID, id))
+}
+
+// ChatData reads one of a chat session's data items.
+func (a *App) ChatData(flowID, id, name string) (string, error) {
+	return ok(a.hub.ChatData(flowID, id, name))
+}
+
+// StartChatSession starts a chat session with the Chatflow's inputs.
+func (a *App) StartChatSession(flowID string, inputs map[string]string) (chat.Session, error) {
+	return ok(a.hub.StartChatSession(flowID, inputs))
+}
+
+// SendChatMessage asks the session's AI a question (with attached files: their data names).
+func (a *App) SendChatMessage(flowID, id, text string, files []string) (chat.Message, error) {
+	return ok(a.hub.SendChatMessage(flowID, id, text, files))
+}
+
+// AttachChatFile keeps a file attached to a chat session (base64 content).
+func (a *App) AttachChatFile(flowID, id, name, content string) (chat.Data, error) {
+	return ok(a.hub.AttachChatFile(flowID, id, name, content))
+}
+
+// RefreshChatSession runs a chat session's setup again.
+func (a *App) RefreshChatSession(flowID, id string) (chat.Session, error) {
+	return ok(a.hub.RefreshChatSession(flowID, id))
+}
+
+// StopChatMessage stops the answer being written.
+func (a *App) StopChatMessage(flowID, id string) error { return a.hub.StopChatMessage(flowID, id) }
+
+// RenameChatSession renames a chat session.
+func (a *App) RenameChatSession(flowID, id, title string) (chat.Session, error) {
+	return ok(a.hub.RenameChatSession(flowID, id, title))
+}
+
+// DeleteChatSession removes a chat session.
+func (a *App) DeleteChatSession(flowID, id string) error { return a.hub.DeleteChatSession(flowID, id) }
+
+// ArchiveChatSession archives (or restores) a chat session.
+func (a *App) ArchiveChatSession(flowID, id string, archived bool) (chat.Session, error) {
+	return ok(a.hub.ArchiveChatSession(flowID, id, archived))
+}
+
+// ExportChatSession writes a chat session as Markdown and returns its path.
+func (a *App) ExportChatSession(flowID, id string) (string, error) {
+	return ok(a.hub.ExportChatSession(flowID, id))
 }

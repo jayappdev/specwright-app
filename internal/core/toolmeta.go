@@ -345,9 +345,13 @@ func (h *Hub) RunToolWith(e extension.Extension, args map[string]any, secrets ma
 		run.Checks = append(run.Checks, extension.TestCheck{Label: "Its packages install", OK: false, Note: fail.Output})
 		return run, nil
 	}
+	td = extension.WithArgSecrets(td, run.Args) // ${DB_SALES} for a DB_* family
 	vals := map[string]string{}
 	var missing []extension.Secret
 	for _, s := range td.Secrets {
+		if extension.IsSecretFamily(s) {
+			continue
+		}
 		if v := secrets[s.Name]; v != "" {
 			vals[s.Name] = v
 			h.Store.Redactor().Add(v)

@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -89,8 +90,12 @@ func baseEnv() (env, dropped []string) {
 // extraArgs are the flags that depend on what this CLI supports and on the
 // web setting: GitHub tokens hidden from shell commands and MCP servers the
 // agent starts, and the URLs it may open.
-func (c *Copilot) extraArgs(ctx context.Context, bin string) []string {
+func (c *Copilot) extraArgs(ctx context.Context, bin string, req Request) []string {
 	var args []string
+	// the conversation: a new one by this id, or the earlier one to continue
+	if req.SessionID != "" && c.hasFlag(ctx, bin, "--session-id") {
+		args = append(args, "--session-id", req.SessionID)
+	}
 	if c.hasFlag(ctx, bin, "--secret-env-vars") {
 		args = append(args, "--secret-env-vars="+strings.Join(tokenVars, ","))
 	}
@@ -160,6 +165,9 @@ func (c *Copilot) argsWith(req Request, pluginDir string) []string {
 	}
 	for _, d := range c.DenyTools {
 		args = append(args, "--deny-tool", d)
+	}
+	if req.ReadOnly { // no edits, no commands
+		args = append(args, "--deny-tool", "write", "--deny-tool", "shell")
 	}
 	if req.Model != "" {
 		args = append(args, "--model", req.Model)
@@ -289,10 +297,21 @@ func (c *Copilot) env(req Request) []string {
 }
 
 // Run implements Driver.
-func (c *Copilot) Run(ctx context.Context, req Request, emit func(Event)) (Result, error) {
+func (c *Copilot) Run(ctx context.Context, req Request, emit func(Event)) (res Result, err error) {
+	// a resumed session reports its usage so far (both ways of running it
+	// read the session's metrics), not this run's
+	defer func() { res.UsageSoFar = req.Resume }()
 	bin, err := c.bin()
 	if err != nil {
 		return Result{}, err
+	}
+	if useSDK(req) { // a person is watching: SpecWright hosts the session (copilot_sdk.go)
+		sres, serr := c.runSDK(ctx, bin, req, emit)
+		if !errors.Is(serr, errSDKUnavailable) {
+			return sres, serr
+		}
+		emit(Event{Type: "agent.log", Summary: "Copilot could not be hosted by SpecWright; running it as copilot -p, where commands needing approval may be refused",
+			Data: map[string]any{"line": serr.Error()}})
 	}
 	if c.structured(ctx, bin) {
 		return c.runJSON(ctx, bin, req, emit)
@@ -303,13 +322,17 @@ func (c *Copilot) Run(ctx context.Context, req Request, emit func(Event)) (Resul
 	noteDropped(emit, dropped)
 	plugin, cleanup := permissionPlugin(req.MCPConfig, req.AddDirs...)
 	defer cleanup()
-	_, _, err = proc{bin: bin, args: append(c.argsWith(req, plugin), c.extraArgs(ctx, bin)...), dir: req.Dir, env: c.env(req), base: base, onLine: p.line,
+	_, _, err = proc{bin: bin, args: append(c.argsWith(req, plugin), c.extraArgs(ctx, bin, req)...), dir: req.Dir, env: c.env(req), base: base, onLine: p.line,
 		onErr: func(l string) {
 			emit(Event{Type: "agent.log", Summary: short(l, 200), Data: map[string]any{"line": l, "stream": "stderr"}})
 		},
 	}.run(ctx)
 	p.flush()
-	return p.finish(), err
+	res = p.finish()
+	if c.hasFlag(ctx, bin, "--session-id") {
+		res.SessionID = req.SessionID
+	}
+	return res, err
 }
 
 func modelOr(m, d string) string {

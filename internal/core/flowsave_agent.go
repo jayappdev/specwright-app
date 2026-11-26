@@ -108,6 +108,7 @@ func (h *Hub) agentSaveFlow(args map[string]any) (string, error) {
 			f.Name = strings.TrimSpace(f.Name) + versionSuffix.FindString(cur.Name)
 		}
 		f.Context, f.Skills = keepContext(f, cur)
+		keepListing(f, cur)
 		f.Designed = designed
 		if st, err = h.SaveFlow(*f); err != nil {
 			return "", err

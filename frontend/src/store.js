@@ -362,6 +362,10 @@ function pruneEvents() {
   }
 }
 
+// the Chats screen's event handler (set by views/Chats.jsx)
+let chatListener = null;
+export const setChatListener = (f) => (chatListener = f);
+
 export function onHubEvent(e) {
   if (e.run_id && e.type !== "workflow.changed") {
     if (!S.events[e.run_id]) pruneEvents();
@@ -430,6 +434,12 @@ export function onHubEvent(e) {
       break;
     case "flow.state":
       if (e.state) S.flowRuns[e.run_id] = e.state;
+      break;
+    case "chat.session":
+    case "chat.text":
+    case "chat.message":
+    case "chat.step":
+      chatListener?.(e); // views/Chats.jsx
       break;
     case "question.request":
       if (!S.questionAsks.some((r) => r.id === e.id))

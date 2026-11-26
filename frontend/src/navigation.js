@@ -28,7 +28,7 @@ function here() {
 }
 
 function track() {
-  if (!restoring && S.view) hist.push(here());
+  if (!restoring && S.view) hist.push(here(), { keepEmpty: !!places[S.view]?.restoreEmpty });
 }
 afterUpdate.add(track);
 
@@ -45,7 +45,7 @@ export async function go(dir) {
     S.view = e.view;
     update();
     const p = places[e.view];
-    if (e.key && p?.restore && here().key !== e.key) await p.restore(e.key);
+    if ((e.key || p?.restoreEmpty) && p?.restore && here().key !== e.key) await p.restore(e.key);
   } catch {
     /* the item is gone (a deleted flow, an archived run): the view is enough */
   } finally {

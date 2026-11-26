@@ -1,0 +1,83 @@
+# Library tools
+
+Tools meant for the managed catalog (admin-signed, every project gets them).
+Each is a tool file (`*.tools.json`, the format of Tools › Export) plus its
+readable source; a test keeps the two in step (internal/core/librarytools_test.go).
+
+To publish one: Admin › unlock admin mode › **Import a tool file to publish…**,
+choose the `.tools.json`, review and test it, then **Publish to all projects**.
+
+## duckdb_data_query
+
+Query data with DuckDB 2.0 SQL (the official Node client, `@duckdb/node-api`
+2.0.0-r.1, installed with the tool on first use; Node.js is needed, as for
+Copilot CLI). Sources: CSV, JSON, Parquet and Excel files and globs, URLs,
+S3 and Azure paths, the previous flow step's output (`input`), and databases
+attached read-only: Postgres, MySQL, SQLite, SQL Server, Oracle, DuckDB.
+
+- Extensions install on first use from extensions.duckdb.org (community ones,
+  such as oracle and mssql, from community-extensions.duckdb.org). Where that
+  is blocked: `DUCKDB_EXTENSION_REPOSITORY` (a mirror), `DUCKDB_HTTP_PROXY`,
+  `DUCKDB_EXTENSION_DIRECTORY`.
+- Credentials: AWS from its usual chain (profiles, SSO, environment); the
+  optional secrets PGPASSWORD, MYSQL_PWD, AWS_*, AZURE_STORAGE_CONNECTION_STRING,
+  ORACLE_PASSWORD, MSSQL_PASSWORD (Tools › Secrets, the keychain or the
+  environment), and `${NAME}` placeholders in a connection's dsn.
+- Oracle needs Oracle Instant Client on the machine (19c, 21c or 23ai).
+- With DuckDB 2.0.0, the iceberg extension does not load (upstream), and the
+  odbc and gsheets community extensions are not published yet.
+- Folders: a source ending in `/` (`"s3://bucket/events/"`, `"data/exports/"`)
+  reads every Parquet, CSV and JSON file under it, sub-folders too, as one
+  table: columns matched by name, a `filename` column, and hive folders
+  (`year=2026/`) as columns. Marker and hidden files (`_SUCCESS`, `.crc`) are
+  skipped. `{"path": ..., "format": "parquet", "filename": false, "hive": false}`
+  narrows it.
+- Accumulating: `save_to` (local or `s3://`, .csv/.json/.jsonl/.parquet) with
+  `save_mode: "append"` adds each run's rows to the file (columns matched by
+  name; a new column leaves earlier rows null), so a scheduled flow builds a
+  history.
+- Several databases at once: `connections` takes any number, of any types,
+  each with its own connect string (key=value, URL or JDBC) or its parts
+  (host, port, database / service / sid, user, password). Give each its own
+  password as `${DB_<NAME>}`: the tool declares the secret family `DB_*`, so
+  SpecWright resolves any `DB_…` name a call uses (session, environment,
+  keychain, or asks once), and lists them on Run flows before a run so they
+  can be saved for scheduled runs. Values are quoted for the connect string
+  and kept out of error messages.
+- Kerberos (no passwords): `"auth": "kerberos"` on a postgres or oracle
+  connection uses the ticket from `kinit`, or `keytab` + `principal` for a
+  private ticket (unattended runs); `krb5_conf`, `kerberos_service`.
+  - Oracle logs in as `/@target` (external authentication) with a
+    `sqlnet.ora` written for the run (or your own via `tns_admin` /
+    `TNS_ADMIN`). Oracle's client reads the ticket from a file:
+    `ticket_cache: "FILE:…"`, `KRB5CCNAME=FILE:…`, or a keytab (macOS keeps
+    tickets in its own store by default).
+  - Postgres: DuckDB's bundled Postgres driver is built without GSSAPI
+    ("GSSAPI support is not compiled in"), so the tables listed in `tables`
+    are read with `psql` (libpq with GSSAPI: `brew install libpq` or the
+    PostgreSQL client) and queried as `name.schema.table`.
+  - Tested without a KDC: the connect strings, `sqlnet.ora`, and the psql
+    path end to end with stand-in `kinit` / `psql`. A real Kerberos login
+    has not been tried here.
+- S3: `AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` (/ `AWS_SESSION_TOKEN`)
+  when set, otherwise the AWS chain (profiles, SSO); `AWS_REGION`;
+  `AWS_ENDPOINT_URL` for S3-compatible storage (MinIO, Cloudflare R2, Ceph),
+  addressed path-style.
+- Tests against a local S3-compatible server (folders, globs, hive
+  partitions, append, overwrite, a wrong key):
+  `DUCKDB_TOOL_DIR=<a folder with @duckdb/node-api installed> node --test library/tools/duckdb_data_query/test/`
+  (a project's `.codegen/tools/project/duckdb_data_query` has it once the
+  tool has run there).
+- Its tool file carries a usage guide with nine worked examples (Tools › the
+  tool › Test › Guide & examples, and the Flow step guide under Your tools):
+  run them there, or open one as a flow with Try it in the designer.
+
+## Tool guides
+
+Every tool (project, global, admin-managed, Copilot) can have a usage guide:
+a summary, when and how to use it, and examples (step arguments, an optional
+sample of the previous step's output, the result). Write it by hand or with
+AI on the tool's Test › Guide & examples tab. A guide does not change what
+runs, so saving one keeps the tool approved; it is exported in tool files
+and published with managed tools. Library tool files must include one
+(`TestLibraryToolFiles` checks that its examples use only real parameters).

@@ -37,7 +37,8 @@ import { Playground } from "./views/Playground.jsx";
 import { Admin } from "./views/Admin.jsx";
 import { Appearance } from "./views/Appearance.jsx";
 import { Flows } from "./views/Flows.jsx";
-import { FlowRun, showFlowRun } from "./views/FlowRun.jsx";
+import { FlowRun, showFlowRun, openFlowRunner } from "./views/FlowRun.jsx";
+import { Chats } from "./views/Chats.jsx";
 import { FlowGuide } from "./views/FlowGuide.jsx";
 import { FilePreview } from "./FilePreview.jsx";
 import { LibraryEditor } from "./views/LibraryEditor.jsx";
@@ -71,6 +72,7 @@ const GROUPS = [
       { id: "playground", label: "Prompt playground", icon: Icon.playground, C: Playground },
       { id: "flows", label: "Flow designer", icon: Icon.flow, C: Flows },
       { id: "flowrun", label: "Run flows", icon: Icon.run, C: FlowRun },
+      { id: "chats", label: "Chats", icon: Icon.chat, C: Chats },
       { id: "flowguide", label: "Flow step guide", icon: Icon.book, C: FlowGuide, sub: true }, // under the Flow designer; labelled only when the sidebar is open
     ],
   },
@@ -120,6 +122,18 @@ async function boot() {
   backend.on(onHubEvent);
   loadPendingQuestions(); // questions asked before this window opened
   S.info = await backend.Info().catch(() => null);
+  // a runner window runs one flow (the desktop app's runner mode; in the
+  // browser preview, ?runner=<flow id>)
+  S.runner = S.info?.runner || new URLSearchParams(location.search).get("runner") || "";
+  if (S.runner) {
+    if (S.info?.workspace || S.lastWorkspace) await openWorkspace(S.info?.workspace || S.lastWorkspace);
+    // a Chatflow's window chats; another flow's runs
+    const chats = (await backend.Chatflows().catch(() => [])) || [];
+    S.runnerChat = chats.some((f) => f.id === S.runner);
+    if (!S.runnerChat) openFlowRunner(S.runner);
+    update();
+    return;
+  }
   refreshAdmin();
   if (S.setup.done && S.setup.provider && S.setup.provider !== "skipped") {
     // the chosen agent is a UI preference; any token was session-only
@@ -183,6 +197,40 @@ export function App() {
     [S.appearance.theme, S.appearance.skin, S.appearance.fontSize, S.appearance.font, S.appearance.codeFont],
   );
 
+  if (S.runner) {
+    // a runner window: that flow's Run screen (a Chatflow: its chats), nothing else
+    S.view = S.runnerChat ? "chats" : "flowrun";
+    return (
+      <div className="app runner-mode">
+        <main className="main main-full" data-view={S.view}>
+          <ErrorBoundary name={S.runnerChat ? "Chats" : "Run flows"} resetKey="runner">
+            {S.runnerChat ? <Chats /> : <FlowRun />}
+          </ErrorBoundary>
+        </main>
+        <ErrorBoundary floating name="The prompts">
+          <SecretPrompt />
+          <QuestionPrompt />
+          <PermissionPrompt />
+          <FilePreview />
+          <DialogHost />
+        </ErrorBoundary>
+        <div className="toast" aria-live="polite">
+          {S.toast && S.toastKind !== "error" && <div className="banner">{S.toast}</div>}
+        </div>
+        <div className="toast" role="alert">
+          {S.toast && S.toastKind === "error" && (
+            <div className="banner error toast-error">
+              <Icon.warn />
+              <span>{S.toast}</span>
+              <button className="icon-btn" aria-label="Close message" title="Close" onClick={hideToast}>
+                <Icon.x />
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+    );
+  }
   if (!S.setup.done)
     return (
       <div className="app">

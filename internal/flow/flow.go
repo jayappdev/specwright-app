@@ -46,6 +46,10 @@ type Flow struct {
 	Edges   []Edge   `json:"edges"`
 	// Triggers start the flow by themselves (a schedule…); see trigger.go
 	Triggers []Trigger `json:"triggers,omitempty"`
+	// A Chatflow's environment (see chatflow.go): variables with values,
+	// and secrets by name, resolved when a chat session starts.
+	Vars    []Var       `json:"vars,omitempty"`
+	Secrets []SecretVar `json:"secrets,omitempty"`
 	// MinutesSaved is the manual work one successful run replaces (for
 	// Metrics); 0 means "estimate from the steps".
 	MinutesSaved int       `json:"minutesSaved,omitempty"`
@@ -194,7 +198,7 @@ type Skill struct {
 // Node is one step on the canvas.
 type Node struct {
 	ID    string  `json:"id"`
-	Type  string  `json:"type"` // start | tool | ai | improve | context | merge | transform | loop | gather | decision | filter | aggregate | output
+	Type  string  `json:"type"` // start | tool | ai | improve | context | merge | transform | loop | gather | decision | filter | aggregate | output | chat
 	Title string  `json:"title,omitempty"`
 	X     float64 `json:"x"`
 	Y     float64 `json:"y"`
@@ -277,6 +281,12 @@ type Node struct {
 	Measures []Measure `json:"measures,omitempty"`
 	OrderBy  []string  `json:"orderBy,omitempty"` // "field" or "-field" (descending)
 
+	// chat (see chatflow.go; Instructions and Model as for ai): questions
+	// shown on an empty session, and a cost limit per session (USD; 0: the
+	// project's budget)
+	Starters  []string `json:"starters,omitempty"`
+	CostLimit float64  `json:"costLimit,omitempty"`
+
 	// output
 	Format  string   `json:"format,omitempty"` // md | txt | html | csv | json
 	Actions []Action `json:"actions,omitempty"`
@@ -302,7 +312,7 @@ type Edge struct {
 
 // NodeTypes, transform operations, merge modes and output formats.
 var (
-	NodeTypes   = []string{"start", "tool", "ai", "improve", "context", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output"}
+	NodeTypes   = []string{"start", "tool", "ai", "improve", "context", "merge", "transform", "loop", "gather", "decision", "filter", "aggregate", "output", "chat"}
 	MergeModes  = []string{"concat", "json-object", "json-array", "template"}
 	Formats     = []string{"md", "txt", "html", "csv", "json"}
 	InputTypes  = []string{"text", "multiline", "secret", "number", "boolean", "date", "datetime", "choice", "multichoice", "file", "files", "clipboard"}
@@ -513,6 +523,10 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 			}
 		}
 	}
+	chatFilled := map[string]bool{} // steps after a Chat step: the chat's AI fills their empty fields
+	if c := f.ChatNode(); c != nil {
+		chatFilled = f.descendants(c.ID)
+	}
 	toolByName := map[string]ToolInfo{}
 	for _, t := range tools {
 		toolByName[t.Name] = t
@@ -540,9 +554,10 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 	if starts != 1 {
 		add("", "error", "A flow needs exactly one Inputs step.")
 	}
-	if outputs == 0 {
+	if outputs == 0 && !f.IsChatflow() { // a Chatflow's answers are its output
 		add("", "warning", "Add an output so the flow produces something.")
 	}
+	f.checkChat(add)
 	for _, e := range f.Edges {
 		if !ids[e.From] || !ids[e.To] {
 			add("", "error", "A connection points at a step that no longer exists (%s → %s).", e.From, e.To)
@@ -578,6 +593,15 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 			if e, ok := strings.CutPrefix(v, "#each "); ok { // {{#each this.lines}}: check its list
 				v = strings.TrimSpace(e)
 				head, rest, _ = strings.Cut(v, ".")
+			}
+			if store, ok := refHead(head); ok {
+				switch {
+				case !RefNameRE.MatchString(rest):
+					add(n.ID, "error", "%s uses {{%s}}: name the %s after the dot (letters, digits, _ . -).", what, v, map[bool]string{true: "variable", false: "secret"}[store == RefEnv])
+				case store == RefEnv && !f.hasVar(rest):
+					add(n.ID, "warning", "%s uses {{%s}}, which is not one of this flow's variables: it is read from the environment the app runs in (empty when it is not set).", what, v)
+				}
+				continue
 			}
 			switch head {
 			case "inputs":
@@ -657,7 +681,8 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 				add(n.ID, "error", "The tool %q is not available in this project.", n.Tool)
 			} else if strings.TrimSpace(n.Instruction) == "" {
 				for _, p := range t.Params {
-					if p.Required && strings.TrimSpace(n.Args[p.Name]) == "" {
+					// in a Chatflow's tools, the chat's AI fills the fields left empty
+					if p.Required && strings.TrimSpace(n.Args[p.Name]) == "" && !chatFilled[n.ID] {
 						add(n.ID, "error", "%s: the required parameter %q is empty (fill it in, or describe the step and let AI build it).", label(n), p.Name)
 					}
 					// only an optional input with no default fills it: empty when the input is left empty
@@ -674,7 +699,8 @@ func Validate(f *Flow, tools []ToolInfo) []Issue {
 			for k, v := range n.Args {
 				checkVars(n, label(n)+" › "+k, v)
 			}
-			if work := nonStart(f, parents); len(work) > 0 && strings.TrimSpace(n.Instruction) == "" && !UsesUpstream(n, f) {
+			// (a step after the Chat step gets the chat's message: it need not use it)
+			if work := nonStart(f, parents); len(work) > 0 && strings.TrimSpace(n.Instruction) == "" && !UsesUpstream(n, f) && !fedByChat(f, parents) {
 				first := titles(f, work[:1])[0]
 				add(n.ID, "warning", "None of %s's fields use the result of %s. It is still piped in, which only helps tools that read piped data. To use it in a field, click “← %s” next to that field, or describe the step and let AI fill the fields.",
 					label(n), strings.Join(titles(f, work), " and "), first)
@@ -858,10 +884,21 @@ func secretIssues(f *Flow) []Issue {
 			secret[in.Name] = true
 		}
 	}
+	secretVar := map[string]bool{} // a Chatflow's secrets, read as {{env.NAME}}
+	for _, s := range f.Secrets {
+		secretVar[s.Name] = true
+	}
 	uses := func(tpl string) string {
 		for _, m := range varRE.FindAllStringSubmatch(tpl, -1) {
-			if h, r, ok := strings.Cut(strings.TrimSpace(m[1]), "."); ok && h == "inputs" && secret[strings.SplitN(r, ".", 2)[0]] {
+			h, r, ok := strings.Cut(strings.TrimSpace(m[1]), ".")
+			if !ok {
+				continue
+			}
+			if h == "inputs" && secret[strings.SplitN(r, ".", 2)[0]] {
 				return strings.SplitN(r, ".", 2)[0]
+			}
+			if store, isRef := refHead(h); isRef && (store != RefEnv || secretVar[r]) {
+				return store + "." + r
 			}
 		}
 		return ""
@@ -874,7 +911,11 @@ func secretIssues(f *Flow) []Issue {
 			}
 		case "tool":
 			if s := uses(n.Instruction); s != "" {
-				is = append(is, Issue{Node: n.ID, Level: "warning", Message: fmt.Sprintf("%s: the description sends the secret %q to the AI model. Put {{inputs.%s}} into the argument that needs it instead; the AI does not see it there.", label(n), s, s)})
+				ref := "{{inputs." + s + "}}"
+				if strings.Contains(s, ".") {
+					ref = "{{" + s + "}}"
+				}
+				is = append(is, Issue{Node: n.ID, Level: "warning", Message: fmt.Sprintf("%s: the description sends the secret %q to the AI model. Put %s into the argument that needs it instead; the AI does not see it there.", label(n), s, ref)})
 			}
 			for k, v := range n.Args {
 				v = strings.TrimSpace(v)
@@ -888,7 +929,7 @@ func secretIssues(f *Flow) []Issue {
 }
 
 // reservedVars cannot be step names in {{<step>.output_file}}.
-var reservedVars = map[string]bool{"inputs": true, "steps": true, "input": true, "input_file": true, "output": true, "context": true, "skills": true, "flow": true, "date": true, "now": true,
+var reservedVars = map[string]bool{"env": true, "project_secret": true, "keychain": true, "inputs": true, "steps": true, "input": true, "input_file": true, "output": true, "context": true, "skills": true, "flow": true, "date": true, "now": true,
 	"item": true, "item_index": true, "item_count": true, "this": true, "this_index": true, "parent": true, "root": true}
 
 // StepNames maps the other names a step goes by to its id: the tool it
@@ -1005,6 +1046,8 @@ type Summary struct {
 	Tags        []string  `json:"tags,omitempty"`
 	// Keywords: the steps' names and tools, for searching the lists
 	Keywords []string `json:"keywords,omitempty"`
+	// Chat: it is a Chatflow (it has a Chat step): chatted with, not run
+	Chat bool `json:"chat,omitempty"`
 }
 
 // List returns the workspace's flows, newest first.
@@ -1027,6 +1070,7 @@ func List(root string) ([]Summary, error) {
 		}
 		s := Summary{ID: f.ID, Name: f.Name, Description: f.Description, Updated: f.Updated, Parent: f.Parent, Revision: f.Revision,
 			Group: NormGroup(f.Group), Tags: NormTags(f.Tags), Keywords: f.keywords()}
+		s.Chat = f.IsChatflow()
 		for _, n := range f.Nodes {
 			switch n.Type {
 			case "output":

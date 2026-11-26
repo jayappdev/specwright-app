@@ -3,11 +3,11 @@ import { DateTimeField } from "../../DateTimeField.jsx";
 import { resolveDate } from "../../dates.js";
 import { ModelPicker } from "../../ModelPicker.jsx";
 import { backend } from "../../backend.js";
-import { update, toast, errMsg, kcName, isWindows } from "../../store.js";
+import { S, update, toast, errMsg, kcName, isWindows } from "../../store.js";
 import { Icon } from "../../ui.jsx";
 import { openFlowInDesigner } from "../Flows.jsx";
 import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../../Attachments.jsx";
-import { Commands, frs, loadFlow, start } from "../FlowRun.jsx";
+import { Commands, frs, isChatflow, loadFlow, start, openRunnerWindow } from "../FlowRun.jsx";
 import { TagEditor, allTags } from "../../flowLists.jsx";
 
 // --- setup ------------------------------------------------------------------------
@@ -313,6 +313,7 @@ const VIA = {
     </span>
   ),
   session: () => <span className="badge badge-ok">entered this session</span>,
+  optional: () => <span className="badge">optional · not set</span>,
   ask: () => <span className="badge">will ask when needed</span>,
   missing: (c) => (
     <span className="badge badge-warn">{c.source === "env" ? "$" + c.env + " not set" : "no value"}</span>
@@ -336,55 +337,66 @@ function Credentials() {
       toast(errMsg(e), "error");
     }
   };
+  const row = (c) => (
+    <div key={c.name} className="fr-cred">
+      <div>
+        <code className="inline-code" data-nofile>
+          {c.name}
+        </code>{" "}
+        {(VIA[c.via] || VIA.ask)(c)}{" "}
+        <small className="muted">
+          {c.desc}
+          {c.tools?.length ? " · " + c.tools.join(", ") : ""}
+        </small>
+      </div>
+      <div className="fr-cred-row">
+        <input
+          type="password"
+          autoComplete="off"
+          placeholder={c.via === "ask" || c.via === "missing" ? "Enter a value" : "Replace the value"}
+          value={r.secretVals[c.name] || ""}
+          onChange={(e) => {
+            r.secretVals[c.name] = e.target.value;
+            update();
+          }}
+        />
+        <button className="btn secondary" onClick={() => save(c, "session")}>
+          Use this session
+        </button>
+        {r.keychain && (
+          <button
+            className="btn secondary"
+            title="Kept by the operating system; found next time without asking"
+            onClick={() => save(c, "keychain")}
+          >
+            <Icon.lock /> Save in keychain
+          </button>
+        )}
+      </div>
+    </div>
+  );
   return (
     <div className="card">
       <div className="card-head">
         <Icon.lock />
         <h3>Credentials</h3>
-        <span className="badge">{r.creds.length}</span>
+        <span className="badge">{r.creds.filter((c) => !c.optional).length}</span>
       </div>
       <p className="wf-desc">
         The flow's tools need these. Each is read from the session, the environment variable or the system
-        keychain; if none has it, the run pauses and asks you.
+        keychain; if none has it, the run pauses and asks you. Optional ones are used when set and never asked
+        for.
       </p>
-      {r.creds.map((c) => (
-        <div key={c.name} className="fr-cred">
-          <div>
-            <code className="inline-code" data-nofile>
-              {c.name}
-            </code>{" "}
-            {(VIA[c.via] || VIA.ask)(c)}{" "}
-            <small className="muted">
-              {c.desc}
-              {c.tools?.length ? " · " + c.tools.join(", ") : ""}
-            </small>
-          </div>
-          <div className="fr-cred-row">
-            <input
-              type="password"
-              autoComplete="off"
-              placeholder={c.via === "ask" || c.via === "missing" ? "Enter a value" : "Replace the value"}
-              value={r.secretVals[c.name] || ""}
-              onChange={(e) => {
-                r.secretVals[c.name] = e.target.value;
-                update();
-              }}
-            />
-            <button className="btn secondary" onClick={() => save(c, "session")}>
-              Use this session
-            </button>
-            {r.keychain && (
-              <button
-                className="btn secondary"
-                title="Kept by the operating system; found next time without asking"
-                onClick={() => save(c, "keychain")}
-              >
-                <Icon.lock /> Save in keychain
-              </button>
-            )}
-          </div>
-        </div>
-      ))}
+      {r.creds.filter((c) => !c.optional).map(row)}
+      {r.creds.some((c) => c.optional) && (
+        <details className="fr-cred-optional">
+          <summary>
+            Optional · {r.creds.filter((c) => c.optional).length}{" "}
+            <span className="muted">only for the sources that need them; nothing is asked for</span>
+          </summary>
+          {r.creds.filter((c) => c.optional).map(row)}
+        </details>
+      )}
     </div>
   );
 }
@@ -589,23 +601,36 @@ export function Setup() {
   return (
     <>
       <header className="view-head">
-        <select
-          className="fr-switch"
-          aria-label="Flow"
-          value={f.id}
-          onChange={(e) => loadFlow(e.target.value)}
-        >
-          {(r.flows || []).map((x) => (
-            <option key={x.id} value={x.id}>
-              {x.name}
-            </option>
-          ))}
-        </select>
+        {!S.runner && (
+          <select
+            className="fr-switch"
+            aria-label="Flow"
+            value={f.id}
+            onChange={(e) => loadFlow(e.target.value)}
+          >
+            {(r.flows || []).map((x) => (
+              <option key={x.id} value={x.id}>
+                {x.name}
+              </option>
+            ))}
+          </select>
+        )}
         <h1>{f.name}</h1>
         <div className="head-controls head-model">
-          <button className="link" onClick={() => openFlowInDesigner(f.id)}>
-            Edit in the designer
-          </button>
+          {!S.runner && (
+            <button className="link" onClick={() => openFlowInDesigner(f.id)}>
+              Edit in the designer
+            </button>
+          )}
+          {!S.runner && (
+            <button
+              className="btn secondary"
+              title="Run and watch this flow in a SpecWright window of its own (you can open several)"
+              onClick={() => openRunnerWindow(f.id)}
+            >
+              <Icon.panelR /> Open in its own window
+            </button>
+          )}
           <ModelPicker
             value={r.opts.model || ""}
             onChange={(v) => {
@@ -658,14 +683,36 @@ export function Setup() {
       <Commands />
       <Options />
       <div className="row-actions fr-go">
-        <button
-          className="btn primary fr-run"
-          disabled={(r.cmds || []).some((c) => !c.approved)}
-          aria-describedby={(r.cmds || []).some((c) => !c.approved) ? "fr-why" : undefined}
-          onClick={start}
-        >
-          <Icon.workflow /> {r.opts.startAt ? "Schedule run" : "Run flow"}
-        </button>
+        {isChatflow(f) ? (
+          <>
+            <button
+              className="btn primary fr-run"
+              disabled={(r.cmds || []).some((c) => !c.approved)}
+              aria-describedby={(r.cmds || []).some((c) => !c.approved) ? "fr-why" : undefined}
+              title="Runs the steps before the Chat step here, then opens a chat session with what they gave"
+              onClick={() => start("chat")}
+            >
+              <Icon.chat /> Start chat
+            </button>
+            <button
+              className="btn secondary"
+              disabled={(r.cmds || []).some((c) => !c.approved)}
+              title="Runs the steps before the Chat step and stops: to try them, without a chat session"
+              onClick={() => start("setup-only")}
+            >
+              Run setup only
+            </button>
+          </>
+        ) : (
+          <button
+            className="btn primary fr-run"
+            disabled={(r.cmds || []).some((c) => !c.approved)}
+            aria-describedby={(r.cmds || []).some((c) => !c.approved) ? "fr-why" : undefined}
+            onClick={() => start()}
+          >
+            <Icon.workflow /> {r.opts.startAt ? "Schedule run" : "Run flow"}
+          </button>
+        )}
         {(r.cmds || []).some((c) => !c.approved) && (
           <span id="fr-why" className="muted run-why">
             Needed first: approve the commands above.

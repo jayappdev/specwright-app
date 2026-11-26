@@ -685,9 +685,50 @@ func (h *Hub) SaveFlowVersion(baseID string, f flow.Flow) (FlowState, error) {
 	f.ID = flow.UniqueID(root, flow.Slug(name)+fmt.Sprintf("-v%d", rev))
 	f.Name = fmt.Sprintf("%s (v%d)", name, rev)
 	f.Parent, f.Revision = family, rev
+	keepListing(&f, base)
 	if base.Revision == 0 && base.Parent == "" { // the original becomes v1
 		base.Revision = 1
 		_ = flow.Save(root, base)
 	}
-	return h.SaveFlow(f)
+	st, err := h.SaveFlow(f)
+	if err == nil {
+		h.keepHeading(base.ID, st.Flow.ID)
+	}
+	return st, err
+}
+
+// keepListing gives a version the group and tags of the flow it comes
+// from, so it is listed with it (an AI that changes a flow seldom repeats
+// them): the version's own group wins; tags are the base's and its own.
+func keepListing(f *flow.Flow, base *flow.Flow) {
+	if strings.TrimSpace(f.Group) == "" {
+		f.Group = base.Group
+	}
+	seen := map[string]bool{}
+	var tags []string
+	for _, t := range append(append([]string{}, base.Tags...), f.Tags...) {
+		if k := strings.ToLower(strings.TrimSpace(t)); k != "" && !seen[k] {
+			seen[k] = true
+			tags = append(tags, t)
+		}
+	}
+	f.Tags = tags
+}
+
+// keepHeading puts a new version under the heading its base is under in
+// the Flows list (the list's arrangement is the app's, not the flow's).
+func (h *Hub) keepHeading(baseID, id string) {
+	l, err := h.Layout()
+	if err != nil {
+		return
+	}
+	head := l.Flows.Items[baseID]
+	if head == "" || l.Flows.Items[id] != "" {
+		return
+	}
+	if l.Flows.Items == nil {
+		l.Flows.Items = map[string]string{}
+	}
+	l.Flows.Items[id] = head
+	_, _ = h.SaveLayout(l)
 }

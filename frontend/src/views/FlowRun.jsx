@@ -21,6 +21,7 @@ import { Icon, Pill } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { ago } from "../time.js";
 import { Setup } from "./flowrun/Setup.jsx";
+import { runProgress, workSteps } from "./flowrun/RunSimple.jsx";
 import { RunView } from "./flowrun/RunView.jsx";
 
 export const frs = () =>
@@ -76,7 +77,8 @@ const FLOWRUN_POLL = 30;
 
 async function loadAll() {
   const r = frs();
-  r.flows = await backend.Flows().catch(() => []);
+  // Chatflows are listed too: their run is a chat's setup (Start chat)
+  r.flows = (await backend.Flows().catch(() => [])) || [];
   r.runs = await backend.FlowRuns(100).catch(() => []);
   r.triggers = (await backend.FlowTriggers("").catch(() => [])) || [];
   r.queue = (await backend.TriggerQueue().catch(() => [])) || [];
@@ -121,6 +123,21 @@ export async function loadFlow(id) {
 }
 
 // showFlowRun opens Run flows on one run (used by the status bar).
+// openRunnerWindow opens a flow in a SpecWright window of its own (the
+// desktop app starts a runner window; the browser preview a tab).
+export async function openRunnerWindow(id) {
+  if (backend.kind !== "desktop") {
+    window.open(location.origin + location.pathname + "?runner=" + encodeURIComponent(id), "_blank");
+    return;
+  }
+  try {
+    await backend.OpenRunnerWindow(id);
+    toast("Opening it in its own window…");
+  } catch (e) {
+    toast(errMsg(e), "error");
+  }
+}
+
 export function showFlowRun(id) {
   S.view = "flowrun";
   update();
@@ -150,7 +167,12 @@ export async function openRun(id) {
   update();
 }
 
-export async function start() {
+// isChatflow: the flow has a Chat step (Run flows starts a chat with it)
+export const isChatflow = (f) => !!f?.nodes?.some((n) => n.type === "chat");
+
+// start runs the flow; for a Chatflow it starts a chat (its setup as a run
+// that hands over to a chat session), or with mode "setup-only" its setup alone
+export async function start(mode) {
   const r = frs(),
     f = r.flow,
     o = r.opts;
@@ -187,6 +209,12 @@ export async function start() {
       max: +o.forEach.max || 100,
     };
   if (o.startAt) opts.startAt = new Date(o.startAt).toISOString();
+  if (isChatflow(f)) {
+    opts.chat = { role: mode === "setup-only" ? "setup-only" : "setup" };
+    delete opts.startAt; // a chat starts now
+    delete opts.forEach;
+    opts.repeat = 1;
+  }
   try {
     const st = await backend.RunFlow(f.id, opts);
     S.flowRuns[st.id] = st;
@@ -320,11 +348,7 @@ function Sidebar({ st }) {
   const evs = S.events[st.id] || [],
     u = st.usage || {},
     ev = usageOf(evs);
-  const work = st.steps.filter((s) => s.type !== "start");
-  const done = work.filter((s) => ["done", "skipped", "failed"].includes(s.status)).length;
-  const totalUnits = Math.max(1, (st.passes || 1) * (st.items || 1)),
-    unit = ((st.pass || 1) - 1) * (st.items || 1) + (st.item || 1) - 1;
-  const pct = Math.round(((unit + done / Math.max(1, work.length)) / totalUnits) * 100);
+  const pct = Math.round(runProgress(st) * 100); // the same measure as the simple view
   const [, tick] = useState(0);
   useEffect(() => {
     if (!LIVE.includes(st.status)) return;
@@ -355,7 +379,7 @@ function Sidebar({ st }) {
         </p>
       )}
       <ul className="fr-mini">
-        {work.map((s) => (
+        {workSteps(st).map((s) => (
           <li key={s.id} className={"s-" + s.status}>
             <span className="fr-dot" />
             {s.title}
@@ -401,8 +425,10 @@ export function FlowRun() {
   const st = r.runId ? S.flowRuns[r.runId] : null;
   const runsOf = (id) => r.runs.filter((x) => x.workflow === id).slice(0, 6);
   return (
-    <div className={"files frun" + (st ? " with-side" : "")}>
-      <Pane k="flowrun" v="--pane-l" pane=".ftree" min={200} max={480} label="Resize the flow list" />
+    <div className={"files frun" + (st ? " with-side" : "") + (S.runner ? " frun-runner" : "")}>
+      {!S.runner && (
+        <Pane k="flowrun" v="--pane-l" pane=".ftree" min={200} max={480} label="Resize the flow list" />
+      )}
       {st && (
         <Pane
           k="flowrun-side"
@@ -414,146 +440,152 @@ export function FlowRun() {
           label="Resize the progress panel"
         />
       )}
-      <nav className="ftree" aria-label="Flows and runs">
-        <h1 className="list-head" style={{ padding: "0 8px 8px" }}>
-          Run flows{" "}
-          <RefreshButton
-            label="Refresh the flows, their runs and schedules"
-            every={FLOWRUN_POLL}
-            onRefresh={loadAll}
-          />
-        </h1>
-        <FlowFilterBar area="runner" list={r.flows} />
-        {(() => {
-          const groups = groupFlows(r.flows, flowFilter("runner"));
-          if ((r.flows || []).length && !groups.length)
-            return (
-              <p className="muted" style={{ padding: "4px 8px" }}>
-                No flow matches.
-              </p>
-            );
-          return groups.map((g) => (
-            <FlowGroup
-              key={g.key}
-              area="runner"
-              name={g.name}
-              heading={g.heading}
-              count={g.items.length}
-              groups={groups.length}
-            >
-              {g.items.map((f) => (
-                <div key={f.id} className="fr-flow" {...dragProps("flows", f.id)}>
-                  <button
-                    className={"run-item" + (r.flowId === f.id && !r.runId ? " active" : "")}
-                    onClick={() => {
-                      r.runId = "";
-                      loadFlow(f.id);
-                    }}
-                  >
-                    <span className="run-item-top">
-                      <b>{f.name}</b>
-                    </span>
-                    <small>
-                      {f.steps} steps · {f.outputs} outputs
-                    </small>
-                    <FlowTagChips tags={f.tags} area="runner" />
-                    {(() => {
-                      const next = (r.triggers || [])
-                        .filter((t) => t.flowId === f.id && t.trigger.enabled && t.upcoming?.length)
-                        .map((t) => new Date(t.upcoming[0]))
-                        .sort((a, b) => a - b)[0];
-                      return next ? (
-                        <small className="fr-next">
-                          <span className="badge badge-sched">scheduled</span> next{" "}
-                          {next.toLocaleString([], { weekday: "short", hour: "2-digit", minute: "2-digit" })}
-                        </small>
-                      ) : null;
-                    })()}
-                    {(r.queue || [])
-                      .filter((q) => q.flow === f.id)
-                      .map((q) => (
-                        <small key={q.id} className="fr-queued">
-                          <span className="badge">waiting</span>{" "}
-                          <span title={q.why}>
-                            {q.triggerName}
-                            {q.attempt ? ` · retry ${q.attempt}` : ""}
-                            {q.notBefore && new Date(q.notBefore) > new Date()
-                              ? ` · at ${new Date(q.notBefore).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
-                              : " · when the flow is free"}
-                          </span>{" "}
-                          <button
-                            className="link"
-                            onClick={async (e) => {
-                              e.stopPropagation();
-                              await backend.CancelQueued(q.id).catch((x) => toast(errMsg(x), "error"));
-                              loadAll();
-                            }}
-                          >
-                            Cancel
-                          </button>
-                        </small>
-                      ))}
-                  </button>
-                  {runsOf(f.id).map((x) => {
-                    const live = S.flowRuns[x.id]?.status || x.state;
-                    return (
-                      <button
-                        key={x.id}
-                        className={"run-item fr-run-item" + (r.runId === x.id ? " active" : "")}
-                        onClick={() => openRun(x.id)}
-                      >
-                        <span className="run-item-top">
-                          <span title={new Date(x.started).toLocaleString()}>
-                            {ago(x.started)}
-                            {(x.kind === "flow-trial" || S.flowRuns[x.id]?.trial) && (
-                              <span className="badge badge-info" style={{ marginLeft: 6 }}>
-                                trial
-                              </span>
-                            )}
-                            {(x.trigger || S.flowRuns[x.id]?.options?.trigger) && (
-                              <span
-                                className="badge badge-sched"
-                                style={{ marginLeft: 6 }}
-                                title={
-                                  "Started by " +
-                                  (x.triggerName || S.flowRuns[x.id]?.options?.trigger?.name || "a trigger")
-                                }
-                              >
-                                {x.trigger || TAG[S.flowRuns[x.id]?.options?.trigger?.kind] || "trigger"}
-                              </span>
-                            )}
+      {!S.runner && (
+        <nav className="ftree" aria-label="Flows and runs">
+          <h1 className="list-head" style={{ padding: "0 8px 8px" }}>
+            Run flows{" "}
+            <RefreshButton
+              label="Refresh the flows, their runs and schedules"
+              every={FLOWRUN_POLL}
+              onRefresh={loadAll}
+            />
+          </h1>
+          <FlowFilterBar area="runner" list={r.flows} />
+          {(() => {
+            const groups = groupFlows(r.flows, flowFilter("runner"));
+            if ((r.flows || []).length && !groups.length)
+              return (
+                <p className="muted" style={{ padding: "4px 8px" }}>
+                  No flow matches.
+                </p>
+              );
+            return groups.map((g) => (
+              <FlowGroup
+                key={g.key}
+                area="runner"
+                name={g.name}
+                heading={g.heading}
+                count={g.items.length}
+                groups={groups.length}
+              >
+                {g.items.map((f) => (
+                  <div key={f.id} className="fr-flow" {...dragProps("flows", f.id)}>
+                    <button
+                      className={"run-item" + (r.flowId === f.id && !r.runId ? " active" : "")}
+                      onClick={() => {
+                        r.runId = "";
+                        loadFlow(f.id);
+                      }}
+                    >
+                      <span className="run-item-top">
+                        <b>{f.name}</b>
+                      </span>
+                      <small>
+                        {f.steps} steps · {f.outputs} outputs
+                      </small>
+                      <FlowTagChips tags={f.tags} area="runner" />
+                      {(() => {
+                        const next = (r.triggers || [])
+                          .filter((t) => t.flowId === f.id && t.trigger.enabled && t.upcoming?.length)
+                          .map((t) => new Date(t.upcoming[0]))
+                          .sort((a, b) => a - b)[0];
+                        return next ? (
+                          <small className="fr-next">
+                            <span className="badge badge-sched">scheduled</span> next{" "}
+                            {next.toLocaleString([], {
+                              weekday: "short",
+                              hour: "2-digit",
+                              minute: "2-digit",
+                            })}
+                          </small>
+                        ) : null;
+                      })()}
+                      {(r.queue || [])
+                        .filter((q) => q.flow === f.id)
+                        .map((q) => (
+                          <small key={q.id} className="fr-queued">
+                            <span className="badge">waiting</span>{" "}
+                            <span title={q.why}>
+                              {q.triggerName}
+                              {q.attempt ? ` · retry ${q.attempt}` : ""}
+                              {q.notBefore && new Date(q.notBefore) > new Date()
+                                ? ` · at ${new Date(q.notBefore).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}`
+                                : " · when the flow is free"}
+                            </span>{" "}
+                            <button
+                              className="link"
+                              onClick={async (e) => {
+                                e.stopPropagation();
+                                await backend.CancelQueued(q.id).catch((x) => toast(errMsg(x), "error"));
+                                loadAll();
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </small>
+                        ))}
+                    </button>
+                    {runsOf(f.id).map((x) => {
+                      const live = S.flowRuns[x.id]?.status || x.state;
+                      return (
+                        <button
+                          key={x.id}
+                          className={"run-item fr-run-item" + (r.runId === x.id ? " active" : "")}
+                          onClick={() => openRun(x.id)}
+                        >
+                          <span className="run-item-top">
+                            <span title={new Date(x.started).toLocaleString()}>
+                              {ago(x.started)}
+                              {(x.kind === "flow-trial" || S.flowRuns[x.id]?.trial) && (
+                                <span className="badge badge-info" style={{ marginLeft: 6 }}>
+                                  trial
+                                </span>
+                              )}
+                              {(x.trigger || S.flowRuns[x.id]?.options?.trigger) && (
+                                <span
+                                  className="badge badge-sched"
+                                  style={{ marginLeft: 6 }}
+                                  title={
+                                    "Started by " +
+                                    (x.triggerName || S.flowRuns[x.id]?.options?.trigger?.name || "a trigger")
+                                  }
+                                >
+                                  {x.trigger || TAG[S.flowRuns[x.id]?.options?.trigger?.kind] || "trigger"}
+                                </span>
+                              )}
+                            </span>
+                            <Pill s={pill(live)} label={STATUS_LABEL[live] || live} />
                           </span>
-                          <Pill s={pill(live)} label={STATUS_LABEL[live] || live} />
-                        </span>
-                      </button>
-                    );
-                  })}
-                </div>
-              ))}
-            </FlowGroup>
-          ));
-        })()}
-        {r.flows && !r.flows.length && (
-          <EmptyState
-            compact
-            title="No flows yet"
-            actions={[
-              [
-                "Design a flow",
-                () => {
-                  S.view = "flows";
-                  update();
-                },
-                true,
-              ],
-              ["Try an example", () => openFlowGuide("")],
-            ]}
-          >
-            A flow strings tools, AI steps and outputs together. Design one, or start from an example in the
-            Flow step guide.
-          </EmptyState>
-        )}
-      </nav>
+                        </button>
+                      );
+                    })}
+                  </div>
+                ))}
+              </FlowGroup>
+            ));
+          })()}
+          {r.flows && !r.flows.length && (
+            <EmptyState
+              compact
+              title="No flows yet"
+              actions={[
+                [
+                  "Design a flow",
+                  () => {
+                    S.view = "flows";
+                    update();
+                  },
+                  true,
+                ],
+                ["Try an example", () => openFlowGuide("")],
+              ]}
+            >
+              A flow strings tools, AI steps and outputs together. Design one, or start from an example in the
+              Flow step guide.
+            </EmptyState>
+          )}
+        </nav>
+      )}
       <div className="fview">
         {st ? <RunView st={st} /> : r.flow ? <Setup /> : <p className="muted">Choose a flow.</p>}
       </div>

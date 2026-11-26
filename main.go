@@ -51,6 +51,13 @@ func main() {
 		}
 		return
 	}
+	if len(os.Args) > 1 && os.Args[1] == "runner" { // a window for one flow (runner.go)
+		if err := runnerMain(os.Args[2:]); err != nil {
+			fmt.Fprintln(os.Stderr, "runner:", err)
+			os.Exit(1)
+		}
+		return
+	}
 	app, err := NewApp()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "codegen:", err)

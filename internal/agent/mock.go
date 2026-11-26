@@ -75,6 +75,10 @@ func (m *Mock) Run(ctx context.Context, req Request, emit func(Event)) (Result, 
 		}
 		ctxTok += out
 	}
+	res.SessionID = req.SessionID
+	if req.Resume && req.SessionID != "" {
+		emit(Event{Type: "agent.log", Summary: "Continuing conversation " + req.SessionID, Data: map[string]any{"line": "resume " + req.SessionID}})
+	}
 	finish := func() (Result, error) {
 		res.CostUSD = float64(ctxTok) * 3 / 1e6
 		emit(Event{Type: "run.usage", Summary: fmt.Sprintf("Mock: $%.4f", res.CostUSD), Data: map[string]any{"cost_usd": res.CostUSD}})

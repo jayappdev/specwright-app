@@ -265,6 +265,7 @@ func (b *Bridge) handleCall(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 	}
+	e = WithArgSecrets(e, req.Arguments) // ${DB_SALES} for a DB_* family
 	secrets, err := b.p.ResolveSecrets(r.Context(), e)
 	if err != nil {
 		res := RunResult{Error: "secrets: " + err.Error()}

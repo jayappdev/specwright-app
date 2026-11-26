@@ -75,6 +75,8 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 				return extension.RunResult{}, fmt.Errorf("the arguments do not fit %s: %s", name, strings.Join(probs, "; "))
 			}
 			args = checked
+			x := extension.WithArgSecrets(*e, args) // ${DB_SALES} for a DB_* family
+			e = &x
 			if extension.HasDeps(*e) {
 				if err := h.Prepare(ctx, *e); err != nil {
 					return extension.RunResult{}, fmt.Errorf("installing dependencies failed: %v", err)
@@ -101,6 +103,9 @@ func (h *Hub) flowTool(ctx context.Context, root string, fr *flowRun, step, name
 					env = append(env, "SPECWRIGHT_INPUT_FILE="+in.file)
 				}
 				env = append(env, "SPECWRIGHT_STEP="+step, "SPECWRIGHT_RUN="+fr.st.ID)
+			}
+			for k, v := range fr.st.Options.Env { // a Chatflow's variables and secrets
+				env = append(env, k+"="+v)
 			}
 			return extension.ExecInput(ctx, root, *e, args, secrets, env, timeout, stdin), nil
 		}()

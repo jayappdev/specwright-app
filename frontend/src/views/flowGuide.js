@@ -435,6 +435,7 @@ export const GUIDE = [
       'JSON → JSON (template): write the JSON to produce with {{this.<path>}}; a whole-string placeholder keeps its type; {"{{#each this.lines}}": {…}} repeats for nested lists, with {{parent.…}} and {{root.…}}.',
       "Run a command passes the data on standard input (e.g. jq '.items', sort -u); Ask AI describes the change in words.",
       "Use “Try it with sample data” in the inspector to check the result before running the flow.",
+      "Values from outside the flow work in every step's fields: {{env.NAME}} (a variable), {{project_secret.NAME}} and {{keychain.NAME}} (secrets from Settings › Secrets, looked up when the run starts and hidden in results and history).",
     ],
     settings: [
       ["Transformation", "What to do; grouped as Text, JSON, Convert, Command and AI."],
@@ -1130,29 +1131,307 @@ export const GUIDE = [
     ],
   },
   {
+    type: "dataquery",
+    name: "Data query (DuckDB)",
+    icon: { type: "tool", tool: "duckdb_data_query" },
+    resultLabel: "Result · an example (the query runs when the flow runs)",
+    summary:
+      "Queries data with DuckDB SQL: files (CSV, JSON, Parquet, Excel), URLs, S3 and Azure, the previous step's output, and databases (Postgres, MySQL, SQLite, SQL Server, Oracle). One query reads, joins, transforms and aggregates; the rows come back as JSON for the next steps.",
+    when: [
+      "Summarise or join files: CSV exports, JSON from an API, Parquet in a data lake.",
+      "Read a database (read-only) and combine it with a file or an earlier step's result.",
+      "Prepare rows for a chart, a report table or a decision.",
+    ],
+    how: [
+      "Add a Tool step and choose duckdb_data_query (an admin publishes it to every project from library/tools; Admin › Import a tool file to publish).",
+      'sql is the query. Name the inputs: sources ({"orders": "data/orders.csv"}; globs, s3:// paths, and folders ending in / — every data file under it, sub-folders too, as one table with a filename column, year=2026/ folders as columns), connections ([{"name": "pg", "type": "postgres", "dsn": "…"}], read-only unless "read_only": false), and input: {{input_file}} makes the previous step\'s output the table input.',
+      'Passwords never go in the flow: give each connection its own as ${DB_<NAME>} ("password": "${DB_SALES}"): SpecWright asks for it once and keeps it as a secret (Run flows lists them, to save in the keychain for scheduled runs). PGPASSWORD and MYSQL_PWD are read by the drivers when a connection gives none. S3 uses AWS_ACCESS_KEY_ID / AWS_SECRET_ACCESS_KEY when set, otherwise your AWS profile or SSO; AWS_REGION, and AWS_ENDPOINT_URL for S3-compatible storage (MinIO, R2, Ceph).',
+      "format: json (default; numbers stay numbers), csv or markdown. save_to also writes the whole result to .csv, .json, .jsonl or .parquet, locally or on s3://; save_mode append adds the rows to what the file already holds, so a scheduled flow builds up a history; max_rows (default 1000) caps what the next step gets.",
+      "Extensions (S3, Postgres, Excel, Oracle…) install the first time they are needed. Where the network blocks them, set DUCKDB_EXTENSION_REPOSITORY (a mirror) or DUCKDB_HTTP_PROXY.",
+    ],
+    settings: [
+      ["sql", "The DuckDB SQL; several statements run in turn, the last one's rows are the result."],
+      ["sources", "Tables from files, globs, folders (path/), URLs or cloud paths."],
+      ["connections", "Databases to attach: postgres, mysql, sqlite, sqlserver, oracle, duckdb."],
+      ["input", "{{input_file}}: the previous step's output as the table input."],
+      [
+        "format, save_to, save_mode, max_rows",
+        "How the rows come back, where to save all of them (overwrite, or append to accumulate), how many to pass on.",
+      ],
+      ["extensions", "Extra DuckDB extensions (most load by themselves)."],
+    ],
+    examples: [
+      {
+        title: "Summarise a CSV export",
+        text: "Revenue and order count per region from a CSV file, largest first. The rows feed a Filter, an Aggregate or a chart.",
+        nodes: [
+          {
+            id: "revenue",
+            type: "tool",
+            title: "Revenue by region",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT region, round(sum(total), 2) AS revenue, count(*) AS orders\nFROM orders\nGROUP BY region\nORDER BY revenue DESC",
+              sources: '{"orders": "data/orders.csv"}',
+            },
+          },
+        ],
+        edges: chain("start", "revenue"),
+        focus: "revenue",
+        result:
+          '[\n  {"region": "EU", "revenue": 360.5, "orders": 3},\n  {"region": "US", "revenue": 390, "orders": 2},\n  {"region": "APAC", "revenue": 212, "orders": 2}\n]',
+      },
+      {
+        title: "Join the previous step's output with a file",
+        text: "A tool returned this month's targets as JSON; the query joins them with the orders file (input is the step before) and returns a Markdown table for a report.",
+        nodes: [
+          sample(
+            "targets",
+            "Targets",
+            '[{"region": "EU", "target": 300}, {"region": "US", "target": 450}, {"region": "APAC", "target": 200}]',
+          ),
+          {
+            id: "vs",
+            type: "tool",
+            title: "Revenue vs. target",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT o.region, sum(o.total) AS revenue, t.target,\n       round(100 * sum(o.total) / t.target) AS pct\nFROM orders o JOIN input t USING (region)\nGROUP BY o.region, t.target\nORDER BY pct DESC",
+              sources: '{"orders": "data/orders.csv"}',
+              input: "{{input_file}}",
+              format: "markdown",
+            },
+          },
+        ],
+        edges: chain("start", "targets", "vs"),
+        focus: "vs",
+        result:
+          "| region | revenue | target | pct |\n| --- | --- | --- | --- |\n| EU | 360.5 | 300 | 120 |\n| APAC | 212 | 200 | 106 |\n| US | 390 | 450 | 87 |",
+      },
+      {
+        title: "Postgres, read-only, password from a secret",
+        text: "The connection is attached read-only; the password comes from the secret PGPASSWORD (Tools › Secrets or the keychain), never from the flow. {{inputs.days}} is an input of the flow.",
+        flowInputs: [{ name: "days", label: "Days back", type: "text", default: "30" }],
+        nodes: [
+          {
+            id: "top",
+            type: "tool",
+            title: "Top customers",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT c.name, count(*) AS orders, sum(o.amount) AS spent\nFROM pg.public.orders o JOIN pg.public.customers c ON c.id = o.customer_id\nWHERE o.created_at >= now() - INTERVAL {{inputs.days}} DAY\nGROUP BY c.name ORDER BY spent DESC LIMIT 10",
+              connections:
+                '[{"name": "pg", "type": "postgres", "dsn": "host=db.internal port=5432 dbname=sales user=reporter"}]',
+            },
+          },
+        ],
+        edges: chain("start", "top"),
+        focus: "top",
+        result:
+          '[\n  {"name": "Acme GmbH", "orders": 42, "spent": 18250.5},\n  {"name": "Northwind", "orders": 31, "spent": 12990},\n  {"name": "Globex", "orders": 18, "spent": 9100.25}\n]',
+      },
+      {
+        title: "Two Postgres databases and Oracle, each with its own password",
+        text: "Any number of connections, each with its own connect string (parts, or a JDBC string) and its own password secret: DB_SALES, DB_CRM and DB_HR are asked for once. One query joins across them.",
+        nodes: [
+          {
+            id: "multi",
+            type: "tool",
+            title: "Revenue, managers, headcount",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT o.region, sum(o.total) AS revenue, r.manager, h.headcount\nFROM sales.public.orders o\nJOIN crm.crm.regions r USING (region)\nJOIN hr.HR.REGION_HEADCOUNT h ON h.REGION = o.region\nGROUP BY ALL ORDER BY revenue DESC",
+              connections:
+                '[{"name": "sales", "type": "postgres", "host": "pg1.internal", "database": "sales", "user": "reporter", "password": "${DB_SALES}"},\n {"name": "crm", "type": "postgres", "dsn": "jdbc:postgresql://pg2.internal:5432/crm", "user": "reporter", "password": "${DB_CRM}"},\n {"name": "hr", "type": "oracle", "dsn": "jdbc:oracle:thin:@//ora1.internal:1521/HRPDB", "user": "rep", "password": "${DB_HR}"}]',
+            },
+          },
+        ],
+        edges: chain("start", "multi"),
+        focus: "multi",
+        result:
+          '[\n  {"region": "EU", "revenue": 320.5, "manager": "Ana", "headcount": 42},\n  {"region": "US", "revenue": 80, "manager": "Bob", "headcount": 17}\n]',
+      },
+      {
+        title: "Kerberos: Oracle and Postgres without passwords",
+        text: "auth kerberos logs in with a Kerberos ticket (here from a service keytab, for scheduled runs). Oracle is attached live as /@service; DuckDB's Postgres driver has no Kerberos, so the Postgres tables listed in tables are read with psql and queried as sales.public.orders.",
+        nodes: [
+          {
+            id: "krb",
+            type: "tool",
+            title: "Headcount and revenue",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT h.REGION AS region, h.HEADCOUNT AS headcount, sum(o.total) AS revenue\nFROM hr.HR.REGION_HEADCOUNT h\nJOIN sales.public.orders o ON o.region = h.REGION\nGROUP BY ALL ORDER BY revenue DESC",
+              connections:
+                '[{"name": "hr", "type": "oracle", "auth": "kerberos", "host": "ora1.corp", "service": "HRPDB", "keytab": "/etc/security/reporting.keytab", "principal": "reporting@CORP.EXAMPLE"},\n {"name": "sales", "type": "postgres", "auth": "kerberos", "host": "pg1.corp", "database": "sales", "user": "reporting", "keytab": "/etc/security/reporting.keytab", "principal": "reporting@CORP.EXAMPLE", "tables": ["public.orders"]}]',
+            },
+          },
+        ],
+        edges: chain("start", "krb"),
+        focus: "krb",
+        result:
+          '[\n  {"region": "EU", "headcount": 42, "revenue": 320.5},\n  {"region": "US", "headcount": 17, "revenue": 80}\n]',
+      },
+      {
+        title: "Oracle (needs Oracle Instant Client)",
+        text: "The oracle community extension installs by itself; the machine needs Oracle Instant Client (19c, 21c or 23ai). ${ORACLE_PASSWORD} in the dsn is filled from that secret.",
+        nodes: [
+          {
+            id: "open",
+            type: "tool",
+            title: "Open invoices",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT status, count(*) AS invoices, sum(amount) AS total\nFROM ora.FIN.INVOICES\nWHERE status <> 'PAID'\nGROUP BY status",
+              connections:
+                '[{"name": "ora", "type": "oracle", "dsn": "user=REPORTER password=${ORACLE_PASSWORD} dbq=//ora.internal:1521/FINPDB"}]',
+            },
+          },
+        ],
+        edges: chain("start", "open"),
+        focus: "open",
+        result:
+          '[\n  {"status": "OPEN", "invoices": 128, "total": 412900},\n  {"status": "OVERDUE", "invoices": 17, "total": 58210.4}\n]',
+      },
+      {
+        title: "Parquet on S3, the whole result saved as CSV",
+        text: "A glob over a month of Parquet files in S3 (your AWS profile or SSO signs the requests). save_to writes every row to a CSV file; the next step gets the first 100 (max_rows).",
+        nodes: [
+          {
+            id: "errors",
+            type: "tool",
+            title: "Errors by service",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT service, date_trunc('day', ts) AS day, count(*) AS errors\nFROM events\nWHERE level = 'ERROR'\nGROUP BY ALL ORDER BY day, errors DESC",
+              sources: '{"events": "s3://acme-logs/2026/11/*.parquet"}',
+              save_to: "out/errors-by-service.csv",
+              max_rows: "100",
+            },
+          },
+        ],
+        edges: chain("start", "errors"),
+        focus: "errors",
+        result:
+          '[\n  {"service": "billing", "day": "2026-11-01T00:00:00.000Z", "errors": 214},\n  {"service": "orders", "day": "2026-11-01T00:00:00.000Z", "errors": 97}\n]',
+      },
+      {
+        title: "A whole S3 folder as one table",
+        text: "A source ending in / reads every Parquet, CSV and JSON file under the prefix (sub-folders too) as one table: columns are matched by name, filename says which file a row came from, and hive folders such as region=eu/ become columns.",
+        nodes: [
+          {
+            id: "lake",
+            type: "tool",
+            title: "Events by region",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT region, count(*) AS events, count(DISTINCT filename) AS files\nFROM events\nGROUP BY region ORDER BY events DESC",
+              sources: '{"events": "s3://acme-lake/events/"}',
+            },
+          },
+        ],
+        edges: chain("start", "lake"),
+        focus: "lake",
+        result:
+          '[\n  {"region": "eu", "events": 182344, "files": 31},\n  {"region": "us", "events": 97012, "files": 31}\n]',
+      },
+      {
+        title: "Accumulate results across runs",
+        text: "Each run adds today's totals to one Parquet file on S3 (save_mode append), then a second query reads the whole history. Schedule the flow to build it up day by day; a new column in a later run is added, earlier rows get null.",
+        nodes: [
+          {
+            id: "today",
+            type: "tool",
+            title: "Add today's totals",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT current_date AS day, service, count(*) AS errors\nFROM events\nWHERE level = 'ERROR'\nGROUP BY ALL",
+              sources: '{"events": "s3://acme-logs/today/"}',
+              save_to: "s3://acme-reports/errors-history.parquet",
+              save_mode: "append",
+            },
+          },
+          {
+            id: "history",
+            type: "tool",
+            title: "The last 7 days",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT day, sum(errors) AS errors\nFROM read_parquet('s3://acme-reports/errors-history.parquet')\nWHERE day > current_date - 7\nGROUP BY day ORDER BY day",
+            },
+          },
+        ],
+        edges: chain("start", "today", "history"),
+        focus: "history",
+        result:
+          '[\n  {"day": "2026-11-20", "errors": 311},\n  {"day": "2026-11-21", "errors": 287},\n  {"day": "2026-11-22", "errors": 254}\n]',
+      },
+      {
+        title: "Query, then a chart",
+        text: "The query's rows go straight into a Visualization step (builtin:chart) that reads {{revenue.buffer_output}}.",
+        nodes: [
+          {
+            id: "revenue",
+            type: "tool",
+            title: "Revenue by month",
+            tool: "duckdb_data_query",
+            args: {
+              sql: "SELECT strftime(order_date, '%Y-%m') AS month, region, sum(total) AS revenue\nFROM read_csv('data/orders-*.csv')\nGROUP BY ALL ORDER BY month",
+            },
+          },
+          {
+            id: "pivot",
+            type: "tool",
+            title: "Revenue chart",
+            tool: "builtin:chart",
+            args: {
+              type: "line",
+              title: "Revenue by month",
+              rows: "{{revenue.buffer_output}}",
+              x: "month",
+              y: "revenue",
+            },
+          },
+        ],
+        edges: chain("start", "revenue", "pivot"),
+        focus: "revenue",
+        result:
+          '[\n  {"month": "2026-09", "region": "EU", "revenue": 18200},\n  {"month": "2026-10", "region": "EU", "revenue": 21450},\n  {"month": "2026-11", "region": "EU", "revenue": 19900}\n]',
+      },
+    ],
+  },
+  {
     type: "visualization",
     name: "Visualization",
     icon: { type: "tool", tool: "builtin:chart" },
     summary:
-      "Draws data as a chart: bar, horizontal bar, stacked bar, line, multi-line, area, stacked area, scatter, pie, donut or heatmap, from the rows a tool, a query or an Aggregate returned. It is a tool step with the built-in chart tool (builtin:chart); the chart shows as a picture, with Export PNG.",
+      "Draws data as a chart: bar, horizontal bar, stacked bar, line, multi-line, area, stacked area, scatter, pie, donut, heatmap, KPI tiles, gauges, bullet charts or sparklines, from the rows a tool, a query or an Aggregate returned. It is a tool step with the built-in chart tool (builtin:chart); the chart shows as a picture, with Export PNG.",
     when: [
       "Show the rows a tool or a query returned as a bar chart (test results by suite, revenue by region).",
       "Show a trend over time as a line, one line per series (orders per month by region).",
       "Show shares of a whole as a pie or donut (failures by cause, spend by team).",
       "Find patterns: a scatter of two numbers (size against defects), a heatmap of a grid (failed builds by day and hour).",
+      "Show headline numbers against last period or a target: KPI tiles, gauges (SLOs, utilisation) or bullet charts (progress to target).",
+      "Show many small trends at once: sparklines, a line per service, region or metric.",
       "Save a chart as SVG and PNG for a report, an email or a slide.",
     ],
     how: [
       "Add a Tool step and choose builtin:chart (in the Charts group). Its parameters show as fields; fill them with text and variables, such as {{<step id>.buffer_output}} for an earlier step's rows.",
       "builtin:chart takes rows (a JSON array of objects) with x (the label field) and y (the number fields; empty: every number field), or labels and series. type: bar, line, multiline or stacked_bar. It saves the chart in out/charts (or path) and returns it as SVG, shown as a picture with Export PNG; format png or both also saves a PNG.",
       "pie and donut draw the first series, a slice per label, with the share on each slice and the values in the legend (a donut shows the total in its hole). hbar puts the labels down the side, for long names. scatter needs numbers on x: name the x field. heatmap takes rows with x (the columns), y (the rows) and value (repeated cells are added up).",
+      'kpi, gauge and bullet show each label\'s value; a second y field (last month, the target) is what it is compared with: the change in % on a tile, a target mark on a gauge or bullet. bands are the thresholds between bad, so-so and good ([90, 98]); lower_is_better turns them round (latency, cost); unit is written with the values ($, %, " ms").',
+      "sparklines: a small line per series with its last value and its change since the first; from long rows, x (the points), y (the field naming each line) and value.",
       "show_values writes each value on its bar, point, slice or cell, so a PNG reads without the grid.",
       "Connect an Output step with HTML format to put the chart on a page of its own, saved where you like.",
     ],
     settings: [
       [
         "type",
-        "bar, hbar, stacked_bar, line or multiline, area, stacked_area, scatter, pie, donut, heatmap.",
+        "bar, hbar, stacked_bar, line or multiline, area, stacked_area, scatter, pie, donut, heatmap, kpi, gauge, bullet, sparklines.",
+      ],
+      [
+        "bands, lower_is_better, unit, min, max",
+        "kpi, gauge, bullet: thresholds, which way is good, the unit, the scale.",
       ],
       ["show_values", "Write each value on the chart."],
       ["value", "heatmap with rows: the number field (y is the row field)."],
@@ -1382,6 +1661,378 @@ export const GUIDE = [
         edges: chain("start", "sprint", "burn", "page"),
         focus: "burn",
       },
+      {
+        title: "KPI tiles: this month against last month",
+        text: "A tile per metric: the value, and the change against the second y field (last month), green when it is better. lower_is_better would make a fall green (costs, refunds).",
+        nodes: [
+          sample(
+            "kpis",
+            "Metrics",
+            '[{"metric": "Revenue", "now": 182400, "last_month": 161000}, {"metric": "Orders", "now": 1204, "last_month": 1290}, {"metric": "Avg order", "now": 151.5, "last_month": 124.8}]',
+          ),
+          {
+            id: "tiles",
+            type: "tool",
+            title: "KPI tiles",
+            tool: "builtin:chart",
+            args: {
+              type: "kpi",
+              title: "November",
+              rows: "{{kpis.buffer_output}}",
+              x: "metric",
+              y: '["now", "last_month"]',
+            },
+          },
+        ],
+        edges: chain("start", "kpis", "tiles"),
+        focus: "tiles",
+      },
+      {
+        title: "Gauges: SLOs against their targets",
+        text: "A half dial per SLO: the arc is the value, coloured by bands (below 90 bad, 90 to 98 so-so, above good), the mark is the target.",
+        nodes: [
+          sample(
+            "slo",
+            "SLOs",
+            '[{"slo": "Availability", "value": 99.2, "target": 99}, {"slo": "Latency < 300 ms", "value": 94.5, "target": 95}, {"slo": "Checks passing", "value": 87, "target": 95}]',
+          ),
+          {
+            id: "dials",
+            type: "tool",
+            title: "SLO gauges",
+            tool: "builtin:chart",
+            args: {
+              type: "gauge",
+              title: "SLOs",
+              unit: "%",
+              bands: "[90, 98]",
+              rows: "{{slo.buffer_output}}",
+              x: "slo",
+              y: '["value", "target"]',
+            },
+          },
+        ],
+        edges: chain("start", "slo", "dials"),
+        focus: "dials",
+      },
+      {
+        title: "Bullet chart: latency against its budget",
+        text: "A bar per endpoint over green / amber / red zones, the budget as a mark. lower_is_better: under 200 ms is good.",
+        nodes: [
+          sample(
+            "lat",
+            "p95 latency",
+            '[{"endpoint": "search", "p95": 180, "budget": 250}, {"endpoint": "checkout", "p95": 420, "budget": 300}, {"endpoint": "login", "p95": 260, "budget": 300}]',
+          ),
+          {
+            id: "bullets",
+            type: "tool",
+            title: "Latency bullets",
+            tool: "builtin:chart",
+            args: {
+              type: "bullet",
+              title: "p95 latency",
+              unit: " ms",
+              bands: "[200, 400]",
+              lower_is_better: "true",
+              rows: "{{lat.buffer_output}}",
+              x: "endpoint",
+              y: '["p95", "budget"]',
+            },
+          },
+        ],
+        edges: chain("start", "lat", "bullets"),
+        focus: "bullets",
+      },
+      {
+        title: "Sparklines: a trend per service",
+        text: "Long rows (day, service, errors) become a small line per service with its last value and change; lower_is_better makes a rise red.",
+        nodes: [
+          sample(
+            "errs",
+            "Errors per day",
+            '[{"day": "Mon", "service": "api", "errors": 12}, {"day": "Tue", "service": "api", "errors": 9}, {"day": "Wed", "service": "api", "errors": 14}, {"day": "Thu", "service": "api", "errors": 6}, {"day": "Mon", "service": "billing", "errors": 2}, {"day": "Tue", "service": "billing", "errors": 3}, {"day": "Wed", "service": "billing", "errors": 7}, {"day": "Thu", "service": "billing", "errors": 11}]',
+          ),
+          {
+            id: "trends",
+            type: "tool",
+            title: "Error trends",
+            tool: "builtin:chart",
+            args: {
+              type: "sparklines",
+              title: "Errors this week",
+              rows: "{{errs.buffer_output}}",
+              x: "day",
+              y: "service",
+              value: "errors",
+              lower_is_better: "true",
+            },
+          },
+        ],
+        edges: chain("start", "errs", "trends"),
+        focus: "trends",
+      },
+    ],
+  },
+  {
+    type: "formattedtable",
+    name: "Formatted table",
+    icon: { type: "tool", tool: "builtin:table" },
+    summary:
+      "Turns rows (a query's or a tool's JSON) into a formatted HTML table: chosen columns with labels, numbers, currency, percent, dates, bytes and durations formatted, sorted, with a totals row, cells coloured by thresholds or rules, data bars and sparklines. A tool step with builtin:table; saved under out/tables and shown in SpecWright (opened in a browser, its headers sort).",
+    when: [
+      "A report needs the rows themselves, readable: money as money, shares as %, the worst ones red.",
+      "Show a ranking with data bars (revenue by customer) or a trend per row (a sparkline of the last 30 days).",
+      "Put a table on a Dashboard next to charts, or send it as Markdown (format markdown).",
+    ],
+    how: [
+      "Add the Formatted table step (or a Tool step with builtin:table) and set rows to an earlier step's output: {{<step id>.buffer_output}}.",
+      'columns picks and orders the columns: names ("region, revenue"), or objects: {"field": "revenue", "label": "Revenue", "format": "currency", "decimals": 0}. Without columns every field shows, its format guessed.',
+      "Formats: number, integer, percent (0.25 or 25 → 25%), currency (unit $ by default), date, datetime, bytes, duration_ms, bar (a data bar), sparkline (a list of numbers, e.g. DuckDB list()), json, text.",
+      'Colours: bands on a number column ([0.2, 0.3]: below red, between amber, above green; lower_is_better turns them round), or rules: [{"op": ">", "value": 300, "color": "bad"}] (good, warn, bad, info or #hex; "row": true colours the row).',
+      'sort: a field, -field for largest first. totals: true sums the number columns, or {"orders": "sum", "margin": "avg"}.',
+    ],
+    settings: [
+      ["rows", "The data: a JSON array of objects."],
+      ["columns", "Which columns, in order, and how each looks."],
+      ["sort, totals", "The order, and a totals row."],
+      ["title, caption", "Above the table."],
+      ["formats", 'A shortcut: {"field": "format"}.'],
+      ["max_rows, format, path", "How many rows (default 500); html or markdown; where to save."],
+    ],
+    examples: [
+      {
+        title: "Regions: currency, data bars, colours and a sparkline",
+        text: "Revenue as currency, orders as data bars, margin coloured by bands, p95 red over 300 ms, and the orders per day as a sparkline; largest revenue first, with totals.",
+        nodes: [
+          sample(
+            "regions",
+            "By region",
+            '[{"region": "EU", "revenue": 182400.5, "orders": 1204, "margin": 0.31, "p95_ms": 180, "per_day": [12, 14, 13, 17, 19, 22]}, {"region": "US", "revenue": 161000, "orders": 1290, "margin": 0.18, "p95_ms": 420, "per_day": [20, 18, 19, 15, 14, 13]}, {"region": "APAC", "revenue": 47250, "orders": 388, "margin": 0.24, "p95_ms": 260, "per_day": [3, 4, 6, 5, 8, 9]}]',
+          ),
+          {
+            id: "table",
+            type: "tool",
+            title: "Regions table",
+            tool: "builtin:table",
+            args: {
+              title: "Regions",
+              caption: "November, month to date",
+              rows: "{{regions.buffer_output}}",
+              sort: "-revenue",
+              totals: "true",
+              columns:
+                '["region", {"field": "revenue", "format": "currency", "decimals": 0}, {"field": "orders", "format": "bar"}, {"field": "margin", "format": "percent", "bands": [0.2, 0.3]}, {"field": "p95_ms", "label": "p95", "format": "duration_ms", "rules": [{"op": ">", "value": 300, "color": "bad"}]}, {"field": "per_day", "label": "Orders / day", "format": "sparkline"}]',
+            },
+          },
+        ],
+        edges: chain("start", "regions", "table"),
+        focus: "table",
+      },
+      {
+        title: "Failed tests, the failing rows red",
+        text: "Every field, formats guessed; a rule colours the whole row when status is failed.",
+        nodes: [
+          sample(
+            "tests",
+            "Test results",
+            '[{"test": "login works", "status": "passed", "ms": 120}, {"test": "checkout total", "status": "failed", "ms": 840}, {"test": "search paging", "status": "passed", "ms": 95}]',
+          ),
+          {
+            id: "t",
+            type: "tool",
+            title: "Results table",
+            tool: "builtin:table",
+            args: {
+              title: "Test results",
+              rows: "{{tests.buffer_output}}",
+              columns:
+                '["test", {"field": "status", "rules": [{"op": "=", "value": "failed", "color": "bad", "row": true}]}, {"field": "ms", "label": "Time", "format": "duration_ms"}]',
+            },
+          },
+        ],
+        edges: chain("start", "tests", "t"),
+        focus: "t",
+      },
+    ],
+  },
+  {
+    type: "dashboard",
+    name: "Dashboard",
+    icon: { type: "tool", tool: "builtin:dashboard" },
+    summary:
+      "Puts several results on one HTML page: charts, formatted tables, JSON rows (shown as a table), Markdown and text, in a grid under a title, an intro and when it was made. A tool step with builtin:dashboard; saved under out/dashboards and shown in SpecWright.",
+    when: [
+      "A weekly or daily report: KPI tiles, a trend, a table and a few notes on one page.",
+      "Bring the results of a flow's branches together for a person to read.",
+      "Run it on a schedule so the latest page is always in out/dashboards.",
+    ],
+    how: [
+      "Connect the steps to show into the Dashboard step, then set panel_1 … panel_8 to their outputs: {{<step id>.buffer_output}}.",
+      "Charts and formatted tables show their own titles; titles names the others, in order, separated by | (leave a place empty to keep a panel's own).",
+      "columns: panels per row (default 2). wide: the panels that take a whole row ([3]); a wide table does by itself.",
+      "intro is Markdown under the title, e.g. what the page shows and for whom. path saves it where you like (the default has the time in its name, so each run keeps its page).",
+    ],
+    settings: [
+      ["panel_1 … panel_8", "Earlier steps' outputs."],
+      ["title, intro", "The page's title and an introduction (Markdown)."],
+      ["titles", "Panel titles, separated by |."],
+      ["columns, wide", "The grid: panels per row, and the panels that take a whole row."],
+      ["path", "Where to save the page."],
+    ],
+    examples: [
+      {
+        title: "A sales page: tiles, a table and notes",
+        text: "KPI tiles and a formatted table are drawn from the same rows, then the dashboard puts them on one page with the notes.",
+        nodes: [
+          sample(
+            "sales",
+            "Sales",
+            '[{"region": "EU", "revenue": 182400, "last_month": 161000, "orders": 1204}, {"region": "US", "revenue": 161000, "last_month": 170500, "orders": 1290}, {"region": "APAC", "revenue": 47250, "last_month": 39800, "orders": 388}]',
+          ),
+          sample(
+            "notes",
+            "Notes",
+            "- **US** is down on last month: two large customers paused.\n- **APAC** keeps growing.",
+          ),
+          {
+            id: "tiles",
+            type: "tool",
+            title: "Revenue tiles",
+            tool: "builtin:chart",
+            args: {
+              type: "kpi",
+              title: "Revenue",
+              unit: "$",
+              rows: "{{sales.buffer_output}}",
+              x: "region",
+              y: '["revenue", "last_month"]',
+            },
+          },
+          {
+            id: "table",
+            type: "tool",
+            title: "Sales table",
+            tool: "builtin:table",
+            args: {
+              title: "By region",
+              rows: "{{sales.buffer_output}}",
+              sort: "-revenue",
+              totals: "true",
+              columns:
+                '["region", {"field": "revenue", "format": "currency", "decimals": 0}, {"field": "orders", "format": "bar"}]',
+            },
+          },
+          {
+            id: "page",
+            type: "tool",
+            title: "Sales dashboard",
+            tool: "builtin:dashboard",
+            args: {
+              title: "Sales — November",
+              intro: "Month to date, by region.",
+              panel_1: "{{tiles.buffer_output}}",
+              panel_2: "{{table.buffer_output}}",
+              panel_3: "{{notes.buffer_output}}",
+              titles: "||Notes",
+              wide: "[1]",
+            },
+          },
+        ],
+        edges: [
+          ...chain("start", "sales", "tiles", "page"),
+          ...chain("sales", "table", "page"),
+          ...chain("start", "notes", "page"),
+        ],
+        focus: "page",
+      },
+    ],
+  },
+  {
+    type: "chat",
+    name: "Chat (Chatflows)",
+    resultLabel: "A conversation · an example (your AI's answers will differ)",
+    summary:
+      "Makes the flow a Chatflow: people chat with it on the Chats screen. The steps before the Chat step set up a session once (load data, gather documents); each path after it is a tool the chat's AI runs only when a question needs it. Sessions keep their data and their conversation, so follow-up questions do not load anything again.",
+    when: [
+      "People ask many questions about the same data: sales numbers, a runbook, an incident's logs.",
+      "Some questions need fresh work (a query, a chart, a web page) and most do not.",
+      "The data needs secrets or settings the person chatting should never see.",
+    ],
+    how: [
+      "Add a Chat step after the steps that load what a session needs; connect the Inputs step (directly or through them) into it.",
+      "Connect steps after the Chat step: each path out of it is one tool, named after its first step. Leave a tool's fields empty for the AI to fill from the question, or set them; {{chat.message}} is what the AI passes on, {{session.<step id>}} a setup step's result.",
+      "In the Chat step: the instructions (what the assistant is for), starter questions, a model and a cost limit per session; and the Chatflow's environment: variables (values) and secrets (names only: their values come from the keychain or are asked for once, and never show in the chat).",
+      "Keep the chat on topic in its instructions: say what it answers, that it should decline other questions in a sentence and offer ones it can answer, and that it should ask one short question when a question is unclear (the examples below do).",
+      "Any field can read them: {{env.NAME}} for a variable (the environment's value of the same name wins), {{project_secret.NAME}} for a secret kept encrypted in the project, {{keychain.NAME}} for one in your computer's keychain (both set in Settings › Secrets, looked up when a session starts, hidden everywhere; keep them out of what the AI reads).",
+      "Chat on the Chats screen: + New session asks for the inputs and runs the setup once. Tools that only read run at once; anything that writes asks you first. /refresh runs the setup again, /data and /steps show what the session holds and can run.",
+    ],
+    settings: [
+      ["instructions", "What the assistant is for and how it answers."],
+      ["starters", "Questions shown on an empty session."],
+      ["model, costLimit", "The model, and a cost limit per session (USD)."],
+      ["vars, secrets", "The Chatflow's environment, given to every step a session runs."],
+    ],
+    examples: [
+      {
+        title: "Chat about sales rows, with a chart tool",
+        text: 'The setup loads the rows once; the chart tool\'s type and fields are left empty, so the AI fills them from the question ("chart revenue by region").',
+        nodes: [
+          sample("sales", "Sales rows", ORDERS),
+          {
+            id: "chat",
+            type: "chat",
+            title: "Sales assistant",
+            instructions:
+              "You answer questions about these orders. Show numbers in tables; draw a chart when asked.\n\n" +
+              "Stay on topic: only answer questions about these orders. If a question is unrelated (general knowledge, coding, other data), say in one sentence that this chat only covers these orders, and offer two questions you can answer as the follow-ups.\n\n" +
+              "Ask when unclear: if a question could mean different things (which measure, period, region or customer), ask one short clarifying question instead of guessing, and give the likely choices as the follow-ups.\n\n" +
+              "Advice: when asked what to do, say it is a suggestion, keep it short, and show the numbers each point rests on. With only a few orders, say the sample is small.",
+            starters: ["Which region has the most revenue?", "Chart revenue by region"],
+          },
+          {
+            id: "chart",
+            type: "tool",
+            title: "Draw a chart",
+            tool: "builtin:chart",
+            args: { type: "", title: "", rows: "{{session.sales}}", x: "", y: "" },
+          },
+        ],
+        edges: chain("start", "sales", "chat", "chart"),
+        focus: "chat",
+        result:
+          "🧑 Which region has the most revenue?\n🤖 US: 390.00 over 2 orders (one of them closed), then EU with 360.50 over 3.\n\n🧑 Chart revenue by region\n🤖 ▸ ran Draw a chart · 0.2 s  (bar · x region · y total)\n   [the chart, with Export PNG]",
+      },
+      {
+        title: "Docs Q&A that can fetch a page",
+        text: "The setup gathers the runbook once; a question the runbook does not answer can fetch a page (its address filled by the AI).",
+        nodes: [
+          sample(
+            "docs",
+            "Runbook",
+            "# Billing runbook\n\nRestart the invoice worker with `svc restart invoices`. Alerts page the billing on-call.",
+          ),
+          {
+            id: "chat",
+            type: "chat",
+            title: "Runbook help",
+            instructions:
+              "Answer from the runbook. Quote the command to run. Fetch a page only when the runbook does not cover the question.\n\n" +
+              "Stay on topic: if a question is not about running or fixing this service, say so in one sentence and offer two questions you can answer as the follow-ups. If a question is unclear (which environment, which error), ask one short clarifying question first.",
+          },
+          {
+            id: "fetch",
+            type: "tool",
+            title: "Fetch a page",
+            tool: "builtin:fetch_webpage",
+            args: { url: "", format: "markdown" },
+          },
+        ],
+        edges: chain("start", "docs", "chat", "fetch"),
+        focus: "chat",
+        result:
+          "🧑 How do I restart the invoice worker?\n🤖 Run `svc restart invoices` (from the Billing runbook).\n\n🧑 What does the status page say right now?\n🤖 ▸ ran Fetch a page · 1.1 s\n   All systems operational; the last incident was resolved yesterday.",
+      },
     ],
   },
   {
@@ -1498,4 +2149,51 @@ export function exampleFlow(ex) {
   const steps = {};
   for (const n of ex.nodes) if (n.sample) steps[n.id] = n.template;
   return { flow: { nodes, edges: ex.edges.map((e) => ({ ...e })), inputs: ex.flowInputs || [] }, steps };
+}
+
+// A tool's own usage guide (saved with the tool: project, global, admin-
+// managed or Copilot) as a flow guide section. Each example is a flow: the
+// example's sample (when it has one) as a template step "sample", then the
+// tool step "run" with the example's arguments.
+export function toolExampleFlow(name, ex) {
+  const run = { id: "run", type: "tool", tool: name, title: ex.title || name, args: { ...(ex.args || {}) } };
+  const nodes = ex.sample ? [sample("sample", "Sample input", ex.sample), run] : [run];
+  return { nodes, edges: chain("start", ...nodes.map((n) => n.id)), focus: "run" };
+}
+
+export const hasToolGuide = (t) =>
+  !!t?.guide &&
+  !!(t.guide.summary || t.guide.when?.length || t.guide.how?.length || t.guide.examples?.length);
+
+export function toolGuideSection(t) {
+  const g = t.guide || {};
+  return {
+    type: "tool:" + t.name,
+    tool: t,
+    name: t.name,
+    icon: { type: "tool", tool: t.name },
+    summary: g.summary || t.desc || "",
+    when: g.when || [],
+    how: g.how || [],
+    settings: (t.params || []).map((p) => [
+      p.name + (p.required ? " (required)" : ""),
+      [
+        p.desc,
+        p.default ? `Default: ${p.default}.` : "",
+        p.enum?.length ? `One of: ${p.enum.join(", ")}.` : "",
+      ]
+        .filter(Boolean)
+        .join(" ") ||
+        p.type ||
+        "string",
+    ]),
+    resultLabel: "Result · from the guide (Run example runs the tool)",
+    examples: (g.examples || []).map((ex) => ({
+      title: ex.title,
+      text: ex.text || "",
+      result: ex.result || "(no result saved yet: Run example runs it)",
+      toolExample: ex,
+      ...toolExampleFlow(t.name, ex),
+    })),
+  };
 }
