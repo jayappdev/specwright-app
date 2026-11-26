@@ -7,7 +7,7 @@ import { S, update, toast, errMsg } from "../store.js";
 import { GUIDE, exampleFlow, hasToolGuide, toolGuideSection } from "./flowGuide.js";
 import { StepIcon, openFlowInDesigner } from "./Flows.jsx";
 import { RenderPreview, chartOf } from "../ContentView.jsx";
-import { ListHead } from "../ui.jsx";
+import { ListHead, LearnMore } from "../ui.jsx";
 
 // the guides of the workspace's tools (project, global, managed, Copilot)
 const toolSections = () => (S.ws?.extensions || []).filter(hasToolGuide).map(toolGuideSection);
@@ -381,20 +381,22 @@ export function FlowGuide() {
             are produced by the app from the sample data, and <b>Try it in the designer</b> saves an example
             as a flow you can open, change and run.
           </p>
-          <p className="wf-desc">
-            Every step's inspector has a <b>Data</b> panel: the fields it gets and gives (nested objects and
-            lists, with types), whether the shape is declared (by a tool or an AI step's expected reply),
-            worked out from the steps before, or learned from sample data or the last run. Click a field to
-            use it where you are typing; path boxes suggest the fields, and the flow is checked for fields
-            that are not there.
-          </p>
-          <p className="wf-desc">
-            Not sure where to start? <b>✦ New flow with AI</b> (in the Flows list) turns a plain description
-            into a few ready-made flows built from your tools, with AI steps only where needed. After a run,{" "}
-            <b>Run flows</b> offers <b>✦ Fix with AI</b> on a failed step and <b>✦ Improve</b> on a finished
-            one: the AI changes only that step, you try the change (the steps before it reuse the run's
-            results) and apply it to the flow when the result is right.
-          </p>
+          <LearnMore summary="More: the Data panel, and AI that builds and fixes flows">
+            <p className="wf-desc">
+              Every step's inspector has a <b>Data</b> panel: the fields it gets and gives (nested objects and
+              lists, with types), whether the shape is declared (by a tool or an AI step's expected reply),
+              worked out from the steps before, or learned from sample data or the last run. Click a field to
+              use it where you are typing; path boxes suggest the fields, and the flow is checked for fields
+              that are not there.
+            </p>
+            <p className="wf-desc">
+              Not sure where to start? <b>✦ New flow with AI</b> (in the Flows list) turns a plain description
+              into a few ready-made flows built from your tools, with AI steps only where needed. After a run,{" "}
+              <b>Run flows</b> offers <b>✦ Fix with AI</b> on a failed step and <b>✦ Improve</b> on a finished
+              one: the AI changes only that step, you try the change (the steps before it reuse the run's
+              results) and apply it to the flow when the result is right.
+            </p>
+          </LearnMore>
         </div>
         {GUIDE.map((g) => (
           <Section key={g.type} g={g} />

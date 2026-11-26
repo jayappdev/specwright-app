@@ -285,6 +285,17 @@ export function usePoll(load, ms, deps = []) {
 }
 
 // RefreshButton reloads a list; it turns while the load runs.
+// LearnMore: the details behind a one-line explanation, folded away so a
+// screen leads with what to do rather than how it works.
+export function LearnMore({ summary = "Learn more", children }) {
+  return (
+    <details className="learn-more">
+      <summary>{summary}</summary>
+      <div className="learn-more-body">{children}</div>
+    </details>
+  );
+}
+
 // ListHead: the header of a list column (Chats, Tools, Runs…): its title,
 // how many it lists, and its actions on the right (+ New first).
 export function ListHead({ title, count, children }) {

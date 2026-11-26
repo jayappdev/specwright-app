@@ -663,3 +663,40 @@ pre .file-link,
 .view-head {
   min-height: 36px;
 }
+
+/* LearnMore: the details behind a one-line explanation */
+.learn-more {
+  margin: 4px 0 8px;
+  font-size: 13px;
+}
+.learn-more > summary {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  cursor: pointer;
+  color: var(--link);
+  font-size: 12.5px;
+  list-style: none;
+  user-select: none;
+}
+.learn-more > summary::-webkit-details-marker {
+  display: none;
+}
+.learn-more > summary::before {
+  content: "▸";
+  font-size: 10px;
+  transition: transform 0.12s;
+}
+.learn-more[open] > summary::before {
+  transform: rotate(90deg);
+}
+.learn-more-body {
+  margin-top: 6px;
+  padding-left: 12px;
+  border-left: 2px solid var(--border);
+  color: var(--muted);
+  line-height: 1.5;
+}
+.learn-more-body > p:first-child {
+  margin-top: 0;
+}
