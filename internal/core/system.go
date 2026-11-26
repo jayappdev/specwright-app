@@ -112,6 +112,22 @@ type Metrics struct {
 	// Entries counts the ledger entries inside it.
 	Range   MetricsRange `json:"range"`
 	Entries int          `json:"entries"`
+	// Over time: the window day by day (week by week past 62 days), empty
+	// periods included, for the charts
+	Over     []MetricsPeriod `json:"over"`
+	OverUnit string          `json:"overUnit"` // day | week
+}
+
+// MetricsPeriod is one day (or week) of activity.
+type MetricsPeriod struct {
+	Start      string  `json:"start"` // YYYY-MM-DD, local time
+	FlowRuns   int     `json:"flowRuns"`
+	FlowDone   int     `json:"flowDone"`
+	Steps      int     `json:"steps"` // spec workflow steps and Playground prompts
+	CostUSD    float64 `json:"costUsd"`
+	Premium    int     `json:"premium"`
+	Tokens     int     `json:"tokens"`
+	HoursSaved float64 `json:"hoursSaved"`
 }
 
 // MetricsRange limits Metrics to ledger entries at or after From and
@@ -325,7 +341,88 @@ func (h *Hub) MetricsIn(r MetricsRange) (Metrics, error) {
 	for _, s := range []string{"constitution", "specify", "clarify", "plan", "tasks", "implement"} {
 		m.PerStep = append(m.PerStep, StepHours{Step: s, Hours: HoursSaved[s]})
 	}
+	m.Over, m.OverUnit = overTime(ents, from, to, time.Now())
 	return m, nil
+}
+
+// overTime buckets ledger entries by local day (by week, Monday first, past
+// 62 days) from the window's start (else the first entry) to its end (else
+// now), empty periods included.
+func overTime(ents []store.LedgerEntry, from, to, now time.Time) ([]MetricsPeriod, string) {
+	day := func(t time.Time) time.Time {
+		t = t.Local()
+		return time.Date(t.Year(), t.Month(), t.Day(), 0, 0, 0, 0, time.Local)
+	}
+	start, end := from, to
+	if end.IsZero() || end.After(now) {
+		end = now
+	}
+	if start.IsZero() {
+		if len(ents) == 0 {
+			return []MetricsPeriod{}, "day"
+		}
+		start = ents[0].At
+		for _, e := range ents {
+			if e.At.Before(start) {
+				start = e.At
+			}
+		}
+	}
+	first, last := day(start), day(end)
+	if last.Before(first) {
+		return []MetricsPeriod{}, "day"
+	}
+	unit := "day"
+	step := func(t time.Time) time.Time { return t.AddDate(0, 0, 1) }
+	if last.Sub(first) > 62*24*time.Hour {
+		unit = "week"
+		for first.Weekday() != time.Monday {
+			first = first.AddDate(0, 0, -1)
+		}
+		step = func(t time.Time) time.Time { return t.AddDate(0, 0, 7) }
+	}
+	var out []MetricsPeriod
+	idx := map[string]int{}
+	for t := first; !t.After(last); t = step(t) {
+		k := t.Format("2006-01-02")
+		idx[k] = len(out)
+		out = append(out, MetricsPeriod{Start: k})
+	}
+	bucket := func(at time.Time) int {
+		d := day(at)
+		if unit == "week" {
+			for d.Weekday() != time.Monday {
+				d = d.AddDate(0, 0, -1)
+			}
+		}
+		if i, ok := idx[d.Format("2006-01-02")]; ok {
+			return i
+		}
+		return -1
+	}
+	for _, e := range ents {
+		i := bucket(e.At)
+		if i < 0 {
+			continue
+		}
+		p := &out[i]
+		p.CostUSD += e.CostUSD
+		p.Premium += e.PremiumRequests
+		p.Tokens += e.InputTokens + e.OutputTokens
+		if strings.HasPrefix(e.Workflow, "flow:") {
+			p.FlowRuns++
+			if e.State == "done" {
+				p.FlowDone++
+			}
+			p.HoursSaved += float64(e.MinutesSaved) / 60
+		} else {
+			p.Steps++
+			if e.State == "done" {
+				p.HoursSaved += HoursSaved[e.Step]
+			}
+		}
+	}
+	return out, unit
 }
 
 func mustList(s []string, _ error) []string { return s }

@@ -23,6 +23,7 @@ export function applyAppearance(a) {
     r = document.documentElement;
   for (const [k, v] of Object.entries(t.ui)) r.style.setProperty(k, v);
   r.style.colorScheme = t.type;
+  r.dataset.mode = t.type; // light | dark: charts pick their colour steps by it
   r.dataset.theme = t.id;
   r.dataset.skin = a.skin;
   r.style.setProperty("--font-size", a.fontSize + "px");

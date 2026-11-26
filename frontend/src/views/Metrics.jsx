@@ -1,6 +1,7 @@
 import { DateTimeField } from "../DateTimeField.jsx";
 import { useEffect } from "react";
 import { backend } from "../backend.js";
+import { BarList, ColumnChart, LineChart } from "../components/Charts.jsx";
 import { EmptyState } from "../ui.jsx";
 import { S, update, toast, errMsg, saveText, fmtK, isCopilot } from "../store.js";
 import { Pill, Stat } from "../ui.jsx";
@@ -39,6 +40,8 @@ function normalizeMetrics(m = {}) {
     },
     allTime: { timesUsed: 0, hoursSaved: 0, ...(m.allTime || {}), usage: usage(m.allTime?.usage) },
     perStep: m.perStep || [],
+    over: m.over || [],
+    overUnit: m.overUnit || "day",
     recent: m.recent || [],
     flows: {
       executed: 0,
@@ -219,6 +222,60 @@ function RangeBar() {
   );
 }
 
+// OverTime: the window period by period: flow runs, and AI use (premium
+// requests with Copilot, cost otherwise)
+function OverTime({ m }) {
+  const week = m.overUnit === "week";
+  const pts = (m.over || []).map((p) => {
+    const d = new Date(p.start + "T00:00:00");
+    const short = d.toLocaleDateString([], { month: "short", day: "numeric" });
+    return {
+      p,
+      key: p.start,
+      short,
+      label: week
+        ? "Week of " + short
+        : d.toLocaleDateString([], { weekday: "short", month: "short", day: "numeric" }),
+    };
+  });
+  if (pts.length < 2) return null;
+  const per = week ? "per week" : "per day";
+  const copilot = isCopilot();
+  return (
+    <div className="viz-row">
+      <div className="card">
+        <ColumnChart
+          title="Flow runs"
+          sub={per}
+          integer
+          fmt={(v) => String(v)}
+          points={pts.map((x) => ({
+            ...x,
+            value: x.p.flowRuns,
+            detail: x.p.flowRuns ? `${x.p.flowDone} completed · ${x.p.flowRuns - x.p.flowDone} not` : "",
+          }))}
+        />
+      </div>
+      <div className="card">
+        <LineChart
+          title={copilot ? "Premium requests" : "AI cost"}
+          sub={per}
+          integer={copilot}
+          fmt={copilot ? (v) => String(v) : (v) => "$" + v.toFixed(v < 1 ? 3 : 2)}
+          tick={
+            copilot ? (v) => String(v) : (v) => "$" + (v < 1 && v > 0 ? v.toFixed(2) : v.toLocaleString())
+          }
+          points={pts.map((x) => ({
+            ...x,
+            value: copilot ? x.p.premium : x.p.costUsd,
+            detail: fmtK(x.p.tokens) + " tokens",
+          }))}
+        />
+      </div>
+    </div>
+  );
+}
+
 export function Metrics() {
   useEffect(() => {
     loadMetrics();
@@ -268,6 +325,7 @@ export function Metrics() {
         </div>
       </header>
       <RangeBar />
+      <OverTime m={m} />
       <h4>This project</h4>
       <div className="stats">
         {S2({ v: m.project.filesCreated, l: "Files created", sub: "by the agent" })}
@@ -323,6 +381,19 @@ export function Metrics() {
           sub: fmtK((m.flows?.usage?.input_tokens || 0) + (m.flows?.usage?.output_tokens || 0)) + " tokens",
         })}
       </div>
+      {m.flows?.top?.some((t) => t.hoursSaved > 0) && (
+        <div className="card">
+          <BarList
+            title="Hours saved by flow"
+            sub="estimated manual work each flow replaced"
+            fmt={(v) => v.toFixed(1) + " h"}
+            rows={[...m.flows.top]
+              .filter((t) => t.hoursSaved > 0)
+              .sort((a, b) => b.hoursSaved - a.hoursSaved)
+              .map((t) => ({ key: t.flow, label: t.flow, value: t.hoursSaved }))}
+          />
+        </div>
+      )}
       {m.flows?.top?.length > 0 && (
         <div className="card">
           <h3>Flows by runs</h3>
