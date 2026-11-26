@@ -372,8 +372,8 @@ export function App() {
           <div className="activity-tools">
             <button
               className="activity-btn"
-              title="Search views and flows (⌘K / Ctrl+K)"
-              aria-label="Search views and flows"
+              title="Search views, flows, chats and actions (⌘K / Ctrl+K)"
+              aria-label="Search views, flows, chats and actions"
               onClick={openPalette}
             >
               <Icon.search />
