@@ -35,6 +35,9 @@ import { Metrics } from "./views/Metrics.jsx";
 import { History } from "./views/History.jsx";
 import { Playground } from "./views/Playground.jsx";
 import { Admin } from "./views/Admin.jsx";
+import { Home } from "./views/Home.jsx";
+import { NewMenuHost, openNewMenu } from "./NewMenu.jsx";
+import { needsYou } from "./attention.js";
 import { Appearance } from "./views/Appearance.jsx";
 import { Flows } from "./views/Flows.jsx";
 import { FlowRun, showFlowRun, openFlowRunner } from "./views/FlowRun.jsx";
@@ -53,6 +56,12 @@ import { openSettings } from "./views/Appearance.jsx";
 
 // The sidebar, in groups: building from a spec, tools, utilities, admin.
 const GROUPS = [
+  {
+    id: "home",
+    label: "",
+    title: "Home",
+    views: [{ id: "home", label: "Home", icon: Icon.home, C: Home }],
+  },
   {
     id: "build",
     label: "Build",
@@ -158,6 +167,16 @@ export function App() {
   useEffect(() => {
     const off = [
       register({
+        id: "new-menu",
+        keys: ["mod+n"],
+        inFields: true,
+        help: [["mod+n", "New flow, tool, chat or prompt"]],
+        run: (e) => {
+          e.preventDefault();
+          openNewMenu(document.querySelector(".activity-new"));
+        },
+      }),
+      register({
         id: "nav-back",
         keys: ["mod+[", "alt+arrowleft"],
         help: [["mod+[", "Back"]],
@@ -259,22 +278,33 @@ export function App() {
   const cur = wf ? currentStep(wf) : 0,
     allDone = statuses.length && statuses.every((s) => s === "done");
   const t = totals();
+  const needs = needsYou();
   return (
     <>
       <div className={"app" + (S.railOpen ? " rail-open" : "")}>
         <nav className="activity" aria-label="Views">
           <button
             className="brand-mark"
-            title="SpecWright · go to the workflow"
+            title="SpecWright · Home"
             aria-label="SpecWright home"
             onClick={() => {
-              S.view = "workflow";
+              S.view = "home";
               update();
             }}
           >
             <Logo size={42} />
           </button>
           <NavArrows />
+          <button
+            className="activity-btn activity-new"
+            title="New flow, tool, chat or prompt (⌘N / Ctrl+N)"
+            aria-label="New"
+            aria-haspopup="menu"
+            onClick={(e) => openNewMenu(e.currentTarget)}
+          >
+            <Icon.plus />
+            <span className="activity-text">New</span>
+          </button>
           {GROUPS.map((g) => (
             <div
               key={g.id}
@@ -282,9 +312,11 @@ export function App() {
               role="group"
               aria-label={g.title}
             >
-              <span className="activity-label" title={g.title}>
-                {g.label}
-              </span>
+              {g.label && (
+                <span className="activity-label" title={g.title}>
+                  {g.label}
+                </span>
+              )}
               {g.views
                 .filter((v) => !v.sub || S.railOpen || S.view === v.id)
                 .map((v) => {
@@ -313,6 +345,14 @@ export function App() {
                       {v.id === "inputs" && S.ws?.speckit?.initialized && (
                         <span className="activity-meta" aria-label="Spec Kit set up">
                           <Icon.check />
+                        </span>
+                      )}
+                      {v.id === "home" && needs.length > 0 && (
+                        <span
+                          className="activity-count"
+                          aria-label={`${needs.length} thing${needs.length === 1 ? "" : "s"} need${needs.length === 1 ? "s" : ""} you`}
+                        >
+                          {needs.length}
                         </span>
                       )}
                       {v.id === "workflow" && gate && (
@@ -507,6 +547,9 @@ export function App() {
       </ErrorBoundary>
       <ErrorBoundary floating name="The command palette">
         <CommandPalette />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="The New menu">
+        <NewMenuHost />
       </ErrorBoundary>
       <div className="toast" aria-live="polite" onMouseEnter={toastHold} onMouseLeave={toastRelease}>
         {S.toast && S.toastKind !== "error" && <div className="banner">{S.toast}</div>}

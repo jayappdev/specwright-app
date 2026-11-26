@@ -191,6 +191,7 @@ export const Icon = {
     </>,
     14,
   ),
+  home: mk(<path d="M2.5 7.5L8 3l5.5 4.5M4 6.5V13h3V9.5h2V13h3V6.5" />),
   info: mk(
     <>
       <circle cx="8" cy="8" r="6.2" />
