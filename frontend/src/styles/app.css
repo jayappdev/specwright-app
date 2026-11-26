@@ -493,7 +493,7 @@
 }
 .mstat small {
   color: var(--muted);
-  font-size: max(11px, 0.8em);
+  font-size: 12px;
 }
 .tabs {
   display: flex;

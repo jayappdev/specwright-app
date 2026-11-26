@@ -1331,3 +1331,23 @@ input[type="range"] {
   padding: 10px 12px 6px;
   min-height: 76px;
 }
+
+/* ---- accessibility floors ----
+   Secondary text (the browser's default for <small> is ~10.8px at 13px) is
+   never smaller than 12px; deliberately small labels (badges, uppercase
+   section labels, chart ticks) set their own size. */
+small {
+  font-size: max(12px, 0.85em);
+}
+/* icon buttons are at least 28px square: easier to hit (WCAG 2.2 asks 24) */
+.icon-btn {
+  min-width: 28px;
+  min-height: 28px;
+}
+/* a keyboard focus that changes only the background is easy to lose: rows
+   and menu items get an inset ring too */
+.home-row:focus-visible,
+.new-item:focus-visible,
+.fl-card:focus-within .fl-card-main:focus-visible {
+  box-shadow: inset 0 0 0 2px var(--focus);
+}
