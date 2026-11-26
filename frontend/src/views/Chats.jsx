@@ -588,7 +588,8 @@ function Conversation({ s, f }) {
         {s.status === "setup" && (
           <div className="banner chat-setup-note">
             <span>
-              ⏳ Setting up the session: {f?.setup?.join(", ") || "the steps before the Chat step"}…
+              <span className="spinner" /> Setting up the session:{" "}
+              {f?.setup?.join(", ") || "the steps before the Chat step"}…
             </span>
             {s.setupRun && (
               <button className="link" onClick={() => showFlowRun(s.setupRun)}>
@@ -804,13 +805,15 @@ function Panel({ s, f }) {
       <section>
         <h4>Setup</h4>
         <div>
-          {s.status === "ready"
-            ? "✔ Ready"
-            : s.status === "setup"
-              ? "⏳ Setting up…"
-              : s.status === "failed"
-                ? "✖ Failed"
-                : s.status}
+          <span className={"chat-status chat-status-" + s.status}>
+            {s.status === "ready"
+              ? "Ready"
+              : s.status === "setup"
+                ? "Setting up…"
+                : s.status === "failed"
+                  ? "Failed"
+                  : s.status}
+          </span>
           {s.setupAt && <small className="muted"> · loaded {ago(s.setupAt)}</small>}
         </div>
         {(f?.setup || []).length > 0 && <small className="muted">{f.setup.join(" → ")}</small>}
@@ -850,7 +853,7 @@ function Panel({ s, f }) {
           ))}
           {(f.secrets || []).map((v) => (
             <div key={v} className="chat-env-name" title="A secret: its value is never shown">
-              <code>{v}</code> 🔒
+              <code>{v}</code> <Icon.lock />
             </div>
           ))}
         </section>
@@ -859,7 +862,8 @@ function Panel({ s, f }) {
         <h4>Data · {(s.data || []).length}</h4>
         {(s.data || []).map((d) => (
           <button key={d.name} className="chat-data" onClick={() => show(d)} title="Show it">
-            {d.setup ? "⚙" : d.step === "attachment" ? "📎" : "▸"} {d.title || d.name}
+            {d.setup ? <Icon.inputs /> : d.step === "attachment" ? <Icon.clip /> : <Icon.file />}{" "}
+            {d.title || d.name}
             <small className="muted">
               {" "}
               {d.bytes > 1024 ? Math.round(d.bytes / 1024) + " KB" : d.bytes + " B"}

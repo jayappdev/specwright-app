@@ -312,7 +312,7 @@ export function App() {
                       )}
                       {v.id === "inputs" && S.ws?.speckit?.initialized && (
                         <span className="activity-meta" aria-label="Spec Kit set up">
-                          ✓
+                          <Icon.check />
                         </span>
                       )}
                       {v.id === "workflow" && gate && (

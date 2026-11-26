@@ -1602,7 +1602,7 @@ function MultiInspector({ ids }) {
                 title="Remove from the selection"
                 onClick={() => setSelection(ids.filter((x) => x !== id))}
               >
-                ✕
+                <Icon.x />
               </button>
             </li>
           );

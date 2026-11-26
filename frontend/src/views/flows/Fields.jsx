@@ -5,6 +5,7 @@ import { useEffect, useState } from "react";
 import { backend } from "../../backend.js";
 import { S, update, toast, errMsg, kcName, isWindows } from "../../store.js";
 import { askText } from "../../Dialog.jsx";
+import { Icon } from "../../ui.jsx";
 import { openSettings } from "../Appearance.jsx";
 import { ancestors, changed, fl, nodeOf, parentsOf } from "../Flows.jsx";
 import { Field } from "./Inspector.jsx";
@@ -270,7 +271,7 @@ export function SecretPick({ args, p }) {
       title={`Fill this argument from a secret (asked at run time or read from the ${kcName()})`}
       onChange={(e) => pick(e.target.value)}
     >
-      <option value="">🔒 Secret…</option>
+      <option value="">Secret…</option>
       {secrets.map((i) => (
         <option key={i.name} value={i.name}>
           {i.label || i.name}
@@ -312,7 +313,7 @@ function useProjectSecrets() {
 
 // SecretRefPick: a menu that puts {{project_secret.X}} or {{keychain.X}}
 // in a field (fill: replace a tool argument; else insert at the cursor)
-export function SecretRefPick({ fill, label = "🔒 Stored secret…" }) {
+export function SecretRefPick({ fill, label = "Stored secret…" }) {
   const ps = useProjectSecrets();
   const put = (ref) => (fill ? fill(ref) : insertText(ref));
   const pick = async (v) => {
@@ -384,7 +385,7 @@ export function VarChips({ node, extra = [] }) {
   const vars = [
     ...flow.inputs
       .filter((i) => i.type !== "secret" || node?.type !== "ai")
-      .map((i) => ["inputs." + i.name, (i.type === "secret" ? "🔒 " : "") + (i.label || i.name)]),
+      .map((i) => ["inputs." + i.name, i.label || i.name, i.type === "secret"]),
     ...anc.flatMap((id) => {
       const r = stepRef(flow, id),
         l = nodeOf(id)?.title || nodeOf(id)?.tool || id;
@@ -418,13 +419,13 @@ export function VarChips({ node, extra = [] }) {
     ...(flow.vars || []).filter((v) => v.name).map((v) => ["env." + v.name, "$" + v.name]),
     ...(node?.type === "ai"
       ? []
-      : (flow.secrets || []).filter((v) => v.name).map((v) => ["env." + v.name, "🔒 $" + v.name])),
+      : (flow.secrets || []).filter((v) => v.name).map((v) => ["env." + v.name, "$" + v.name, true])),
     ...extra.map((v) => [v, v]),
   ];
   return (
     <div className="fl-vars">
       <span className="muted">Insert:</span>
-      {vars.map(([v, l]) => (
+      {vars.map(([v, l, secret]) => (
         <button
           key={v}
           type="button"
@@ -433,6 +434,7 @@ export function VarChips({ node, extra = [] }) {
           onMouseDown={(e) => e.preventDefault()}
           onClick={() => insertVar(v)}
         >
+          {secret && <Icon.lock />}
           {l}
         </button>
       ))}

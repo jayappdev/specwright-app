@@ -57,14 +57,14 @@ function SecretField({ i, v, set }) {
   if (src === "prompt")
     return (
       <div className="fr-secret-src muted">
-        🔒 Asked in a dialog when the run starts (also for scheduled runs).
+        <Icon.lock /> Asked in a dialog when the run starts (also for scheduled runs).
       </div>
     );
   return (
     <>
       {src !== "ask" && (
         <div className={"fr-secret-src " + (st?.found ? "ok" : "warn")}>
-          {st?.found ? "🔑 " : "⚠ "}
+          {st?.found ? <Icon.check /> : <Icon.warn />}{" "}
           {st?.found ? (
             <>
               Taken from <b>{st.where}</b>

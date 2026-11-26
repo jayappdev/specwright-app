@@ -5,6 +5,7 @@
 import { backend } from "./backend.js";
 import { S, update, toast, errMsg } from "./store.js";
 import { askText, confirmDialog } from "./Dialog.jsx";
+import { Icon } from "./ui.jsx";
 
 const empty = () => ({ headings: [], items: {} });
 
@@ -151,7 +152,7 @@ export function HeadingActions({ list, name }) {
         aria-label={`Rename ${name}`}
         onClick={stop(() => renameHeading(list, name))}
       >
-        ✎
+        <Icon.pencil />
       </button>
       <button
         type="button"

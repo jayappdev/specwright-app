@@ -20,6 +20,7 @@ export default [
     rules: {
       "react-hooks/rules-of-hooks": "error",
       "react/jsx-uses-vars": "error", // names used only in JSX count as used
+      "react/jsx-no-undef": "error", // <Icon.x /> without importing Icon fails here, not at run time
       "react/jsx-uses-react": "off",
       "no-unused-vars": ["warn", { args: "none", varsIgnorePattern: "^_", caughtErrors: "none" }],
       "no-empty": ["error", { allowEmptyCatch: true }],
