@@ -544,6 +544,31 @@ export function Menu({ label = "More actions", items, className = "" }) {
   );
 }
 
+// Crumbs: where a screen sits ("Runs › Sales Q&A › 23:19"), each part but
+// the last a way back. items: [label, onClick] (onClick empty: not a link)
+export function Crumbs({ items }) {
+  return (
+    <nav className="crumbs" aria-label="Breadcrumb">
+      {items.map(([label, go], i) => (
+        <span key={i} className="crumb">
+          {i > 0 && (
+            <span className="crumb-sep" aria-hidden="true">
+              ›
+            </span>
+          )}
+          {go && i < items.length - 1 ? (
+            <button className="crumb-link" onClick={go}>
+              {label}
+            </button>
+          ) : (
+            <span aria-current={i === items.length - 1 ? "page" : undefined}>{label}</span>
+          )}
+        </span>
+      ))}
+    </nav>
+  );
+}
+
 // Skeleton: quiet placeholders while a list loads (rows, or cards), so the
 // screen keeps its shape instead of flashing "nothing here" first.
 export function Skeleton({ rows = 3, kind = "row" }) {

@@ -10,7 +10,7 @@ import { ContentView, chartOf, RenderPreview } from "../ContentView.jsx";
 import { FileLink } from "../FileLinks.jsx";
 import { backend } from "../backend.js";
 import { S, update, toast, errMsg, setChatListener } from "../store.js";
-import { Icon, ListHead, Skeleton, EmptyState } from "../ui.jsx";
+import { Icon, ListHead, Skeleton, EmptyState, Crumbs } from "../ui.jsx";
 import { mdRender } from "../markdown.js";
 import { ago } from "../time.js";
 import { NeedWorkspace } from "./Wizard.jsx";
@@ -539,6 +539,19 @@ function Conversation({ s, f }) {
     <section className="chat-main">
       <header className="chat-head">
         <div className="chat-head-title">
+          <Crumbs
+            items={[
+              [
+                "Chats",
+                () => {
+                  c.sel = null;
+                  update();
+                },
+              ],
+              [s.flowName || s.flow, () => import("./Flows.jsx").then((m) => m.openFlowInDesigner(s.flow))],
+              [s.title || "New session", null],
+            ]}
+          />
           <h2>{s.title || "New session"}</h2>
           <div className="chat-head-meta">
             <span className={"chat-status chat-status-" + s.status}>
@@ -550,7 +563,6 @@ function Conversation({ s, f }) {
                     ? "Failed"
                     : s.status}
             </span>
-            <span>{s.flowName}</span>
             {s.agent && (
               <span>
                 {s.agent}

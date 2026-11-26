@@ -4,7 +4,7 @@ import { resolveDate } from "../../dates.js";
 import { ModelPicker } from "../../ModelPicker.jsx";
 import { backend } from "../../backend.js";
 import { S, update, toast, errMsg, kcName, isWindows } from "../../store.js";
-import { Icon } from "../../ui.jsx";
+import { Icon, Crumbs } from "../../ui.jsx";
 import { openFlowInDesigner } from "../Flows.jsx";
 import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../../Attachments.jsx";
 import { Commands, frs, isChatflow, loadFlow, start, openRunnerWindow } from "../FlowRun.jsx";
@@ -626,6 +626,21 @@ export function Setup() {
     f = r.flow;
   return (
     <>
+      {!S.runner && (
+        <Crumbs
+          items={[
+            [
+              "Flows",
+              () => {
+                S.view = "flows";
+                update();
+              },
+            ],
+            ["Runs", null],
+            [f.name, null],
+          ]}
+        />
+      )}
       <header className="view-head">
         {!S.runner && (
           <select
