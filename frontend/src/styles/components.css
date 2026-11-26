@@ -853,3 +853,60 @@ pre .file-link,
   grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
   gap: var(--gap);
 }
+
+/* ---- the Tools list column: tools as rows that fit (icon · name · status,
+   the description under the name), not narrow cards that cut names off ---- */
+.tool-grid.compact {
+  grid-template-columns: 1fr;
+  gap: 4px;
+}
+.tool-tile.compact {
+  display: grid;
+  grid-template-columns: 32px minmax(0, 1fr) auto;
+  grid-template-areas:
+    "icon name status"
+    "icon desc desc"
+    "icon extra extra";
+  column-gap: 10px;
+  row-gap: 1px;
+  align-items: center;
+  padding: 8px 10px;
+  border-radius: 8px;
+}
+.tool-tile.compact:hover {
+  transform: none;
+  box-shadow: none;
+  background: var(--hover);
+}
+.tool-tile.compact .tt-top {
+  display: contents;
+}
+.tool-tile.compact .tool-icon {
+  grid-area: icon;
+  align-self: start;
+  width: 32px !important;
+  height: 32px !important;
+}
+.tool-tile.compact .tt-top > .badge {
+  grid-area: status;
+  justify-self: end;
+}
+.tool-tile.compact .tt-name {
+  grid-area: name;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 13px;
+}
+.tool-tile.compact .tt-desc {
+  grid-area: desc;
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  -webkit-line-clamp: unset;
+}
+.tool-tile.compact .tt-rel,
+.tool-tile.compact .tt-tags {
+  grid-area: extra;
+}
