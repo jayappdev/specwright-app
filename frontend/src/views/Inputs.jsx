@@ -714,7 +714,7 @@ function SpecKitCard() {
       {taken && (
         <p className="err-text sk-err">{name}/ is already a project here: pick it in Project instead.</p>
       )}
-      <details className="sk-what" open={!info.initialized}>
+      <details className="sk-what">
         <summary>What it sets up</summary>
         <ol>
           <li>

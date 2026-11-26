@@ -1591,3 +1591,36 @@
   font-size: 12px;
   margin-top: 2px;
 }
+
+/* ---- flat sections: Choose input and a spec step's detail read as one page
+   of sections (a heading, its content, a hairline between), not a stack of
+   bordered cards. Panels that are one thing (the lifecycle diagram, the
+   step's readiness, drop zones, code) keep their box. ---- */
+main[data-view="inputs"] > .view > .card,
+main[data-view="inputs"] > .view > .two-col > .card,
+.wf .wf-pane > .two-col > .card {
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  padding: 18px 2px 4px;
+  border-top: 1px solid var(--border);
+}
+main[data-view="inputs"] > .view {
+  gap: 4px;
+}
+main[data-view="inputs"] > .view > .two-col,
+.wf .wf-pane > .two-col {
+  column-gap: 32px;
+  row-gap: 0;
+}
+main[data-view="inputs"] > .view > .card > h3:first-child,
+main[data-view="inputs"] > .view > .card > .card-head:first-child,
+main[data-view="inputs"] > .view > .two-col > .card > .card-head:first-child {
+  margin-top: 0;
+}
+main[data-view="inputs"] .card h3,
+.wf .wf-pane > .two-col > .card h3 {
+  font-size: 14px;
+  font-weight: 600;
+}
