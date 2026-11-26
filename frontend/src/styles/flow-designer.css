@@ -611,27 +611,52 @@
 }
 .fl-card {
   display: flex;
-  gap: 12px;
-  align-items: flex-start;
-  text-align: left;
-  padding: 14px;
+  flex-direction: column;
   border: 1px solid var(--border);
   border-radius: 12px;
   background: var(--surface);
-  color: inherit;
-  font: inherit;
-  cursor: pointer;
-  min-height: 108px;
+  overflow: hidden;
   transition:
     border-color 0.12s,
     box-shadow 0.12s,
     transform 0.12s;
 }
 .fl-card:hover,
-.fl-card:focus-visible {
+.fl-card:focus-within {
   border-color: var(--focus);
   box-shadow: 0 8px 24px -16px rgb(0 0 0 / 0.5);
   transform: translateY(-1px);
+}
+.fl-card-main {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  flex: 1;
+  text-align: left;
+  padding: 14px 14px 10px;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+  min-height: 96px;
+}
+.fl-card-main:focus-visible {
+  outline: none;
+}
+.fl-card-acts {
+  display: flex;
+  gap: 6px;
+  padding: 0 14px 12px 60px;
+}
+.fl-card-acts .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  height: 26px;
+  padding: 0 10px;
+  border-radius: 7px;
+  font-size: 12px;
 }
 .fl-card-icon {
   flex: none;

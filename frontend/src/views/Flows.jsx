@@ -1412,6 +1412,7 @@ export function Flows() {
             list={f.list}
             actions={{
               open: openFlow,
+              run: openFlowRunner,
               create: newFlow,
               withAI: () => openWizard(),
               importFile: () => imp.current?.click(),

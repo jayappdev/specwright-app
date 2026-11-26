@@ -7,45 +7,67 @@ import { S } from "../../store.js";
 import { Icon } from "../../ui.jsx";
 import { ago } from "../../time.js";
 
-function FlowCard({ x, list, onOpen }) {
+function FlowCard({ x, list, onOpen, onRun }) {
   const parent = x.revision > 1 ? (list || []).find((y) => y.id === x.parent)?.name || x.parent : "";
   return (
-    <button {...dragProps("flows", x.id)} className="fl-card" onClick={() => onOpen(x.id)}>
-      <span className={"fl-card-icon" + (x.chat ? " is-chat" : "")} aria-hidden="true">
-        {x.chat ? <Icon.chat /> : <Icon.workflow />}
-      </span>
-      <span className="fl-card-body">
-        <span className="fl-card-top">
-          <b>{x.name}</b>
-          {x.chat && (
-            <span className="badge badge-info" title="A Chatflow: chatted with on the Chats screen">
-              chat
-            </span>
-          )}
-          {x.revision > 1 && (
-            <span className="badge" title={"A version of " + parent}>
-              v{x.revision}
-            </span>
-          )}
+    <div {...dragProps("flows", x.id)} className="fl-card">
+      <button className="fl-card-main" onClick={() => onOpen(x.id)} title="Open in the designer">
+        <span className={"fl-card-icon" + (x.chat ? " is-chat" : "")} aria-hidden="true">
+          {x.chat ? <Icon.chat /> : <Icon.workflow />}
         </span>
-        {x.description && <span className="fl-card-desc">{x.description}</span>}
-        <span className="fl-card-meta">
-          {x.steps} step{x.steps === 1 ? "" : "s"}
-          {!x.chat && (
+        <span className="fl-card-body">
+          <span className="fl-card-top">
+            <b>{x.name}</b>
+            {x.chat && (
+              <span className="badge badge-info" title="A Chatflow: chatted with on the Chats screen">
+                chat
+              </span>
+            )}
+            {x.revision > 1 && (
+              <span className="badge" title={"A version of " + parent}>
+                v{x.revision}
+              </span>
+            )}
+          </span>
+          {x.description && <span className="fl-card-desc">{x.description}</span>}
+          <span className="fl-card-meta">
+            {x.steps} step{x.steps === 1 ? "" : "s"}
+            {!x.chat && (
+              <>
+                {" · "}
+                {x.outputs} output{x.outputs === 1 ? "" : "s"}
+              </>
+            )}
+            {x.updated ? " · edited " + ago(x.updated) : ""}
+          </span>
+          <FlowTagChips tags={x.tags} area="designer" />
+        </span>
+      </button>
+      <div className="fl-card-acts">
+        <button
+          className="btn secondary"
+          title={x.chat ? "Run its setup, then chat (Run flows)" : "Open its run form and runs (Run flows)"}
+          onClick={() => onRun(x.id)}
+        >
+          {x.chat ? (
             <>
-              {" · "}
-              {x.outputs} output{x.outputs === 1 ? "" : "s"}
+              <Icon.chat /> Start chat
+            </>
+          ) : (
+            <>
+              <Icon.run /> Run
             </>
           )}
-          {x.updated ? " · edited " + ago(x.updated) : ""}
-        </span>
-        <FlowTagChips tags={x.tags} area="designer" />
-      </span>
-    </button>
+        </button>
+        <button className="btn secondary" title="Open in the designer" onClick={() => onOpen(x.id)}>
+          <Icon.pencil /> Edit
+        </button>
+      </div>
+    </div>
   );
 }
 
-// actions: { open, create, withAI, importFile, paste, guide }
+// actions: { open, run, create, withAI, importFile, paste, guide }
 export function FlowLibrary({ list, actions }) {
   const groups = groupFlows(list, flowFilter("designer"));
   const n = (list || []).length;
@@ -101,7 +123,7 @@ export function FlowLibrary({ list, actions }) {
             >
               <div className="fl-cards">
                 {g.items.map((x) => (
-                  <FlowCard key={x.id} x={x} list={list} onOpen={actions.open} />
+                  <FlowCard key={x.id} x={x} list={list} onOpen={actions.open} onRun={actions.run} />
                 ))}
               </div>
             </FlowGroup>
