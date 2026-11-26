@@ -93,7 +93,8 @@ export function installTooltips() {
   tip.hidden = true;
   document.body.appendChild(tip);
   let el = null,
-    timer = 0;
+    timer = 0,
+    watch = 0;
   const restore = () => {
     if (!el) return;
     if (!el.hasAttribute("title") && el.dataset.tip != null) el.setAttribute("title", el.dataset.tip);
@@ -103,6 +104,7 @@ export function installTooltips() {
   };
   const hide = () => {
     clearTimeout(timer);
+    clearInterval(watch);
     tip.hidden = true;
     restore();
   };
@@ -125,6 +127,12 @@ export function installTooltips() {
     if (y + h > innerHeight - 6) y = r.top - h - 6;
     tip.style.left = x + "px";
     tip.style.top = Math.max(6, y) + "px";
+    // no event says the element went away (a view changed under the pointer)
+    // or the pointer left it without entering another: check while shown
+    clearInterval(watch);
+    watch = setInterval(() => {
+      if (!el || !el.isConnected || !(el.matches(":hover") || el.matches(":focus-visible"))) hide();
+    }, 300);
   };
   const target = (e) => e.target?.closest?.("[title]");
   document.addEventListener("mouseover", (e) => {
@@ -142,6 +150,10 @@ export function installTooltips() {
     if (t && t === e.target && t.matches(":focus-visible")) show(t);
   });
   document.addEventListener("focusout", hide);
+  document.addEventListener("mouseout", (e) => {
+    if (!e.relatedTarget) hide(); // the pointer left the window
+  });
+  window.addEventListener("blur", hide);
   document.addEventListener("mousedown", hide, true);
   document.addEventListener(
     "keydown",
