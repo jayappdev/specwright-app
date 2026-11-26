@@ -442,7 +442,7 @@ export function FlowRun() {
       )}
       {!S.runner && (
         <nav className="ftree" aria-label="Flows and runs">
-          <ListHead title="Run flows" count={r.flows?.length}>
+          <ListHead title={S.runner ? "Run flows" : "Runs"} count={r.flows?.length}>
             <RefreshButton
               label="Refresh the flows, their runs and schedules"
               every={FLOWRUN_POLL}
