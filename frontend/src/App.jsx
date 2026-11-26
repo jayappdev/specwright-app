@@ -37,6 +37,7 @@ import { Playground } from "./views/Playground.jsx";
 import { Admin } from "./views/Admin.jsx";
 import { Home } from "./views/Home.jsx";
 import { NewMenuHost, openNewMenu } from "./NewMenu.jsx";
+import { KeysSheet, openKeysSheet } from "./KeysSheet.jsx";
 import { needsYou } from "./attention.js";
 import { Appearance } from "./views/Appearance.jsx";
 import { Flows } from "./views/Flows.jsx";
@@ -195,6 +196,15 @@ export function App() {
   // Back / Forward (navigation.js): ⌘[ ⌘], Alt+← Alt+→, and the mouse's side buttons
   useEffect(() => {
     const off = [
+      register({
+        id: "keys",
+        keys: ["shift+?", "?", "shift+/"],
+        help: [["?", "Keyboard shortcuts"]],
+        run: (e) => {
+          e.preventDefault();
+          openKeysSheet();
+        },
+      }),
       register({
         id: "help",
         keys: ["f1"],
@@ -593,6 +603,9 @@ export function App() {
       </ErrorBoundary>
       <ErrorBoundary floating name="Help">
         <HelpPanel />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="Keyboard shortcuts">
+        <KeysSheet viewLabel={viewOf(S.view)?.label} />
       </ErrorBoundary>
       <div className="toast" aria-live="polite" onMouseEnter={toastHold} onMouseLeave={toastRelease}>
         {S.toast && S.toastKind !== "error" && <div className="banner">{S.toast}</div>}

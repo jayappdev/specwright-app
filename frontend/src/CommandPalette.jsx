@@ -94,6 +94,12 @@ export function useCommandPalette(views, toggleRail) {
         run: () => import("./views/Appearance.jsx").then((m) => m.openSettings(tab)),
       });
     out.push({
+      id: "keys",
+      label: "Keyboard shortcuts",
+      hint: "Help · ?",
+      run: () => import("./KeysSheet.jsx").then((m) => m.openKeysSheet()),
+    });
+    out.push({
       id: "rail",
       label: S.railOpen ? "Hide sidebar labels" : "Show sidebar labels",
       hint: "Sidebar",
