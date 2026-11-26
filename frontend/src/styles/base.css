@@ -1297,3 +1297,37 @@ input[type="range"] {
 .dt-field input[type="time"] {
   min-width: 7em;
 }
+
+/* Density (Settings › Appearance): compact tightens spacing on any skin */
+:root[data-density="compact"] {
+  --gap: 8px;
+  --pad: 10px;
+  --row-pad: 3px;
+}
+:root[data-density="compact"] .run-item,
+:root[data-density="compact"] .home-row,
+:root[data-density="compact"] .tool-tile.compact,
+:root[data-density="compact"] .new-item {
+  padding-top: 5px;
+  padding-bottom: 5px;
+}
+:root[data-density="compact"] .card {
+  padding: 10px 12px;
+}
+:root[data-density="compact"] .chat-scroll {
+  gap: 14px;
+  padding-top: 14px;
+}
+:root[data-density="compact"] .list-pane-head {
+  padding-bottom: 6px;
+}
+:root[data-density="compact"] .section-tabs {
+  min-height: 36px;
+}
+:root[data-density="compact"] .fl-cards {
+  gap: 8px;
+}
+:root[data-density="compact"] .fl-card-main {
+  padding: 10px 12px 6px;
+  min-height: 76px;
+}

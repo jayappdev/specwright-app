@@ -313,6 +313,29 @@ export function Appearance() {
                   </button>
                 )}
               </div>
+              <div className="field inline size-row" style={{ marginTop: 10 }}>
+                <span id="ap-density">Density</span>
+                <span className="seg" role="radiogroup" aria-labelledby="ap-density">
+                  {[
+                    ["comfortable", "Comfortable", "Room around lists, rows and cards"],
+                    ["compact", "Compact", "Tighter lists, rows and cards: more on screen"],
+                  ].map(([v, l, tip]) => {
+                    const on = (a.density || "comfortable") === v;
+                    return (
+                      <button
+                        key={v}
+                        role="radio"
+                        aria-checked={on}
+                        className={on ? "on" : ""}
+                        title={tip}
+                        onClick={() => set("density", v)}
+                      >
+                        {l}
+                      </button>
+                    );
+                  })}
+                </span>
+              </div>
               <p className="muted" style={{ marginTop: 6 }}>
                 Roboto, Roboto Mono, Mona Sans, Inter and JetBrains Mono ship with the app (SIL Open Font
                 License), so they work offline.

@@ -26,6 +26,7 @@ export function applyAppearance(a) {
   r.dataset.mode = t.type; // light | dark: charts pick their colour steps by it
   r.dataset.theme = t.id;
   r.dataset.skin = a.skin;
+  r.dataset.density = a.density === "compact" ? "compact" : "comfortable";
   r.style.setProperty("--font-size", a.fontSize + "px");
   // a chosen font overrides the skin's; "" leaves the skin's in place
   const ui = UI_FONTS.find((f) => f.id === a.font)?.stack,
