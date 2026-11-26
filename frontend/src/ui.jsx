@@ -285,6 +285,20 @@ export function usePoll(load, ms, deps = []) {
 }
 
 // RefreshButton reloads a list; it turns while the load runs.
+// ListHead: the header of a list column (Chats, Tools, Runs…): its title,
+// how many it lists, and its actions on the right (+ New first).
+export function ListHead({ title, count, children }) {
+  return (
+    <div className="list-pane-head">
+      <h1>
+        {title}
+        {count != null && <span className="list-count">{count}</span>}
+      </h1>
+      {children && <span className="list-pane-acts">{children}</span>}
+    </div>
+  );
+}
+
 export function RefreshButton({ onRefresh, label = "Refresh", every }) {
   const [busy, setBusy] = useState(false);
   return (

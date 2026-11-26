@@ -7,6 +7,7 @@ import { S, update, toast, errMsg } from "../store.js";
 import { GUIDE, exampleFlow, hasToolGuide, toolGuideSection } from "./flowGuide.js";
 import { StepIcon, openFlowInDesigner } from "./Flows.jsx";
 import { RenderPreview, chartOf } from "../ContentView.jsx";
+import { ListHead } from "../ui.jsx";
 
 // the guides of the workspace's tools (project, global, managed, Copilot)
 const toolSections = () => (S.ws?.extensions || []).filter(hasToolGuide).map(toolGuideSection);
@@ -316,8 +317,8 @@ export function FlowGuide() {
     <div className="files guide">
       <Pane k="flowguide" v="--pane-l" pane=".ftree" min={200} max={480} label="Resize the step list" />
       <nav className="ftree" aria-label="Flow steps">
+        <ListHead title="Flow step guide" />
         <div style={{ padding: "0 8px 8px" }}>
-          <h1>Flow step guide</h1>
           <button
             className="link"
             onClick={() => {

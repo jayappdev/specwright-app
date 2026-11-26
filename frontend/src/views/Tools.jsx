@@ -12,7 +12,7 @@ import { ContentView } from "../ContentView.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { HeadingPicker, loadLayout } from "../listLayout.jsx";
 import { S, update, toast, errMsg, refreshExtensions, refreshSecrets, refreshAdmin } from "../store.js";
-import { Icon, Chip, Pill } from "../ui.jsx";
+import { Icon, Chip, Pill, ListHead } from "../ui.jsx";
 import { NeedWorkspace, StatusBadge } from "./Wizard.jsx";
 import { BuiltinList, BuiltinView, builtinsVisible } from "./Builtins.jsx";
 import {
@@ -1502,22 +1502,12 @@ export function Tools() {
     <div className="files">
       <Pane k="tools" v="--pane-l" pane=".ftree" min={200} max={560} label="Resize the tool list" />
       <nav className="ftree" aria-label="Tools">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "0 8px 8px",
-          }}
-        >
-          <h1>Tools</h1>
-          <span style={{ display: "flex", gap: 6 }}>
-            <button className="btn primary" onClick={() => newTool(false)}>
-              + New
-            </button>
-            <ShareMenu />
-          </span>
-        </div>
+        <ListHead title="Tools">
+          <button className="btn primary" onClick={() => newTool(false)}>
+            <Icon.plus /> New
+          </button>
+          <ShareMenu />
+        </ListHead>
         <ToolFinder />
         {finding() ? (
           <FoundTools exts={exts} />

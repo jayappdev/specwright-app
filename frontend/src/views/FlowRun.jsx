@@ -14,7 +14,7 @@ import { FLOW_STATUS_LABEL as STATUS_LABEL } from "../labels.js";
 export { STATUS_LABEL };
 import { backend } from "../backend.js";
 import { openFlowGuide } from "./FlowGuide.jsx";
-import { EmptyState, RefreshButton, usePoll } from "../ui.jsx";
+import { EmptyState, RefreshButton, usePoll, ListHead } from "../ui.jsx";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, isCopilot, refreshExtensions } from "../store.js";
 import { Icon, Pill } from "../ui.jsx";
@@ -442,14 +442,13 @@ export function FlowRun() {
       )}
       {!S.runner && (
         <nav className="ftree" aria-label="Flows and runs">
-          <h1 className="list-head" style={{ padding: "0 8px 8px" }}>
-            Run flows{" "}
+          <ListHead title="Run flows" count={r.flows?.length}>
             <RefreshButton
               label="Refresh the flows, their runs and schedules"
               every={FLOWRUN_POLL}
               onRefresh={loadAll}
             />
-          </h1>
+          </ListHead>
           <FlowFilterBar area="runner" list={r.flows} />
           {(() => {
             const groups = groupFlows(r.flows, flowFilter("runner"));

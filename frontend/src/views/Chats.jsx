@@ -10,7 +10,7 @@ import { ContentView, chartOf, RenderPreview } from "../ContentView.jsx";
 import { FileLink } from "../FileLinks.jsx";
 import { backend } from "../backend.js";
 import { S, update, toast, errMsg, setChatListener } from "../store.js";
-import { Icon } from "../ui.jsx";
+import { Icon, ListHead } from "../ui.jsx";
 import { mdRender } from "../markdown.js";
 import { ago } from "../time.js";
 import { NeedWorkspace } from "./Wizard.jsx";
@@ -938,9 +938,7 @@ export function Chats() {
   return (
     <div className={"files chats" + (s && !startF && c.panel ? " with-panel" : "")}>
       <nav className="ftree" aria-label="Chatflows and sessions">
-        <h1 className="list-head" style={{ padding: "0 8px 8px" }}>
-          Chats
-        </h1>
+        <ListHead title="Chats" count={c.flows ? c.sessions.filter((x) => !x.archived).length : null} />
         {c.flows && !flows.length && (
           <p className="muted" style={{ padding: "0 8px" }}>
             No Chatflows yet. In the Flow designer, add a <b>Chat</b> step to a flow: the steps before it set

@@ -3,7 +3,7 @@ import { RUN_KIND, runKind } from "../labels.js";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, fmtK } from "../store.js";
-import { Pill, RefreshButton, usePoll } from "../ui.jsx";
+import { Pill, RefreshButton, usePoll, ListHead } from "../ui.jsx";
 import { RunPanel } from "../components/RunPanel.jsx";
 import { Icon } from "../ui.jsx";
 import { continueInPlayground } from "./Playground.jsx";
@@ -207,14 +207,13 @@ export function History() {
     <div className="hist">
       <Pane k="history" v="--pane-l" pane=".ftree" min={220} max={560} label="Resize the run list" />
       <nav className="ftree" aria-label="Run history">
-        <h1 className="list-head" style={{ padding: "0 14px 8px" }}>
-          History{" "}
+        <ListHead title="History" count={h.runs.length || null}>
           <RefreshButton
             label="Refresh the run history"
             every={HISTORY_POLL}
             onRefresh={() => loadRuns(true)}
           />
-        </h1>
+        </ListHead>
         {!h.runs.length && (
           <div className="empty-mini">
             <p className="muted">

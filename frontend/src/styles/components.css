@@ -605,3 +605,61 @@ pre .file-link,
   opacity: 0.35;
   cursor: default;
 }
+
+/* ---- one header for every list column (ui.jsx ListHead) and every page ---- */
+.list-pane-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 34px;
+  padding: 0 8px 10px;
+}
+.list-pane-head h1 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+  white-space: nowrap;
+}
+.list-count {
+  font-size: 11px;
+  font-weight: 500;
+  color: var(--muted);
+  background: color-mix(in srgb, var(--muted) 14%, transparent);
+  border-radius: 999px;
+  padding: 0 7px;
+  line-height: 1.6;
+  font-variant-numeric: tabular-nums;
+}
+.list-pane-acts {
+  margin-left: auto;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.list-pane-acts .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 13px;
+}
+.list-pane-acts .refresh-btn {
+  margin-left: 0;
+}
+/* page titles: one size, one weight, everywhere */
+.view-head h1,
+.fl-lib-head h1 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  line-height: 1.25;
+}
+.view-head {
+  min-height: 36px;
+}
