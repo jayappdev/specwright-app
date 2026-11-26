@@ -3028,8 +3028,6 @@ select.fl-secret-pick {
   padding: 0 10px 4px;
 }
 .badge-sched {
-  background: color-mix(in srgb, var(--ok) 16%, transparent);
-  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
   color: var(--ok);
 }
 /* Run History: runs found by what they contain */
