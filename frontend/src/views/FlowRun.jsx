@@ -211,9 +211,11 @@ export async function start(mode) {
   if (o.startAt) opts.startAt = new Date(o.startAt).toISOString();
   if (isChatflow(f)) {
     opts.chat = { role: mode === "setup-only" ? "setup-only" : "setup" };
-    delete opts.startAt; // a chat starts now
+    delete opts.startAt; // a chat starts now, once, with its whole setup
     delete opts.forEach;
     opts.repeat = 1;
+    opts.skip = [];
+    opts.stopAfter = "";
   }
   try {
     const st = await backend.RunFlow(f.id, opts);

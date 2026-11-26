@@ -414,7 +414,15 @@ const REVIEW_LABEL = {
   none: "no reviews",
 };
 // the summary line: the review mode, then only what differs from the defaults
+// (a Chatflow's: the review mode and its limits only)
 function optionsSummary(o, f) {
+  if (isChatflow(f)) {
+    const out = [REVIEW_LABEL[o.review] || o.review];
+    if (+o.timeoutMinutes) out.push(`stops after ${o.timeoutMinutes} min`);
+    if (+o.stepTimeoutSeconds) out.push(`${o.stepTimeoutSeconds} s per step`);
+    if (o.model?.trim()) out.push("model " + o.model.trim());
+    return out.length === 1 ? out[0] + " · no limits" : out.join(" · ");
+  }
   const name = (id) => f.nodes.find((n) => n.id === id)?.title || id,
     out = [REVIEW_LABEL[o.review] || o.review];
   if (+o.repeat > 1) out.push(`${o.repeat} times`);
@@ -441,6 +449,10 @@ function Options() {
       update();
     };
   const steps = f.nodes.filter((n) => n.type !== "start");
+  // a Chatflow's run is its setup for a chat: it runs once, now, every step
+  // (repeat, per item, a start time, stopping or skipping would leave the
+  // chat without its data)
+  const chat = isChatflow(f);
   return (
     <details
       className="card fr-opts"
@@ -462,87 +474,93 @@ function Options() {
             <option value="none">Never</option>
           </select>
         </label>
-        <label className="field">
-          <span className="muted">Run the whole flow</span>
-          <div className="fr-inline">
-            <input
-              type="number"
-              min="1"
-              max="50"
-              value={o.repeat}
-              onChange={(e) => set("repeat", e.target.value)}
-              style={{ width: 70 }}
-            />{" "}
-            time(s)
-          </div>
-        </label>
-        <label className="field">
-          <span className="muted">Run once per item of</span>
-          <select
-            value={o.forEach.input}
-            onChange={(e) => {
-              o.forEach.input = e.target.value;
-              update();
-            }}
-          >
-            <option value="">— no, run once —</option>
-            {f.inputs
-              .filter((i) => i.type !== "secret")
-              .map((i) => (
-                <option key={i.name} value={i.name}>
-                  {i.label || i.name}
-                </option>
-              ))}
-          </select>
-        </label>
-        {o.forEach.input && (
+        {!chat && (
           <>
             <label className="field">
-              <span className="muted">Items are</span>
+              <span className="muted">Run the whole flow</span>
+              <div className="fr-inline">
+                <input
+                  type="number"
+                  min="1"
+                  max="50"
+                  value={o.repeat}
+                  onChange={(e) => set("repeat", e.target.value)}
+                  style={{ width: 70 }}
+                />{" "}
+                time(s)
+              </div>
+            </label>
+            <label className="field">
+              <span className="muted">Run once per item of</span>
               <select
-                value={o.forEach.split}
+                value={o.forEach.input}
                 onChange={(e) => {
-                  o.forEach.split = e.target.value;
+                  o.forEach.input = e.target.value;
                   update();
                 }}
               >
-                <option value="lines">One per line</option>
-                <option value="json">A JSON array</option>
-                <option value="csv">CSV rows</option>
+                <option value="">— no, run once —</option>
+                {f.inputs
+                  .filter((i) => i.type !== "secret")
+                  .map((i) => (
+                    <option key={i.name} value={i.name}>
+                      {i.label || i.name}
+                    </option>
+                  ))}
               </select>
             </label>
+            {o.forEach.input && (
+              <>
+                <label className="field">
+                  <span className="muted">Items are</span>
+                  <select
+                    value={o.forEach.split}
+                    onChange={(e) => {
+                      o.forEach.split = e.target.value;
+                      update();
+                    }}
+                  >
+                    <option value="lines">One per line</option>
+                    <option value="json">A JSON array</option>
+                    <option value="csv">CSV rows</option>
+                  </select>
+                </label>
+                <label className="field">
+                  <span className="muted">Only items matching (pattern)</span>
+                  <input
+                    value={o.forEach.filter}
+                    placeholder="e.g. ^ORD- or error|fail"
+                    style={{ fontFamily: "var(--font-mono)" }}
+                    onChange={(e) => {
+                      o.forEach.filter = e.target.value;
+                      update();
+                    }}
+                  />
+                </label>
+                <label className="field">
+                  <span className="muted">At most</span>
+                  <input
+                    type="number"
+                    min="1"
+                    max="1000"
+                    value={o.forEach.max}
+                    onChange={(e) => {
+                      o.forEach.max = e.target.value;
+                      update();
+                    }}
+                  />
+                </label>
+              </>
+            )}
             <label className="field">
-              <span className="muted">Only items matching (pattern)</span>
-              <input
-                value={o.forEach.filter}
-                placeholder="e.g. ^ORD- or error|fail"
-                style={{ fontFamily: "var(--font-mono)" }}
-                onChange={(e) => {
-                  o.forEach.filter = e.target.value;
-                  update();
-                }}
-              />
-            </label>
-            <label className="field">
-              <span className="muted">At most</span>
-              <input
-                type="number"
-                min="1"
-                max="1000"
-                value={o.forEach.max}
-                onChange={(e) => {
-                  o.forEach.max = e.target.value;
-                  update();
-                }}
-              />
+              <span className="muted">Start</span>
+              <DateTimeField value={o.startAt} label="Start" onChange={(v) => set("startAt", v)} />
+              <small className="muted">
+                {o.startAt ? "Waits until then (keep the app open)" : "Empty: now"}
+              </small>
             </label>
           </>
         )}
-        <label className="field">
-          <span className="muted">Start</span>
-          <DateTimeField value={o.startAt} label="Start" onChange={(v) => set("startAt", v)} />
-          <small className="muted">{o.startAt ? "Waits until then (keep the app open)" : "Empty: now"}</small>
-        </label>
         <label className="field">
           <span className="muted">Stop the run after (minutes)</span>
           <input
@@ -563,34 +581,42 @@ function Options() {
           />
           <small className="muted">0: 2 min for tools, 10 min for AI</small>
         </label>
-        <label className="field">
-          <span className="muted">Stop after step</span>
-          <select value={o.stopAfter} onChange={(e) => set("stopAfter", e.target.value)}>
-            <option value="">— run to the end —</option>
-            {steps.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.title || n.id}
-              </option>
-            ))}
-          </select>
-        </label>
-      </div>
-      <div className="fr-skip">
-        <span className="muted">Skip steps:</span>
-        {steps.map((n) => (
-          <label key={n.id} className="check">
-            <input
-              type="checkbox"
-              checked={o.skip.includes(n.id)}
-              onChange={(e) => {
-                o.skip = e.target.checked ? [...o.skip, n.id] : o.skip.filter((x) => x !== n.id);
-                update();
-              }}
-            />{" "}
-            {n.title || n.id}
+        {!chat && (
+          <label className="field">
+            <span className="muted">Stop after step</span>
+            <select value={o.stopAfter} onChange={(e) => set("stopAfter", e.target.value)}>
+              <option value="">— run to the end —</option>
+              {steps.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.title || n.id}
+                </option>
+              ))}
+            </select>
           </label>
-        ))}
+        )}
       </div>
+      {chat ? (
+        <p className="muted fr-chat-note">
+          A chat's setup runs once, now, with every step before the Chat step.
+        </p>
+      ) : (
+        <div className="fr-skip">
+          <span className="muted">Skip steps:</span>
+          {steps.map((n) => (
+            <label key={n.id} className="check">
+              <input
+                type="checkbox"
+                checked={o.skip.includes(n.id)}
+                onChange={(e) => {
+                  o.skip = e.target.checked ? [...o.skip, n.id] : o.skip.filter((x) => x !== n.id);
+                  update();
+                }}
+              />{" "}
+              {n.title || n.id}
+            </label>
+          ))}
+        </div>
+      )}
     </details>
   );
 }
