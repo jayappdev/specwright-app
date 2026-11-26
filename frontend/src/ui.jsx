@@ -544,6 +544,24 @@ export function Menu({ label = "More actions", items, className = "" }) {
   );
 }
 
+// Skeleton: quiet placeholders while a list loads (rows, or cards), so the
+// screen keeps its shape instead of flashing "nothing here" first.
+export function Skeleton({ rows = 3, kind = "row" }) {
+  return (
+    <div className={"skel skel-" + kind} aria-busy="true" aria-label="Loading">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="skel-item">
+          <span className="skel-icon" />
+          <span className="skel-lines">
+            <span className="skel-line" style={{ width: 60 + ((i * 17) % 30) + "%" }} />
+            <span className="skel-line short" />
+          </span>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 // EmptyState: what goes here, and the next thing to do. actions: [label, onClick, primary?]
 export function EmptyState({ icon, title, children, actions = [], compact }) {
   return (

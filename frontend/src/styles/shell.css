@@ -1188,3 +1188,76 @@ textarea[aria-invalid="true"] {
 .help-body > .card {
   margin: 0;
 }
+
+/* ---- Skeleton: placeholders while a list loads (ui.jsx) ---- */
+.skel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 8px;
+}
+.skel-card {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 8px 0;
+}
+.skel-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+}
+.skel-card .skel-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 14px;
+  min-height: 96px;
+  align-items: flex-start;
+}
+.skel-icon,
+.skel-line {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--muted) 14%, transparent) 0%,
+    color-mix(in srgb, var(--muted) 24%, transparent) 50%,
+    color-mix(in srgb, var(--muted) 14%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel-shine 1.4s ease-in-out infinite;
+  border-radius: 6px;
+}
+.skel-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+.skel-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.skel-line {
+  height: 10px;
+}
+.skel-line.short {
+  width: 35%;
+  height: 8px;
+}
+@keyframes skel-shine {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel-icon,
+  .skel-line {
+    animation: none;
+  }
+}

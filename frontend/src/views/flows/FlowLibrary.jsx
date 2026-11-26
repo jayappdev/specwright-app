@@ -4,7 +4,7 @@
 import { FlowFilterBar, FlowGroup, FlowTagChips, flowFilter, groupFlows } from "../../flowLists.jsx";
 import { dragProps } from "../../listLayout.jsx";
 import { S } from "../../store.js";
-import { Icon } from "../../ui.jsx";
+import { Icon, Skeleton } from "../../ui.jsx";
 import { ago } from "../../time.js";
 
 function FlowCard({ x, list, onOpen, onRun }) {
@@ -107,7 +107,7 @@ export function FlowLibrary({ list, actions }) {
         </div>
       </header>
       {list === null || list === undefined ? (
-        <p className="muted">Loading…</p>
+        <Skeleton rows={3} kind="card" />
       ) : n ? (
         <>
           <FlowFilterBar area="designer" list={list} />

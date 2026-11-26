@@ -14,7 +14,7 @@ import { FLOW_STATUS_LABEL as STATUS_LABEL } from "../labels.js";
 export { STATUS_LABEL };
 import { backend } from "../backend.js";
 import { openFlowGuide } from "./FlowGuide.jsx";
-import { EmptyState, RefreshButton, usePoll, ListHead } from "../ui.jsx";
+import { EmptyState, RefreshButton, usePoll, ListHead, Skeleton } from "../ui.jsx";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, isCopilot, refreshExtensions } from "../store.js";
 import { Icon, Pill } from "../ui.jsx";
@@ -565,6 +565,7 @@ export function FlowRun() {
               </FlowGroup>
             ));
           })()}
+          {!r.flows && <Skeleton rows={4} />}
           {r.flows && !r.flows.length && (
             <EmptyState
               compact

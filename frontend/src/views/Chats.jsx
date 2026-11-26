@@ -10,7 +10,7 @@ import { ContentView, chartOf, RenderPreview } from "../ContentView.jsx";
 import { FileLink } from "../FileLinks.jsx";
 import { backend } from "../backend.js";
 import { S, update, toast, errMsg, setChatListener } from "../store.js";
-import { Icon, ListHead } from "../ui.jsx";
+import { Icon, ListHead, Skeleton, EmptyState } from "../ui.jsx";
 import { mdRender } from "../markdown.js";
 import { ago } from "../time.js";
 import { NeedWorkspace } from "./Wizard.jsx";
@@ -939,11 +939,27 @@ export function Chats() {
     <div className={"files chats" + (s && !startF && c.panel ? " with-panel" : "")}>
       <nav className="ftree" aria-label="Chatflows and sessions">
         <ListHead title="Chats" count={c.flows ? c.sessions.filter((x) => !x.archived).length : null} />
+        {!c.flows && <Skeleton rows={4} />}
         {c.flows && !flows.length && (
-          <p className="muted" style={{ padding: "0 8px" }}>
-            No Chatflows yet. In the Flow designer, add a <b>Chat</b> step to a flow: the steps before it set
-            up a session, the paths after it are what the chat can run.
-          </p>
+          <EmptyState
+            compact
+            icon={<Icon.chat />}
+            title="No Chatflows yet"
+            actions={[
+              [
+                "Open Flows",
+                () => {
+                  S.view = "flows";
+                  update();
+                },
+                true,
+              ],
+              ["How Chat works", () => import("./FlowGuide.jsx").then((m) => m.openFlowGuide("chat"))],
+            ]}
+          >
+            Add a Chat step to a flow: the steps before it set up a session, the paths after it are what the
+            chat can run.
+          </EmptyState>
         )}
         {c.sessions.some((x) => x.archived) && (
           <label className="check chat-show-archived">

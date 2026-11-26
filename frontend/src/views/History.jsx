@@ -3,9 +3,8 @@ import { RUN_KIND, runKind } from "../labels.js";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, fmtK } from "../store.js";
-import { Pill, RefreshButton, usePoll, ListHead } from "../ui.jsx";
+import { Pill, RefreshButton, usePoll, ListHead, Skeleton, EmptyState, Icon } from "../ui.jsx";
 import { RunPanel } from "../components/RunPanel.jsx";
-import { Icon } from "../ui.jsx";
 import { continueInPlayground } from "./Playground.jsx";
 import { ago } from "../time.js";
 import { register } from "../shortcuts.js";
@@ -180,7 +179,9 @@ export async function loadRuns(again) {
   const h = S.history;
   try {
     h.runs = (await backend.Runs(500)) || [];
+    h.loaded = true;
   } catch (e) {
+    h.loaded = true;
     return toast(errMsg(e), "error");
   }
   update();
@@ -214,33 +215,33 @@ export function History() {
             onRefresh={() => loadRuns(true)}
           />
         </ListHead>
-        {!h.runs.length && (
-          <div className="empty-mini">
-            <p className="muted">
-              No runs recorded{S.ws ? " for this project" : ""} yet. Runs of workflow steps, flows and
-              playground prompts show up here.
-            </p>
-            <div className="row-actions">
-              <button
-                className="btn secondary"
-                onClick={() => {
-                  S.view = "workflow";
-                  update();
-                }}
-              >
-                Run a workflow step
-              </button>
-              <button
-                className="btn secondary"
-                onClick={() => {
+        {!h.loaded && <Skeleton rows={5} />}
+        {h.loaded && !h.runs.length && (
+          <EmptyState
+            compact
+            icon={<Icon.history />}
+            title="No runs yet"
+            actions={[
+              [
+                "Run a flow",
+                () => {
                   S.view = "flowrun";
                   update();
-                }}
-              >
-                Run a flow
-              </button>
-            </div>
-          </div>
+                },
+                true,
+              ],
+              [
+                "Run a workflow step",
+                () => {
+                  S.view = "workflow";
+                  update();
+                },
+              ],
+            ]}
+          >
+            Runs of workflow steps, flows and Playground prompts{S.ws ? " in this project" : ""} show up here,
+            to replay and compare.
+          </EmptyState>
         )}
         {h.runs.length > 0 && <RunListBar area="history" runs={h.runs} />}
         <ContentHits q={hk("history").q || ""} />

@@ -2,7 +2,7 @@ import { DateTimeField } from "../DateTimeField.jsx";
 import { useEffect } from "react";
 import { backend } from "../backend.js";
 import { BarList, ColumnChart, LineChart } from "../components/Charts.jsx";
-import { EmptyState } from "../ui.jsx";
+import { EmptyState, Skeleton } from "../ui.jsx";
 import { S, update, toast, errMsg, saveText, fmtK, isCopilot } from "../store.js";
 import { Pill, Stat } from "../ui.jsx";
 
@@ -285,7 +285,7 @@ export function Metrics() {
     return (
       <section className="view">
         <h1>Metrics</h1>
-        <p className="muted">Loading…</p>
+        <Skeleton rows={4} kind="card" />
       </section>
     );
   const max = Math.max(...m.perStep.map((p) => p.hours), 1);

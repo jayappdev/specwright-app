@@ -4,7 +4,7 @@
 import { useEffect } from "react";
 import { backend } from "../backend.js";
 import { S, update } from "../store.js";
-import { Icon, Pill } from "../ui.jsx";
+import { Icon, Pill, Skeleton } from "../ui.jsx";
 import { STATUS_LABEL, pill } from "./FlowRun.jsx";
 import { ago } from "../time.js";
 import { needsYou, runningNow } from "../attention.js";
@@ -235,7 +235,7 @@ export function Home() {
             }
           >
             {h.flows === null ? (
-              <p className="muted">Loading…</p>
+              <Skeleton rows={3} />
             ) : flows.length ? (
               <div className="home-list">
                 {flows.map((f) => (
