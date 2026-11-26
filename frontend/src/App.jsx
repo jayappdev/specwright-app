@@ -42,7 +42,7 @@ import { Appearance } from "./views/Appearance.jsx";
 import { Flows } from "./views/Flows.jsx";
 import { FlowRun, showFlowRun, openFlowRunner } from "./views/FlowRun.jsx";
 import { Chats } from "./views/Chats.jsx";
-import { FlowGuide } from "./views/FlowGuide.jsx";
+import { FlowGuide, HelpPanel, openFlowGuide, GUIDE_TYPES } from "./views/FlowGuide.jsx";
 import { FilePreview } from "./FilePreview.jsx";
 import { LibraryEditor } from "./views/LibraryEditor.jsx";
 import { DialogHost } from "./Dialog.jsx";
@@ -117,6 +117,17 @@ const NAV = [
   })),
 ].filter((x, i, all) => all.findIndex((y) => y.id === x.id && y.label === x.label) === i);
 
+// Help opens at the step selected in the designer (else the introduction)
+const toggleHelp = () => {
+  if (S.help) {
+    S.help = null;
+    update();
+    return;
+  }
+  const n = S.view === "flows" && S.fl?.flow?.nodes?.find((x) => x.id === S.fl.sel);
+  openFlowGuide(n && GUIDE_TYPES.has(n.type) ? n.type : "");
+};
+
 // the tab a section opens on: the one you were on last
 const lastTab = {};
 const openEntry = (id) => {
@@ -184,6 +195,16 @@ export function App() {
   // Back / Forward (navigation.js): ⌘[ ⌘], Alt+← Alt+→, and the mouse's side buttons
   useEffect(() => {
     const off = [
+      register({
+        id: "help",
+        keys: ["f1"],
+        inFields: true,
+        help: [["f1", "Help: how each flow step works"]],
+        run: (e) => {
+          e.preventDefault();
+          toggleHelp();
+        },
+      }),
       register({
         id: "new-menu",
         keys: ["mod+n"],
@@ -377,6 +398,16 @@ export function App() {
           ))}
           <div className="activity-tools">
             <button
+              className={"activity-btn" + (S.help ? " active" : "")}
+              title="Help: how each flow step works, with examples (F1)"
+              aria-label="Help"
+              aria-expanded={!!S.help}
+              onClick={toggleHelp}
+            >
+              <Icon.book />
+              <span className="activity-text">Help</span>
+            </button>
+            <button
               className="activity-btn"
               title="Search views, flows, chats and actions (⌘K / Ctrl+K)"
               aria-label="Search views, flows, chats and actions"
@@ -559,6 +590,9 @@ export function App() {
       </ErrorBoundary>
       <ErrorBoundary floating name="The New menu">
         <NewMenuHost />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="Help">
+        <HelpPanel />
       </ErrorBoundary>
       <div className="toast" aria-live="polite" onMouseEnter={toastHold} onMouseLeave={toastRelease}>
         {S.toast && S.toastKind !== "error" && <div className="banner">{S.toast}</div>}

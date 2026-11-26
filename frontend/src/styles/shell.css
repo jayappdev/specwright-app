@@ -1137,3 +1137,54 @@ textarea[aria-invalid="true"] {
 .main.has-tabs .files.chats {
   height: auto;
 }
+
+/* ---- Help: the step guide beside your work (FlowGuide.jsx HelpPanel) ---- */
+.help-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 24px; /* above the status bar */
+  width: min(640px, 52vw);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -18px 0 40px -24px rgb(0 0 0 / 0.45);
+  animation: help-in 0.14s ease-out;
+}
+@keyframes help-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+}
+.help-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.help-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.help-head select {
+  flex: 1;
+  min-width: 0;
+}
+.help-head .link {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.help-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+.help-body > .card {
+  margin: 0;
+}
