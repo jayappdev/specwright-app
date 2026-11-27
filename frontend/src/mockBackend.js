@@ -2156,6 +2156,46 @@ export function createMockBackend(methods) {
     return { ok: checks.every((c) => c.ok), steps: all, checks, inputs };
   };
 
+  // --- running part of a flow again (Go: flowrerun.go) ---
+  const trialReuseM = (f, base, changed) => {
+    const li = loopStacks(f),
+      order = flowOrder(f);
+    const rerun = new Set();
+    for (const c of changed)
+      for (const l of li.stack[c] || []) {
+        rerun.add(l);
+        rerun.add(li.gather[l]);
+      }
+    const reuse = {};
+    for (const id of order) {
+      const n = f.nodes.find((x) => x.id === id),
+        ps = base.steps.find((x) => x.id === id);
+      if (
+        !n ||
+        changed.has(id) ||
+        id === "start" ||
+        n.type === "output" ||
+        rerun.has(id) ||
+        (li.stack[id] || []).length ||
+        [...changed].some((c) => flowAnc(f, id).has(c)) ||
+        ps?.status !== "done"
+      )
+        continue;
+      reuse[id] = { output: ps.output || "", branches: ps.branches };
+    }
+    for (const [l, g] of Object.entries(li.gather))
+      if (!!reuse[l] !== !!reuse[g]) {
+        delete reuse[l];
+        delete reuse[g];
+      }
+    return reuse;
+  };
+  const parentsOf = (f, id) => (f.edges || []).filter((e) => e.to === id).map((e) => e.from);
+  const familyOf = (id) => {
+    let x = db.flows[id];
+    for (let n = 0; n < 50 && x?.parent && db.flows[x.parent]; n++) x = db.flows[x.parent];
+    return x?.parent || x?.id || id;
+  };
   // --- fixing one step (scripted): FixFlowStep ---
   const runFlowCopy = (st) => {
     const f = clone(db.flows[st.flowId]);
@@ -7210,6 +7250,130 @@ export function createMockBackend(methods) {
         }
       trial.reused = order.filter((id) => reuse[id]);
       return startFlowRun(f, { inputs: { ...(base.options?.inputs || {}) }, review: "none", reuse, trial });
+    },
+    async PlanRerun(runId, stepId) {
+      const base = await api.FlowRun(runId),
+        f = runFlowCopy(base),
+        n = f?.nodes.find((x) => x.id === stepId);
+      if (!n) throw new Error(`the flow has no step ${stepId}`);
+      const changed = new Set([stepId, ...(base.trial?.steps || []).map((x) => x.id)]);
+      const reuse = trialReuseM(f, base, changed);
+      const title = (id) => f.nodes.find((x) => x.id === id)?.title || id;
+      return {
+        stepId,
+        title: n.title || n.id,
+        received: parentsOf(f, stepId)
+          .filter((id) => id !== "start")
+          .map((id) => ({ id, title: title(id), output: reuse[id]?.output || "", editable: !!reuse[id] })),
+        inputs: f.inputs || [],
+        values: Object.fromEntries(
+          (f.inputs || [])
+            .filter((i) => i.type !== "secret")
+            .map((i) => [i.name, base.options?.inputs?.[i.name] ?? ""]),
+        ),
+        reused: flowOrder(f)
+          .filter((id) => reuse[id])
+          .map(title),
+        rerun: flowOrder(f)
+          .filter((id) => id !== "start" && !reuse[id])
+          .map(title),
+      };
+    },
+    async RerunFromStep(r) {
+      const base = await api.FlowRun(r.runId),
+        f = runFlowCopy(base);
+      if (!f?.nodes.some((x) => x.id === r.stepId) || r.stepId === "start")
+        throw new Error(`the flow has no step ${r.stepId} to run from`);
+      const trial = {
+        baseRun: base.trial?.baseRun || base.id,
+        steps: [...(base.trial?.steps || [])],
+        from: r.stepId,
+        edited: [],
+        inputsChanged: [],
+      };
+      const reuse = trialReuseM(f, base, new Set([r.stepId, ...trial.steps.map((x) => x.id)]));
+      const ps = new Set(parentsOf(f, r.stepId));
+      for (const [id, out] of Object.entries(r.received || {})) {
+        if (!ps.has(id)) throw new Error(`${id} does not give the step its input`);
+        if (!reuse[id]) throw new Error(`the result of ${id} cannot be changed here`);
+        if (reuse[id].output !== out) {
+          reuse[id] = { ...reuse[id], output: out };
+          trial.edited.push(id);
+        }
+      }
+      const inputs = { ...(base.options?.inputs || {}) };
+      for (const [k, v] of Object.entries(r.inputs || {}))
+        if (inputs[k] !== v) {
+          inputs[k] = v;
+          trial.inputsChanged.push(k);
+        }
+      trial.reused = flowOrder(f).filter((id) => reuse[id]);
+      return startFlowRun(f, { inputs, review: "none", reuse, trial });
+    },
+    async TryStepEdit(runId, node) {
+      const base = await api.FlowRun(runId),
+        f = runFlowCopy(base),
+        was = f?.nodes.find((x) => x.id === node.id);
+      if (!was) throw new Error(`the flow has no step ${node.id}`);
+      if (was.type !== node.type)
+        throw new Error("a step's kind cannot change here: change it in the designer");
+      return api.TryStepFix({
+        runId,
+        flowId: base.flowId,
+        stepId: node.id,
+        before: was,
+        node,
+        why: "Changed by hand",
+      });
+    },
+    async SaveTrialAsVersion(runId) {
+      const st = await api.FlowRun(runId);
+      if (!st.trial?.steps?.length) throw new Error("this run changed no steps: there is nothing to save");
+      const res = await api.SaveFlowVersion(st.flowId, runFlowCopy(st));
+      const live = flowLive.get(runId);
+      if (live) {
+        live.st.trial.applied = true;
+        live.st.trial.savedAs = res.flow.id;
+      }
+      return res;
+    },
+    async TryVersionOnRun(flowId, runId) {
+      const base = await api.FlowRun(runId),
+        f = clone(db.flows[flowId]),
+        was = runFlowCopy(base);
+      if (!f || !was) throw new Error("the flow is gone");
+      const same = (a, b) =>
+        JSON.stringify({ ...a, x: 0, y: 0 }) === JSON.stringify({ ...b, x: 0, y: 0 }) &&
+        parentsOf(f, a.id).sort().join() === parentsOf(was, a.id).sort().join();
+      const changed = f.nodes
+        .filter((n) => {
+          const o = was.nodes.find((x) => x.id === n.id);
+          return !o || !same(n, o);
+        })
+        .map((n) => n.id);
+      const reuse = trialReuseM(f, base, new Set(changed));
+      const trial = {
+        baseRun: base.id,
+        against: base.id,
+        againstFlow: base.flowId,
+        changed,
+        steps: [],
+        reused: flowOrder(f).filter((id) => reuse[id]),
+      };
+      return startFlowRun(f, { inputs: { ...(base.options?.inputs || {}) }, review: "none", reuse, trial });
+    },
+    async VersionRuns(flowId) {
+      const fam = familyOf(flowId);
+      return clone(
+        db.runs.filter(
+          (r) =>
+            r.step === "flow" &&
+            !r.archived &&
+            r.workspace === db.root &&
+            ["done", "failed"].includes(r.state) &&
+            familyOf(r.workflow) === fam,
+        ),
+      );
     },
     async ApplyStepFix(runId) {
       const st = await api.FlowRun(runId);

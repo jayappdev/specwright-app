@@ -48,6 +48,7 @@ import { FilePreview } from "./FilePreview.jsx";
 import { LibraryEditor } from "./views/LibraryEditor.jsx";
 import { DialogHost } from "./Dialog.jsx";
 import { RunPicker, FilePicker } from "./views/Playground.jsx";
+import { CompareDialog, TryVersionDialog } from "./views/flowrun/Rerun.jsx";
 import { installFileLinks } from "./FileLinks.jsx";
 import { installModalFocus, installTooltips } from "./a11y.js";
 import { CommandPalette, useCommandPalette, openPalette } from "./CommandPalette.jsx";
@@ -592,6 +593,8 @@ export function App() {
       <ErrorBoundary floating name="The run picker">
         <RunPicker />
         <FilePicker />
+        <CompareDialog />
+        <TryVersionDialog />
       </ErrorBoundary>
       <ErrorBoundary floating name="The dialog">
         <DialogHost />

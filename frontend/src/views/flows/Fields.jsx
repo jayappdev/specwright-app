@@ -377,12 +377,13 @@ export function insertText(text, replace) {
   el.setSelectionRange(s + text.length, s + text.length);
 }
 
-export function VarChips({ node, extra = [] }) {
-  const f = fl(),
-    flow = f.flow;
+// varsFor: the {{…}} references a step can use: [ref, label, secret?]
+// (the flow's inputs, earlier steps' outputs, loop items, context, skills,
+// variables; VarChips shows them as chips, RefComplete as you type)
+export function varsFor(flow, node, extra = []) {
   const anc = node ? [...ancestors(flow, node.id)].filter((id) => id !== "start") : [];
   const fed = node && parentsOf(flow, node.id).some((p) => p !== "start");
-  const vars = [
+  return [
     ...flow.inputs
       .filter((i) => i.type !== "secret" || node?.type !== "ai")
       .map((i) => ["inputs." + i.name, i.label || i.name, i.type === "secret"]),
@@ -422,6 +423,10 @@ export function VarChips({ node, extra = [] }) {
       : (flow.secrets || []).filter((v) => v.name).map((v) => ["env." + v.name, "$" + v.name, true])),
     ...extra.map((v) => [v, v]),
   ];
+}
+
+export function VarChips({ node, extra = [] }) {
+  const vars = varsFor(fl().flow, node, extra);
   return (
     <div className="fl-vars">
       <span className="muted">Insert:</span>

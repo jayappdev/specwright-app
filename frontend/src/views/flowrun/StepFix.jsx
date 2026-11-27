@@ -1,9 +1,10 @@
 // Run flows: fixing or improving one step with AI, and the banner of a trial run.
 import { ModelPicker } from "../../ModelPicker.jsx";
 import { backend } from "../../backend.js";
-import { S, update, toast, errMsg } from "../../store.js";
+import { update, toast, errMsg } from "../../store.js";
 import { AiProgress } from "../../AiProgress.jsx";
-import { LIVE, frs, openRun } from "../FlowRun.jsx";
+import { LIVE, frs } from "../FlowRun.jsx";
+import { openCompare, backToBase, startTrial } from "./Rerun.jsx";
 
 // --- fixing or improving one step with AI ----------------------------------------------
 
@@ -64,16 +65,7 @@ export function StepFixPanel({ st, s }) {
     update();
     try {
       const t = await backend.TryStepFix(fx.res);
-      S.flowRuns[t.id] = t;
-      S.loaded[t.id] = true;
-      S.events[t.id] ||= [];
-      r.runs = [
-        { id: t.id, workflow: t.flowId, state: t.status, started: t.started, kind: "flow-trial", usage: {} },
-        ...r.runs,
-      ];
-      r.fix = null;
-      r.runId = t.id;
-      toast("Trying the change: the steps before it reuse this run's results.");
+      startTrial(t, "Trying the change: the steps before it reuse this run's results.");
     } catch (e) {
       fx.error = errMsg(e);
     }
@@ -216,26 +208,55 @@ export function StepFixPanel({ st, s }) {
   );
 }
 
-// A trial run: what changed, and Apply / Discard.
+// A trial run: what it changed or ran again, and Apply / Save as a new
+// version / Compare / back to the earlier run.
 export function TrialBanner({ st }) {
   const t = st.trial,
     live = LIVE.includes(st.status);
   const title = (id) => st.steps.find((x) => x.id === id)?.title || id;
-  const apply = async () => {
+  const steps = t.steps || [];
+  const act = async (fn, msg) => {
     try {
-      await backend.ApplyStepFix(st.id);
+      const res = await fn();
       t.applied = true;
-      toast(`Applied to the flow ${st.flowName}.`);
+      if (res?.flow?.id && res.flow.id !== st.flowId) t.savedAs = res.flow.id;
+      toast(msg(res));
       update();
     } catch (e) {
       toast(errMsg(e), "error");
     }
   };
-  return (
-    <div className={"banner fr-trial" + (t.applied ? " applied" : "")}>
-      <div>
-        <b>{t.applied ? "Applied to the flow." : "Trial of a change — not saved yet."}</b> Changed:{" "}
-        {t.steps
+  const what = [];
+  if (t.against)
+    what.push(
+      <span key="v">
+        This version tried on an earlier run.{" "}
+        {t.changed?.length ? (
+          <>
+            Changed in this version: <b>{t.changed.map(title).join(", ")}</b>.
+          </>
+        ) : (
+          "No step differs from the one that run used."
+        )}
+      </span>,
+    );
+  if (t.from)
+    what.push(
+      <span key="f">
+        Run again from <b>{title(t.from)}</b>
+        {t.edited?.length ? (
+          <> with what it receives from {t.edited.map(title).join(", ")} changed by hand</>
+        ) : (
+          ""
+        )}
+        {t.inputsChanged?.length ? <> and the inputs {t.inputsChanged.join(", ")} changed</> : ""}.
+      </span>,
+    );
+  if (steps.length)
+    what.push(
+      <span key="s">
+        Changed:{" "}
+        {steps
           .map((x) => (
             <span key={x.id}>
               <b>{title(x.id)}</b>
@@ -244,23 +265,67 @@ export function TrialBanner({ st }) {
           ))
           .reduce((a, b) => [a, "; ", b])}
         .
+      </span>,
+    );
+  const head = t.applied
+    ? t.savedAs
+      ? "Saved as a new version."
+      : "Applied to the flow."
+    : t.against
+      ? "Trying a flow version."
+      : steps.length
+        ? "Trial of a change — not saved yet."
+        : "Run again — the flow is unchanged.";
+  return (
+    <div className={"banner fr-trial" + (t.applied ? " applied" : "")}>
+      <div>
+        <b>{head}</b> {what.reduce((a, b) => [a, " ", b], [])}
         {t.reused?.length > 0 && (
           <> Reused from the earlier run (not run again): {t.reused.map(title).join(", ")}.</>
         )}
       </div>
-      {!live && !t.applied && (
+      {!live && (
         <div className="row-actions">
-          <button className="btn primary" onClick={apply}>
-            {st.status === "done" ? "Apply to the flow" : "Apply anyway"}
+          {!t.applied && steps.length > 0 && (
+            <>
+              <button
+                className="btn primary"
+                onClick={() =>
+                  act(
+                    () => backend.ApplyStepFix(st.id),
+                    () => `Applied to the flow ${st.flowName}.`,
+                  )
+                }
+              >
+                {st.status === "done" ? "Apply to the flow" : "Apply anyway"}
+              </button>
+              <button
+                className="btn secondary"
+                title="Keep the flow as it is and save these changes as a new version of it"
+                onClick={() =>
+                  act(
+                    () => backend.SaveTrialAsVersion(st.id),
+                    (res) => `Saved as ${res?.flow?.name || "a new version"}; ${st.flowName} is unchanged.`,
+                  )
+                }
+              >
+                Save as new version
+              </button>
+            </>
+          )}
+          <button className="btn secondary" onClick={() => openCompare(t.against || t.baseRun, st.id)}>
+            Compare with the earlier run
           </button>
-          <button className="btn secondary" onClick={() => openRun(t.baseRun)}>
-            Discard · back to the earlier run
+          <button className="btn secondary" onClick={() => backToBase(t)}>
+            Back to the earlier run
           </button>
-          <span className="muted fl-help">
-            {st.status === "done"
-              ? "Check the steps and outputs below. Apply writes only the changed step into the flow."
-              : "The trial did not finish. You can improve the step again from here."}
-          </span>
+          {!t.applied && steps.length > 0 && (
+            <span className="muted fl-help">
+              {st.status === "done"
+                ? "Check the steps and outputs below. Apply writes only the changed steps into the flow."
+                : "The trial did not finish. You can change the step again from here."}
+            </span>
+          )}
         </div>
       )}
     </div>

@@ -22,6 +22,7 @@ import { openFlowGuide } from "./FlowGuide.jsx";
 import { Canvas } from "./flows/Canvas.jsx";
 import { Palette } from "./flows/Palette.jsx";
 import { FlowLibrary } from "./flows/FlowLibrary.jsx";
+import { RefComplete } from "./flows/RefComplete.jsx";
 import { Inspector, loopFromInputs } from "./flows/Inspector.jsx";
 import { branchName, newCond, nextBranch } from "./flows/Conditions.jsx";
 
@@ -1402,6 +1403,7 @@ export function Flows() {
             <Palette />
             <Canvas />
             <Inspector />
+            <RefComplete />
             {f.ai?.open && <AIDesigner />}
             {wz().open && <FlowWizard />}
           </div>

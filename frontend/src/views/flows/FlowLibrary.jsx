@@ -6,6 +6,7 @@ import { dragProps } from "../../listLayout.jsx";
 import { S } from "../../store.js";
 import { Icon, Skeleton } from "../../ui.jsx";
 import { ago } from "../../time.js";
+import { openTryVersion } from "../flowrun/Rerun.jsx";
 
 function FlowCard({ x, list, onOpen, onRun }) {
   const parent = x.revision > 1 ? (list || []).find((y) => y.id === x.parent)?.name || x.parent : "";
@@ -62,6 +63,19 @@ function FlowCard({ x, list, onOpen, onRun }) {
         <button className="btn secondary" title="Open in the designer" onClick={() => onOpen(x.id)}>
           <Icon.pencil /> Edit
         </button>
+        {x.revision > 1 && !x.chat && (
+          <button
+            className="btn secondary"
+            title={
+              "Run this version on an earlier run of " +
+              parent +
+              ": only what it changed runs again, then compare"
+            }
+            onClick={() => openTryVersion(x.id, x.name)}
+          >
+            <Icon.history /> Try on a run
+          </button>
+        )}
       </div>
     </div>
   );
