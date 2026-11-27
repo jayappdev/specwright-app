@@ -65,7 +65,7 @@ const VIEWS = [
   { id: "flows", label: "Flow designer", tab: "Library", icon: Icon.flow, C: Flows },
   { id: "flowrun", label: "Run flows", tab: "Runs", icon: Icon.run, C: FlowRun },
   { id: "chats", label: "Chats", icon: Icon.chat, C: Chats },
-  { id: "playground", label: "Ask AI (Playground)", icon: Icon.playground, C: Playground },
+  { id: "playground", label: "Ask AI", icon: Icon.playground, C: Playground },
   { id: "tools", label: "Tools", icon: Icon.tool, C: Tools },
   { id: "files", label: "Files", icon: Icon.files, C: Files },
   { id: "history", label: "History", icon: Icon.history, C: History },

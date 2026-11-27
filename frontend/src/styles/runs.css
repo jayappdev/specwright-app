@@ -4481,3 +4481,94 @@ main.main[data-view="chats"] {
   margin-bottom: 6px;
   font-size: 12px;
 }
+
+/* ---- Ask AI as a conversation (views/Playground.jsx) ----------------------------- */
+main.main[data-view="playground"] {
+  min-height: 0;
+  overflow: hidden;
+}
+.files.askai {
+  height: calc(100vh - 24px);
+  min-height: 0;
+}
+.files.askai > .fview {
+  overflow: auto;
+  min-height: 0;
+}
+.pg-empty {
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 640px;
+}
+.pg-empty h3 {
+  margin: 0;
+}
+.pg-calls {
+  margin: 2px 0 8px;
+}
+.pg-calls > summary {
+  list-style: none;
+}
+.pg-calls > summary::-webkit-details-marker {
+  display: none;
+}
+.pg-calls[open] > summary {
+  margin-bottom: 6px;
+}
+.pg-turn-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.pg-turn-acts .pg-more {
+  flex-basis: 100%;
+}
+.pg-options {
+  position: relative;
+}
+.pg-options > summary {
+  list-style: none;
+}
+.pg-options > summary::-webkit-details-marker {
+  display: none;
+}
+.pg-options-card {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: min(460px, 80vw);
+  max-height: 60vh;
+  overflow: auto;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.45);
+}
+.pg-where {
+  margin: 0;
+  font-size: 12px;
+}
+.askai .chat-head-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.files.askai {
+  grid-template-columns: var(--pane-l, 260px) minmax(0, 1fr);
+}
+.askai .chat-main,
+.askai .chat-head-title {
+  min-width: 0;
+}
+.askai .chat-head h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

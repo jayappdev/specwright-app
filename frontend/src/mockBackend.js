@@ -1453,9 +1453,7 @@ export function createMockBackend(methods) {
     put("events.jsonl", evs.map((e) => JSON.stringify(e)).join("\n") + "\n");
     r.results = dir;
     put("run.json", JSON.stringify(r, null, 2));
-    const kindLabel = { playground: "Playground prompt", workflow: "Workflow step", flow: "Flow run" }[
-      d.kind
-    ];
+    const kindLabel = { playground: "Ask AI question", workflow: "Workflow step", flow: "Flow run" }[d.kind];
     put(
       "summary.md",
       `# ${kindLabel}: ${d.title}\n\n- **Run id:** \`${id}\`\n- **Started:** ${d.started}${r.ended ? " · **ended** " + r.ended : ""}\n- **State:** ${r.state}\n- **Agent:** ${r.agent}${r.model ? " · " + r.model : ""}\n${d.parents.length ? "- **Continues:** " + d.parents.join(", ") + "\n" : ""}\n## Files here\n\n- \`prompt.md\`, \`answer.md\`, \`tools.md\`, \`events.jsonl\`, \`run.json\`${d.kind === "flow" ? ", `outputs/`, `steps/`, `state.json`" : ""}\n${d.answer ? "\n## Answer\n\n" + d.answer.slice(0, 1500) + "\n" : ""}`,

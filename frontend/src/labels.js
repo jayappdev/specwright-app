@@ -36,9 +36,9 @@ export const PROMPT_STATUS_LABEL = {
 };
 
 // kinds of run: short (History list) and long (Playground thread)
-export const RUN_KIND = { playground: "Prompt", workflow: "Workflow", flow: "Flow" };
+export const RUN_KIND = { playground: "Ask AI", workflow: "Workflow", flow: "Flow" };
 
-export const RUN_KIND_LONG = { playground: "Prompt", workflow: "Workflow step", flow: "Flow run" };
+export const RUN_KIND_LONG = { playground: "Ask AI question", workflow: "Workflow step", flow: "Flow run" };
 
 // the kind of a stored run
 export const runKind = (r) =>

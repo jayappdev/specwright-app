@@ -95,7 +95,7 @@ export function NewMenuHost() {
       {item(<Icon.tool />, "Tool", "A script the AI and your flows can run", () =>
         import("./views/Tools.jsx").then((x) => x.newTool(false)),
       )}
-      {item(<Icon.playground />, "Ask AI", "A prompt in the Playground, with your tools", () => {
+      {item(<Icon.playground />, "Ask AI", "A conversation with the AI about this project", () => {
         if (S.pg) Object.assign(S.pg, { sel: "", prompt: "" });
         goView("playground");
       })}

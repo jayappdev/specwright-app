@@ -132,9 +132,9 @@ export function DecisionLog({ tb }) {
             className="btn secondary"
             style={{ marginLeft: "auto" }}
             onClick={() => openToolInPlayground()}
-            title="Opens a Prompt Playground conversation with this tool, its history and its last test; apply the AI's revision from there"
+            title="Opens an Ask AI conversation with this tool, its history and its last test; apply the AI's revision from there"
           >
-            <Icon.playground /> Continue in Prompt Playground
+            <Icon.playground /> Continue in Ask AI
           </button>
         )}
       </div>
