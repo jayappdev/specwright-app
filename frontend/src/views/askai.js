@@ -52,3 +52,10 @@ export function contextBlock(items = []) {
     items.map(line).join("\n")
   );
 }
+
+// savedVersionOf: the flow version a save_flow result reports (core:
+// flowsave_agent.go), or null for a new flow or an update.
+export function savedVersionOf(text = "") {
+  const m = /Saved the flow "(.*?)" \(id ([\w.-]+),.*?version (\d+) of ([\w.-]+)/s.exec(String(text));
+  return m ? { name: m[1], id: m[2], rev: m[3], parent: m[4] } : null;
+}

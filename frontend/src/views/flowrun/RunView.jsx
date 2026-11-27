@@ -15,6 +15,7 @@ import { FileLink } from "../../FileLinks.jsx";
 import { CopyButton } from "../../CopyButton.jsx";
 import { REVIEW_HINT } from "./Setup.jsx";
 import { StepFixPanel, TrialBanner, canFix, openFix } from "./StepFix.jsx";
+import { canRerun, openRerun, RerunPanel, openEdit, EditStepPanel } from "./Rerun.jsx";
 import { LIVE, STATUS_LABEL, decide, frs, pill } from "../FlowRun.jsx";
 import { RunSimple } from "./RunSimple.jsx";
 import { openChatSession } from "../Chats.jsx";
@@ -553,10 +554,28 @@ function Steps({ st }) {
                   )}
                 </div>
               )}
-              {canFix(st, s) && (
+              {canRerun(st, s) && (
                 <div className="fr-step-actions">
-                  <button className="link" onClick={() => openFix(st, s)}>
-                    <Icon.spark /> {s.status === "failed" ? "Fix with AI" : "Improve"}
+                  {canFix(st, s) && (
+                    <button className="link" onClick={() => openFix(st, s)}>
+                      <Icon.spark /> {s.status === "failed" ? "Fix with AI" : "Improve"}
+                    </button>
+                  )}
+                  {canFix(st, s) && (
+                    <button
+                      className="link"
+                      onClick={() => openEdit(st, s)}
+                      title="Change this step's prompt, template or arguments by hand, and try it"
+                    >
+                      <Icon.pencil /> Edit this step
+                    </button>
+                  )}
+                  <button
+                    className="link"
+                    onClick={() => openRerun(st, s)}
+                    title="Run this step and the ones after it again; the steps before keep their results. You can change what it receives first."
+                  >
+                    <Icon.refresh /> Run again from here
                   </button>
                   {st.trial?.steps?.some((x) => x.id === s.id) && (
                     <span className="badge badge-info" title={st.trial.steps.find((x) => x.id === s.id)?.why}>
@@ -566,6 +585,8 @@ function Steps({ st }) {
                 </div>
               )}
               {frs().fix?.runId === st.id && frs().fix?.stepId === s.id && <StepFixPanel st={st} s={s} />}
+              {frs().rerun?.runId === st.id && frs().rerun?.stepId === s.id && <RerunPanel />}
+              {frs().edit?.runId === st.id && frs().edit?.stepId === s.id && <EditStepPanel />}
             </li>
           );
         })}

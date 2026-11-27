@@ -29,9 +29,10 @@ import { ResultsLink } from "../RunResults.jsx";
 import { AiProgress } from "../AiProgress.jsx";
 import { applyToolRevision, reloadTool } from "./Tools.jsx";
 import { proposedTool } from "./tools/toolHistory.js";
-import { conversations, contextWindow, contextBlock } from "./askai.js";
+import { conversations, contextWindow, contextBlock, savedVersionOf } from "./askai.js";
 import { ContextPanel, ContextMeter, Rule, PanelToggle, panelOpen } from "../components/ContextPanel.jsx";
 import { askText } from "../Dialog.jsx";
+import { openTryVersion } from "./flowrun/Rerun.jsx";
 
 const EXAMPLES = [
   "Summarize what this project does and how it is organised",
@@ -550,6 +551,33 @@ function UsageRows({ u, model }) {
   );
 }
 
+// SavedVersions: a flow version the AI saved in this answer, with a way to
+// try it on an earlier run (only what it changed runs again) and compare
+function SavedVersions({ calls }) {
+  const saved = [];
+  for (const c of calls) {
+    const a = c.call.args || {};
+    const name = (c.call.tool || "").replace(/^mcp__agentbridge__/, "");
+    const isSave =
+      /save_flow$/.test(name) || (/extension_managed$/.test(name) && /save_flow$/.test(a.name || ""));
+    const out = c.ext?.output ?? c.res?.output ?? "";
+    const v = isSave && savedVersionOf(out);
+    if (v) saved.push(v);
+  }
+  if (!saved.length) return null;
+  return saved.map((v) => (
+    <div key={v.id} className="pg-version">
+      <Icon.flow />
+      <span>
+        Saved <b>{v.name}</b>, version {v.rev} of {v.parent}.
+      </span>
+      <button className="btn secondary" onClick={() => openTryVersion(v.id, v.name)}>
+        <Icon.history /> Try on an earlier run
+      </button>
+    </div>
+  ));
+}
+
 // Turn: one question and the AI's answer, with what it ran
 function Turn({ t, last, anyRunning }) {
   const evs = S.events[t.id] || [];
@@ -631,6 +659,7 @@ function Turn({ t, last, anyRunning }) {
               </div>
             </details>
           )}
+          <SavedVersions calls={calls} />
           {problems.map((e) => (
             <div
               key={e.seq}

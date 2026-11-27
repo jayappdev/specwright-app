@@ -49,3 +49,18 @@ describe("contextBlock", () => {
     expect(b).toContain("- Web page: https://example.com/x (fetch it with fetch_webpage)");
   });
 });
+
+import { savedVersionOf } from "./askai.js";
+
+describe("savedVersionOf", () => {
+  it("reads the version save_flow reports, and nothing for a new flow", () => {
+    expect(
+      savedVersionOf(
+        'Saved the flow "Release notes (v3)" (id release-notes-v3, file .codegen/flows/release-notes-v3.json). It is version 3 of release-notes; the original is unchanged.\nIt checks out.',
+      ),
+    ).toEqual({ name: "Release notes (v3)", id: "release-notes-v3", rev: "3", parent: "release-notes" });
+    expect(
+      savedVersionOf('Saved the flow "New" (id new, file .codegen/flows/new.json).\nIt checks out.'),
+    ).toBe(null);
+  });
+});
