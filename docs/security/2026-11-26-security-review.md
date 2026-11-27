@@ -107,6 +107,20 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
   denies `shell` and `write` in the fallback, or asking once per run before
   starting an AI step without MCP.
 
+- **Pre-approval per flow** (`internal/core/flowaiapprovals.go`): a
+  scheduled or triggered run has nobody to answer these questions, so a
+  flow can allow its AI steps some kinds of action unasked: run commands,
+  change or run flows and tools, send data out, open local and intranet
+  addresses (Run flows › What the AI may do without asking).
+  - Approvals are kept in the app's data folder by project and flow id
+    (`approved-ai-actions.json`), so a project or a flow file cannot grant
+    them itself.
+  - Each flow AI step gets a bridge token of its own (`Bridge.NewScope`),
+    revoked when the step ends, so a call is matched to its own run even
+    when several flows run at once. Calls with the bridge's own token
+    (chat, playground) and other flows' runs are still asked.
+  - Test: `TestFlowPreApprovedAIActions`.
+
 ### 3. Data leaks through remote images; no CSP (Medium)
 
 - **Where:** `frontend/src/markdown.js` allows `![…](https://…)` images from

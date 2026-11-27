@@ -41,15 +41,10 @@ func byPerson(ctx context.Context) context.Context {
 // command or changes flows and tools.
 func (h *Hub) agentActionAllowed(ctx context.Context, name string, args map[string]any) error {
 	what, ok := askBefore[name]
-	if !ok || ctx.Value(byPersonKey{}) != nil {
+	if !ok || ctx.Value(byPersonKey{}) != nil || h.preApproved(ctx, aiKindOf(name)) {
 		return nil
 	}
-	agent := "agents"
-	if a := h.activeRun(); a != nil {
-		agent = a.Session.ID
-	} else if fr := h.onlyFlowRun(); fr != "" {
-		agent = "flow:" + fr
-	}
+	agent := h.askingAgent(ctx)
 	input := map[string]any{"description": "The AI wants to " + what}
 	for k, v := range args {
 		if k == "flow" { // a whole flow's JSON: too long to show; its name says enough
@@ -85,15 +80,10 @@ func (h *Hub) agentNetworkAllowed(ctx context.Context, name string, args map[str
 	if err != nil || u.Hostname() == "" {
 		return nil // the tool reports the bad URL itself
 	}
-	if in, _ := builtin.PrivateHost(ctx, u.Hostname()); !in {
+	if in, _ := builtin.PrivateHost(ctx, u.Hostname()); !in || h.preApproved(ctx, AILocalNet) {
 		return nil
 	}
-	agent := "agents"
-	if a := h.activeRun(); a != nil {
-		agent = a.Session.ID
-	} else if fr := h.onlyFlowRun(); fr != "" {
-		agent = "flow:" + fr
-	}
+	agent := h.askingAgent(ctx)
 	what := "open " + u.Host + ", an address on this computer or a private network"
 	ans := h.AskPermission(ctx, extension.PermissionRequest{Agent: agent, Tool: name,
 		Input: map[string]any{"description": "The AI wants to " + what, "url": raw}})

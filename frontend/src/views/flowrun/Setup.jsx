@@ -7,7 +7,7 @@ import { S, update, toast, errMsg, kcName, isWindows } from "../../store.js";
 import { Icon, Crumbs } from "../../ui.jsx";
 import { openFlowInDesigner } from "../Flows.jsx";
 import { AttachBar, DropZone, onPasteAttach, onPasteFiles } from "../../Attachments.jsx";
-import { Commands, frs, isChatflow, loadFlow, start, openRunnerWindow } from "../FlowRun.jsx";
+import { AIActions, Commands, frs, isChatflow, loadFlow, start, openRunnerWindow } from "../FlowRun.jsx";
 import { TagEditor, allTags } from "../../flowLists.jsx";
 
 // --- setup ------------------------------------------------------------------------
@@ -722,6 +722,7 @@ export function Setup() {
       </div>
       <Credentials />
       <Commands />
+      <AIActions />
       <Options />
       <div className="row-actions fr-go">
         {isChatflow(f) ? (

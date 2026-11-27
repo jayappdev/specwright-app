@@ -580,6 +580,15 @@ func (a *App) ApproveFlowCommands(id string, steps []string) ([]core.FlowCommand
 	return ok(a.hub.ApproveFlowCommands(id, steps))
 }
 
+// FlowAIActions / SetFlowAIActions: what a flow's AI steps may do without
+// asking (flowaiapprovals.go).
+func (a *App) FlowAIActions(id string) (core.FlowAIActions, error) {
+	return ok(a.hub.FlowAIActions(id))
+}
+func (a *App) SetFlowAIActions(id string, kinds []string) (core.FlowAIActions, error) {
+	return ok(a.hub.SetFlowAIActions(id, kinds))
+}
+
 // RunFlow starts a flow run.
 func (a *App) RunFlow(id string, o core.FlowRunOptions) (core.FlowRunState, error) {
 	return ok(a.hub.RunFlow(id, o))

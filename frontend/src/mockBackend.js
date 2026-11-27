@@ -7592,6 +7592,24 @@ export function createMockBackend(methods) {
       if (!f) throw new Error(`no flow "${id}"`);
       return flowCmds(f);
     },
+    async FlowAIActions(id) {
+      const f = db.flows[id];
+      if (!f) throw new Error(`no flow "${id}"`);
+      const hasAI = (f.nodes || []).some(
+        (n) =>
+          ["ai", "improve", "decision", "context", "filter", "aggregate", "chat", "tool"].includes(n.type) ||
+          (n.type === "transform" && n.op === "ai"),
+      );
+      return { hasAI, allowed: [...(((db.aiOK ||= {})[db.root] ||= {})[id] || [])] };
+    },
+    async SetFlowAIActions(id, kinds) {
+      if (!db.flows[id]) throw new Error(`no flow "${id}"`);
+      const bad = (kinds || []).find((k) => !["commands", "flows", "send", "network"].includes(k));
+      if (bad) throw new Error("unknown kind of AI action: " + bad);
+      ((db.aiOK ||= {})[db.root] ||= {})[id] = [...new Set(kinds || [])].sort();
+      persist();
+      return this.FlowAIActions(id);
+    },
     async ApproveFlowCommands(id, steps) {
       const f = db.flows[id];
       if (!f) throw new Error(`no flow "${id}"`);

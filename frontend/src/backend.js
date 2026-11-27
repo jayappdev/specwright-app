@@ -155,6 +155,8 @@ const METHODS = [
   "PickCAFile",
   "FlowCommands",
   "ApproveFlowCommands",
+  "FlowAIActions",
+  "SetFlowAIActions",
   "SetCopilotWeb",
   "ExportTools",
   "PreviewToolImport",

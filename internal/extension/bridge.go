@@ -67,6 +67,26 @@ type Bridge struct {
 	mu      sync.Mutex
 	extra   map[string]Extension // temporary, for "Test with AI"
 	contact atomic.Int64         // unix nanoseconds of the last agent contact (LastContact)
+	scopes  sync.Map             // token -> scope: a token of its own for one flow run's AI step (NewScope)
+}
+
+type scopeKey struct{}
+
+// ScopeOf is the scope of the token a bridge call came with ("" for the
+// bridge's own token): the flow run an AI step belongs to.
+func ScopeOf(ctx context.Context) string {
+	s, _ := ctx.Value(scopeKey{}).(string)
+	return s
+}
+
+// NewScope makes a token of its own for scope (a flow run's id), so the
+// calls an AI step makes can be told apart from other runs'. end revokes it.
+func (b *Bridge) NewScope(scope string) (token string, end func()) {
+	t := make([]byte, 24)
+	_, _ = rand.Read(t)
+	token = hex.EncodeToString(t)
+	b.scopes.Store(token, scope)
+	return token, func() { b.scopes.Delete(token) }
 }
 
 // StartBridge listens on 127.0.0.1 at a random port.
@@ -138,11 +158,18 @@ func (b *Bridge) AllowTemporary(e Extension) func() {
 func (b *Bridge) auth(h http.HandlerFunc) http.HandlerFunc {
 	want := "Bearer " + b.token
 	return func(w http.ResponseWriter, r *http.Request) {
-		if subtle.ConstantTimeCompare([]byte(r.Header.Get("Authorization")), []byte(want)) != 1 {
-			http.Error(w, "unauthorized", http.StatusUnauthorized)
+		got := r.Header.Get("Authorization")
+		if subtle.ConstantTimeCompare([]byte(got), []byte(want)) == 1 {
+			h(w, r)
 			return
 		}
-		h(w, r)
+		if tok, ok := strings.CutPrefix(got, "Bearer "); ok && tok != "" {
+			if scope, ok := b.scopes.Load(tok); ok { // a map lookup, not a comparison an attacker can time
+				h(w, r.WithContext(context.WithValue(r.Context(), scopeKey{}, scope.(string))))
+				return
+			}
+		}
+		http.Error(w, "unauthorized", http.StatusUnauthorized)
 	}
 }
 
@@ -350,6 +377,12 @@ func writeJSON(w http.ResponseWriter, v any) {
 // path. The caller removes the file when the run ends.
 // extensions=false hides extension_managed (built-in tools are always offered).
 func (b *Bridge) WriteMCPConfig(dir string, extensions bool) (string, error) {
+	return b.WriteMCPConfigToken(dir, extensions, "")
+}
+
+// WriteMCPConfigToken is WriteMCPConfig with another token (NewScope's);
+// "" is the bridge's own.
+func (b *Bridge) WriteMCPConfigToken(dir string, extensions bool, token string) (string, error) {
 	exe, err := os.Executable()
 	if err != nil {
 		return "", err
@@ -365,6 +398,9 @@ func (b *Bridge) WriteMCPConfig(dir string, extensions bool) (string, error) {
 	}
 	if !extensions {
 		env["CODEGEN_BRIDGE_EXT"] = "0"
+	}
+	if token != "" {
+		env["CODEGEN_BRIDGE_TOKEN"] = token
 	}
 	cfg := map[string]any{"mcpServers": map[string]any{
 		"agentbridge": map[string]any{"type": "stdio", "command": exe, "args": []string{"agentbridge"}, "env": env, "tools": []string{"*"}},
