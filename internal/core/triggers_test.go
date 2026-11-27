@@ -16,11 +16,9 @@ import (
 func TestScheduleTrigger(t *testing.T) {
 	stubKeychain(t)
 	clock := time.Date(2026, 11, 18, 9, 0, 0, 0, time.Local)
-	old := triggerNow
 	var clockMu sync.Mutex // the scheduler goroutine reads the clock too
-	triggerNow = func() time.Time { clockMu.Lock(); defer clockMu.Unlock(); return clock }
+	setTriggerClock(t, func() time.Time { clockMu.Lock(); defer clockMu.Unlock(); return clock })
 	setClock := func(c time.Time) { clockMu.Lock(); clock = c; clockMu.Unlock() }
-	t.Cleanup(func() { triggerNow = old })
 	h, ws := flowHub(t) // after the fake clock: the scheduler goroutine reads it
 
 	f, _ := flow.Load(ws, "notes")

@@ -182,9 +182,7 @@ func TestTriggerQueueAndRetry(t *testing.T) {
 
 	// retries: a failed run comes back after the wait, once
 	clock := time.Now()
-	old := triggerNow
-	triggerNow = func() time.Time { return clock }
-	t.Cleanup(func() { triggerNow = old })
+	setTriggerClock(t, func() time.Time { return clock })
 	saveTool(t, h, "flaky-tool", "exit 1")
 	toolFlow(t, h, "flaky", "flaky-tool", flow.Trigger{ID: "r", Kind: "flow", Name: "Retry me", Enabled: true, After: &flow.AfterFlow{Flow: "notes"}, Retries: 1, RetryWait: 10})
 	run, err := h.RunTriggerNow("flaky", "r")
