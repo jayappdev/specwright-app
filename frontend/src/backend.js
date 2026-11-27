@@ -13,6 +13,7 @@ const METHODS = [
   "BuildRules",
   "SaveRulesDoc",
   "ListFiles",
+  "RenderPlantUML",
   "ReadFile",
   "SetDiagram",
   "PickFolder",

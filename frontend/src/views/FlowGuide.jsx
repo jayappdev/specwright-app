@@ -1,5 +1,6 @@
 // Flow step guide: how to use each kind of flow step, with examples whose
 // results are previewed live and that open in the Flow designer.
+import { HtmlFrame } from "../Diagrams.jsx";
 import { useEffect, useState } from "react";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
@@ -187,16 +188,14 @@ function Example({ g, ex, k }) {
           ) : chartOf(res.output) && node.type !== "output" ? (
             <RenderPreview text={res.output} format="html" />
           ) : /^\s*<!doctype html/i.test(res.output || "") ? (
-            <iframe
+            <HtmlFrame
               className={
                 "fl-html guide-html" + (res.output.includes("data-specwright-dashboard") ? " guide-dash" : "")
               }
-              sandbox=""
-              srcDoc={res.output}
-              title="HTML preview"
+              html={res.output}
             />
           ) : node.type === "output" && node.format === "html" ? (
-            <iframe className="fl-html guide-html" sandbox="" srcDoc={res.output} title="HTML preview" />
+            <HtmlFrame className="fl-html guide-html" html={res.output} />
           ) : (
             <pre className="code guide-pre">{res.output}</pre>
           )}

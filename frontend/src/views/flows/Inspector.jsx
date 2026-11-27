@@ -1,6 +1,7 @@
 // The Flow designer's inspector: flow settings, inputs (incl. secret sources),
 // each step type's settings, decisions, filters, aggregates, connections, the
 // data panel (what a step gets and gives) and variable chips.
+import { HtmlFrame } from "../../Diagrams.jsx";
 import { LessonsEditor } from "./Lessons.jsx";
 import { TagEditor, allTags, allGroups } from "../../flowLists.jsx";
 import { HeadingPicker } from "../../listLayout.jsx";
@@ -842,7 +843,7 @@ export function Preview({ node }) {
           {res.output != null &&
             res.output !== "" &&
             (node.type === "output" && node.format === "html" ? (
-              <iframe className="fl-html" sandbox="" srcDoc={res.output} title="HTML preview" />
+              <HtmlFrame className="fl-html" html={res.output} />
             ) : (
               <pre className="code fl-out">{res.output}</pre>
             ))}

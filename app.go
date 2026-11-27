@@ -113,9 +113,12 @@ func (a *App) SaveRulesDoc(format, content string) (string, error) {
 }
 func (a *App) ListFiles() ([]string, error)        { return ok(a.hub.ListFiles()) }
 func (a *App) ReadFile(rel string) (string, error) { return ok(a.hub.ReadFile(rel)) }
-func (a *App) SetDiagram(kind, rel string) error   { return a.hub.SetDiagram(kind, rel) }
-func (a *App) Compile() (core.BuildResult, error)  { return ok(a.hub.Compile()) }
-func (a *App) Metrics() (core.Metrics, error)      { return ok(a.hub.Metrics()) }
+
+// RenderPlantUML draws a PlantUML diagram as SVG, on this computer (plantuml.go).
+func (a *App) RenderPlantUML(src string) (string, error) { return ok(a.hub.RenderPlantUML(src)) }
+func (a *App) SetDiagram(kind, rel string) error         { return a.hub.SetDiagram(kind, rel) }
+func (a *App) Compile() (core.BuildResult, error)        { return ok(a.hub.Compile()) }
+func (a *App) Metrics() (core.Metrics, error)            { return ok(a.hub.Metrics()) }
 
 // FlowSecretStatus: where each secret input of a flow gets its value (never the value).
 func (a *App) FlowSecretStatus(id string) ([]core.SecretInputState, error) {
