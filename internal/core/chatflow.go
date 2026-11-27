@@ -68,6 +68,10 @@ type ChatflowInfo struct {
 	// Asks: the tools that ask the person before they run
 	Asks      []string `json:"asks,omitempty"`
 	CostLimit float64  `json:"costLimit,omitempty"`
+	// Instructions: the Chat step's own guidance (Context panel), and Model
+	// when the step sets one
+	Instructions string `json:"instructions,omitempty"`
+	Model        string `json:"model,omitempty"`
 }
 
 func chatKey(flowID, id string) string { return flowID + "/" + id }
@@ -143,6 +147,7 @@ func (h *Hub) chatflowInfo(f *flow.Flow) ChatflowInfo {
 		}
 	}
 	info.CostLimit = c.CostLimit
+	info.Instructions, info.Model = strings.TrimSpace(c.Instructions), c.Model
 	for _, t := range info.Tools {
 		if !h.chatToolReadOnly(f, t) {
 			info.Asks = append(info.Asks, t.ID)

@@ -47,7 +47,7 @@ import { FlowGuide, HelpPanel, openFlowGuide, GUIDE_TYPES } from "./views/FlowGu
 import { FilePreview } from "./FilePreview.jsx";
 import { LibraryEditor } from "./views/LibraryEditor.jsx";
 import { DialogHost } from "./Dialog.jsx";
-import { RunPicker } from "./views/Playground.jsx";
+import { RunPicker, FilePicker } from "./views/Playground.jsx";
 import { installFileLinks } from "./FileLinks.jsx";
 import { installModalFocus, installTooltips } from "./a11y.js";
 import { CommandPalette, useCommandPalette, openPalette } from "./CommandPalette.jsx";
@@ -65,7 +65,7 @@ const VIEWS = [
   { id: "flows", label: "Flow designer", tab: "Library", icon: Icon.flow, C: Flows },
   { id: "flowrun", label: "Run flows", tab: "Runs", icon: Icon.run, C: FlowRun },
   { id: "chats", label: "Chats", icon: Icon.chat, C: Chats },
-  { id: "playground", label: "Ask AI (Playground)", icon: Icon.playground, C: Playground },
+  { id: "playground", label: "Ask AI", icon: Icon.playground, C: Playground },
   { id: "tools", label: "Tools", icon: Icon.tool, C: Tools },
   { id: "files", label: "Files", icon: Icon.files, C: Files },
   { id: "history", label: "History", icon: Icon.history, C: History },
@@ -591,6 +591,7 @@ export function App() {
       </ErrorBoundary>
       <ErrorBoundary floating name="The run picker">
         <RunPicker />
+        <FilePicker />
       </ErrorBoundary>
       <ErrorBoundary floating name="The dialog">
         <DialogHost />

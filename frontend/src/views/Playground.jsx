@@ -1,18 +1,24 @@
-// Prompt playground: send any prompt to the chosen agent in the workspace
-// and see its answer, every tool call with arguments and result, and the
-// tokens, cost or premium requests, model calls and timing of the run.
+// Ask AI: a conversation with the chosen agent about the project, laid out
+// as Chats (conversations on the left, the thread in the middle, the message
+// box at the bottom). Each question is a run; a follow-up is a run that
+// continues the one before (its parents), so the agent gets the earlier
+// questions and answers. Each answer shows the tools it ran and, on its ⓘ,
+// the tokens, cost or premium requests, model calls and time it took.
 import { registerPlace } from "../navigation.js";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { PROMPT_STATUS_LABEL, RUN_KIND_LONG } from "../labels.js";
 import { CopyButton } from "../CopyButton.jsx";
-import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHousekeeping.jsx";
+import { RunListBar, RunGroup, PickBox, visibleRuns } from "../RunHousekeeping.jsx";
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
 import { EmptyState, RefreshButton, usePoll, ListHead } from "../ui.jsx";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, isCopilot, fmtK, fmtMs, fmtCredits } from "../store.js";
-import { Icon, Pill, Stat, Chip } from "../ui.jsx";
+import { Icon, Pill, Chip, Crumbs } from "../ui.jsx";
+import { mdRender } from "../markdown.js";
+import { ago } from "../time.js";
+import { InfoTip } from "./ChatUsage.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { RunPanel } from "../components/RunPanel.jsx";
 import { agentLabel } from "./Setup.jsx";
@@ -23,6 +29,9 @@ import { ResultsLink } from "../RunResults.jsx";
 import { AiProgress } from "../AiProgress.jsx";
 import { applyToolRevision, reloadTool } from "./Tools.jsx";
 import { proposedTool } from "./tools/toolHistory.js";
+import { conversations, contextWindow, contextBlock } from "./askai.js";
+import { ContextPanel, ContextMeter, Rule, PanelToggle, panelOpen } from "../components/ContextPanel.jsx";
+import { askText } from "../Dialog.jsx";
 
 const EXAMPLES = [
   "Summarize what this project does and how it is organised",
@@ -149,14 +158,7 @@ async function select(id) {
         update();
       })
       .catch(() => {});
-  if (!S.loaded[id]) {
-    S.loaded[id] = true;
-    const evs = (await backend.RunEvents(id).catch(() => [])) || [];
-    const live = S.events[id] || [],
-      seen = new Set(evs.map((e) => e.seq));
-    S.events[id] = evs.concat(live.filter((e) => !seen.has(e.seq))).sort((a, b) => a.seq - b.seq);
-    update();
-  }
+  loadEvents(id);
 }
 
 // Reply to the selected run's answer: a new prompt that continues it.
@@ -164,8 +166,7 @@ async function reply(runId, text) {
   const p = pg();
   if (!text.trim()) return;
   p.prompt = text;
-  p.parents = [runId];
-  p.reply = "";
+  p.parents = [runId, ...(p.parents || []).filter((x) => x !== runId)];
   if (toolFor()[runId]) p.toolNext = toolFor()[runId];
   return run();
 }
@@ -183,11 +184,14 @@ async function run() {
   if (!prompt) return toast("Type a prompt first.");
   try {
     const parents = [...(p.parents || [])];
-    const id = await backend.RunPrompt(prompt, {
+    const added = [...(p.ctx || [])];
+    const id = await backend.RunPrompt(prompt + contextBlock(added), {
       tools: p.tools,
       model: p.model.trim(),
       parents,
       interactive: p.ask !== false,
+      // history shows the question itself, not the list of what was added
+      ...(added.length ? { ask: prompt, title: prompt.split("\n")[0].slice(0, 100) } : {}),
     });
     S.loaded[id] = true;
     S.events[id] ||= [];
@@ -196,6 +200,7 @@ async function run() {
       prompt,
       title: prompt.split("\n")[0].slice(0, 100),
       parents,
+      ctx: added,
       at: new Date().toISOString(),
       state: "running",
     });
@@ -317,140 +322,6 @@ function ToolCall({ c, n, runId }) {
         )}
       </div>
     </details>
-  );
-}
-
-// Composer: the prompt box. Full (examples, notes) for a new prompt; compact and
-// docked at the bottom while a run is open, so it stays in reach under long answers.
-function Composer({ compact, box, r, running, anyRunning }) {
-  const p = pg();
-  return (
-    <div className={"card pg-composer" + (compact ? " pg-dock" : "")}>
-      {compact && r?.kind !== "flow" && !running && (
-        <label className="check pg-dock-cont">
-          <input
-            type="checkbox"
-            checked={(p.parents || []).includes(r.id)}
-            onChange={(e) => {
-              p.parents = e.target.checked
-                ? [...new Set([...(p.parents || []), r.id])]
-                : (p.parents || []).filter((x) => x !== r.id);
-              update();
-            }}
-          />{" "}
-          Continue from this run (it goes to the agent as context)
-        </label>
-      )}
-      <textarea
-        ref={box}
-        rows={compact ? 2 : 5}
-        value={p.prompt}
-        placeholder={
-          compact
-            ? "Ask a follow-up or a new question…  (⌘/Ctrl + Enter to run)"
-            : "Ask the agent anything about this project…  (⌘/Ctrl + Enter to run)"
-        }
-        onChange={(e) => {
-          p.prompt = e.target.value;
-          update();
-        }}
-        onKeyDown={(e) => {
-          if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
-            e.preventDefault();
-            run();
-          }
-        }}
-      />
-      {p.parents?.length > 0 && (
-        <div className="pg-cont">
-          <span className="muted">
-            <Icon.history /> Continuing from:
-          </span>
-          {p.parents.map((id) => (
-            <span key={id} className="pg-cont-chip" title={id}>
-              {runTitle(id)}
-              <button
-                aria-label="Remove"
-                onClick={() => {
-                  p.parents = p.parents.filter((x) => x !== id);
-                  update();
-                }}
-              >
-                <Icon.x />
-              </button>
-            </span>
-          ))}
-          <span className="muted pg-cont-hint">
-            The earlier questions, answers and results folders go to the agent as context.
-          </span>
-        </div>
-      )}
-      {!compact && (
-        <div className="chips" style={{ marginTop: 8 }}>
-          {EXAMPLES.map((x) => (
-            <Chip
-              key={x}
-              onClick={() => {
-                p.prompt = x;
-                update();
-                box.current?.focus();
-              }}
-            >
-              {x.split(" ").slice(0, 5).join(" ")}…
-            </Chip>
-          ))}
-        </div>
-      )}
-      <div className="row-actions">
-        <button className="btn primary" disabled={anyRunning || !p.prompt.trim()} onClick={run}>
-          {anyRunning ? "Running…" : "Run prompt"}
-        </button>
-        {running && (
-          <button
-            className="btn secondary"
-            onClick={() => backend.CancelRun(r.id).catch((e) => toast(errMsg(e), "error"))}
-          >
-            Stop
-          </button>
-        )}
-        <button className="btn secondary" onClick={() => openPicker()}>
-          <Icon.history /> Refer to earlier runs…
-        </button>
-        <label className="check">
-          <input
-            type="checkbox"
-            checked={p.tools}
-            onChange={(e) => {
-              p.tools = e.target.checked;
-              update();
-            }}
-          />{" "}
-          Also offer project and admin tools
-        </label>
-        <label
-          className="check"
-          title="Copilot: instead of refusing what it may not do on its own (a command, or editing a file outside the project, such as your own extension in ~/.copilot/extensions), it asks you here. Edits inside the project need no question. Copilot reads files without asking, so with this on it can also read files outside the project."
-        >
-          <input
-            type="checkbox"
-            checked={p.ask !== false}
-            onChange={(e) => {
-              p.ask = e.target.checked;
-              update();
-            }}
-          />{" "}
-          Ask me to approve commands and edits outside the project
-        </label>
-      </div>
-      <AgentToolsList withProject={p.tools} />
-      {!compact && (
-        <p className="muted" style={{ margin: "8px 0 0" }}>
-          Runs in <code className="inline-code">{S.ws.root}</code> with the workflow's token and cost budget.
-          The agent can read and edit files there, as in a workflow step. The agent always has SpecWright's
-          built-in tools for reading, searching and editing files and running commands.
-        </p>
-      )}
-    </div>
   );
 }
 
@@ -616,9 +487,618 @@ function ToolApply({ name, answer, runId, proposed }) {
   );
 }
 
+// --- conversations ------------------------------------------------------------
+// A reply is a run whose first parent is the turn it answers, so a chain of
+// prompt runs is one conversation. A run continuing something else (a flow
+// run, a workflow step) starts a conversation of its own, with that run as
+// its context.
+
+// the conversation a run belongs to (its turns), or [] for a flow run
+function convOf(runs, id) {
+  for (const turns of conversations(runs).values()) if (turns.some((t) => t.id === id)) return turns;
+  return [];
+}
+
+// load a run's events once (the live ones are kept as they arrive)
+async function loadEvents(id) {
+  if (S.loaded[id]) return;
+  S.loaded[id] = true;
+  const evs = (await backend.RunEvents(id).catch(() => [])) || [];
+  const live = S.events[id] || [],
+    seen = new Set(evs.map((e) => e.seq));
+  S.events[id] = evs.concat(live.filter((e) => !seen.has(e.seq))).sort((a, b) => a.seq - b.seq);
+  update();
+}
+
+const answerOf = (evs) =>
+  evs
+    .filter((e) => e.type === "model.text")
+    .map((e) => e.text)
+    .join("\n\n");
+
+const sumUsage = (list) =>
+  list.reduce(
+    (t, u) => {
+      for (const k of ["in", "out", "cached", "calls", "premium", "usd", "tools", "toolErr", "ms"])
+        t[k] += u[k] || 0;
+      t.files.push(...(u.files || []));
+      return t;
+    },
+    { in: 0, out: 0, cached: 0, calls: 0, premium: 0, usd: 0, tools: 0, toolErr: 0, ms: 0, files: [] },
+  );
+
+function UsageRows({ u, model }) {
+  return (
+    <dl className="infotip-rows">
+      {[
+        model && ["Model", model],
+        ["Tokens", `${fmtK(u.in)} in (${fmtK(u.cached)} cached) · ${fmtK(u.out)} out`],
+        [isCopilot() ? "AI credits" : "Cost", fmtCredits(u)],
+        ["Model calls", String(u.calls)],
+        ["Tool calls", u.tools ? `${u.tools}${u.toolErr ? ` · ${u.toolErr} failed` : ""}` : "none"],
+        u.files.length ? ["Files changed", u.files.map((f) => f.path.split("/").pop()).join(", ")] : null,
+        ["Time", fmtMs(u.ms)],
+      ]
+        .filter(Boolean)
+        .map(([k, v]) => (
+          <div key={k}>
+            <dt>{k}</dt>
+            <dd>{v}</dd>
+          </div>
+        ))}
+    </dl>
+  );
+}
+
+// Turn: one question and the AI's answer, with what it ran
+function Turn({ t, last, anyRunning }) {
+  const evs = S.events[t.id] || [];
+  const state = stateOf(evs),
+    running = state === "running";
+  const answer = answerOf(evs),
+    calls = toolCalls(evs),
+    u = usageOf(evs);
+  const model = [...evs].reverse().find((e) => e.type === "model.request" && e.model)?.model;
+  const problems = evs.filter((e) =>
+    ["error", "loop.detected", "budget.exceeded", "run.retry", "tools.unreachable"].includes(e.type),
+  );
+  const ended = evs.some((e) => e.type === "run.end");
+  const outside = (t.parents || []).filter((id) => !convOf(pg().runs, t.id).some((x) => x.id === id));
+  return (
+    <>
+      <div className="chat-msg chat-user">
+        <div className="chat-avatar chat-avatar-user" aria-hidden="true">
+          <Icon.user />
+        </div>
+        <div className="chat-bubble">
+          {outside.length > 0 && (
+            <div className="pg-cont">
+              <span className="muted">
+                <Icon.history /> With the context of:
+              </span>
+              {outside.map((id) => (
+                <span key={id} className="pg-cont-chip" title={id}>
+                  {runTitle(id)}
+                </span>
+              ))}
+            </div>
+          )}
+          <div className="chat-q">{promptOf(t)}</div>
+          {(t.ctx || []).length > 0 && (
+            <div className="ctx-chips ctx-chips-sent">
+              {t.ctx.map((x) => (
+                <span key={x.kind + x.value} className="ctx-chip" title={x.value}>
+                  {ctxIcon(x.kind)} <span>{ctxLabel(x)}</span>
+                </span>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+      <div className="chat-msg chat-assistant">
+        <div className="chat-avatar chat-avatar-assistant" aria-hidden="true">
+          <Icon.spark />
+        </div>
+        <div className="chat-bubble">
+          <div className="chat-who">
+            Assistant
+            {t.at && <span className="muted"> · {ago(t.at)}</span>}
+            {running ? (
+              <span className="muted"> · {answer ? "writing…" : "working…"}</span>
+            ) : (
+              ["failed", "cancelled", "stopped", "error"].includes(state) && (
+                <Pill s={state} label={PROMPT_STATUS_LABEL[state] || state} />
+              )
+            )}
+            {ended && (
+              <InfoTip label="What this answer took">
+                <div className="infotip-title">This answer</div>
+                <UsageRows u={u} model={model} />
+              </InfoTip>
+            )}
+          </div>
+          {calls.length > 0 && (
+            <details className="pg-calls">
+              <summary className="chat-chip">
+                <Icon.tool /> {running && !ended ? "Running" : "Ran"} {calls.length} tool
+                {calls.length === 1 ? "" : "s"}
+                {u.toolErr ? ` · ${u.toolErr} failed` : ""}
+              </summary>
+              <div className="pg-tools">
+                {calls.map((c, k) => (
+                  <ToolCall key={c.call.seq} c={c} n={k + 1} runId={t.id} />
+                ))}
+              </div>
+            </details>
+          )}
+          {problems.map((e) => (
+            <div
+              key={e.seq}
+              className={
+                "banner" + (e.type === "run.retry" || e.type === "tools.unreachable" ? "" : " error")
+              }
+            >
+              <Linkify text={e.summary} />
+            </div>
+          ))}
+          {answer ? (
+            <div className="rich md" dangerouslySetInnerHTML={{ __html: mdRender(answer) }} />
+          ) : running ? (
+            <span className="chat-typing" aria-label="Thinking">
+              <i />
+              <i />
+              <i />
+            </span>
+          ) : (
+            ended && <p className="muted">No text answer.</p>
+          )}
+          {running && <AiProgress evs={evs} />}
+          {running && S.permAsks.some((x) => x.run === t.id || !x.run) && (
+            <div className="pg-waiting">
+              <Icon.shield /> Waiting for your approval to use <b>{S.permAsks[0].tool}</b>.
+            </div>
+          )}
+          {!running && (toolFor()[t.id] || proposedTool(evs)) && (
+            <ToolApply
+              name={proposedTool(evs)?.tool.name || toolFor()[t.id]}
+              answer={answer}
+              runId={t.id}
+              proposed={proposedTool(evs)}
+            />
+          )}
+          {ended && (
+            <div className="pg-turn-acts">
+              {answer && <CopyButton text={answer} format="md" />}
+              <details className="pg-more">
+                <summary className="muted">Details: results folder and full activity</summary>
+                <ResultsLink id={t.id} ended={ended} />
+                <RunPanel
+                  st={{ id: "playground", cmd: "playground", status: state, lastRun: t.id }}
+                  evs={evs}
+                  running={running}
+                />
+              </details>
+            </div>
+          )}
+          {last && ended && answer && asksUser(answer) && (
+            <div className="chat-follow">
+              {["Yes, go ahead", "No, don't do that", "Explain the options first"].map((x) => (
+                <button key={x} className="chip" disabled={anyRunning} onClick={() => reply(t.id, x)}>
+                  {x}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+      </div>
+    </>
+  );
+}
+
+// --- context the person adds (files, folders, web pages) ------------------------
+// It stays with the conversation until removed: each question lists it for
+// the AI (contextBlock), which reads or fetches it.
+function addCtx(kind, value) {
+  const p = pg();
+  p.ctx ||= [];
+  if (!p.ctx.some((x) => x.kind === kind && x.value === value)) p.ctx.push({ kind, value });
+  update();
+}
+function removeCtx(i) {
+  const p = pg();
+  p.ctx = (p.ctx || []).filter((_, j) => j !== i);
+  update();
+}
+async function addWebPage() {
+  const u = await askText("Add a web page", {
+    message:
+      "The AI fetches it with fetch_webpage before answering. Pages on this computer or an intranet ask you first.",
+    placeholder: "https://…",
+    ok: "Add",
+  });
+  if (u == null) return;
+  const v = u.trim();
+  if (!/^https?:\/\/\S+$/i.test(v)) return toast("That is not a web address (http:// or https://).", "error");
+  addCtx("url", v);
+}
+async function openFilePicker() {
+  S.pgFiles = { q: "", files: null };
+  update();
+  const files = (await backend.ListFiles().catch(() => [])) || [];
+  if (S.pgFiles) {
+    S.pgFiles.files = files;
+    update();
+  }
+}
+
+const ctxIcon = (k) => (k === "url" ? <Icon.link /> : k === "folder" ? <Icon.folder /> : <Icon.file />);
+const ctxLabel = (x) =>
+  x.kind === "url"
+    ? x.value.replace(/^https?:\/\//, "").slice(0, 48)
+    : x.value.split("/").slice(-2).join("/");
+
+// AddMenu: "+ Add" with its three kinds of context
+function AddMenu() {
+  return (
+    <details className="pg-add">
+      <summary className="btn secondary pg-add-btn" title="Add files, folders, web pages or earlier runs">
+        <Icon.plus /> Add
+      </summary>
+      <div className="pg-add-menu" role="menu">
+        {[
+          [<Icon.file key="f" />, "File or folder from the project…", openFilePicker],
+          [<Icon.link key="l" />, "Web page…", addWebPage],
+          [<Icon.history key="h" />, "Earlier runs…", () => openPicker()],
+        ].map(([ic, text, fn]) => (
+          <button
+            key={text}
+            role="menuitem"
+            onClick={(e) => {
+              e.currentTarget.closest("details").open = false;
+              fn();
+            }}
+          >
+            {ic} {text}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+// ContextChips: what goes with the next question, above the message box
+function ContextChips() {
+  const p = pg();
+  const ctx = p.ctx || [],
+    parents = p.parents || [];
+  if (!ctx.length && !parents.length) return null;
+  return (
+    <div className="ctx-chips" aria-label="Added to the conversation">
+      {parents.map((id) => (
+        <span key={id} className="ctx-chip" title={"Earlier run: " + runTitle(id)}>
+          <Icon.history /> <span>{runTitle(id)}</span>
+          <button
+            aria-label={"Remove " + runTitle(id)}
+            onClick={() => {
+              p.parents = parents.filter((x) => x !== id);
+              update();
+            }}
+          >
+            <Icon.x />
+          </button>
+        </span>
+      ))}
+      {ctx.map((x, i) => (
+        <span key={x.kind + x.value} className="ctx-chip" title={x.value}>
+          {ctxIcon(x.kind)} <span>{ctxLabel(x)}</span>
+          <button aria-label={"Remove " + x.value} onClick={() => removeCtx(i)}>
+            <Icon.x />
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// FilePicker: search the project's files and folders, and add one
+export function FilePicker() {
+  const k = S.pgFiles;
+  if (!k) return null;
+  const close = () => {
+    S.pgFiles = null;
+    update();
+  };
+  // the app's own folder (runs, results) is not project context
+  const all = (k.files || []).filter((f) => !/^\.(codegen|git)\//.test(f));
+  const folders = [
+    ...new Set(
+      all.flatMap((f) =>
+        f
+          .split("/")
+          .slice(0, -1)
+          .map((_, i, a) => a.slice(0, i + 1).join("/")),
+      ),
+    ),
+  ];
+  const q = k.q.trim().toLowerCase();
+  const hits = [
+    ...folders.filter((f) => !q || f.toLowerCase().includes(q)).map((f) => ["folder", f]),
+    ...all.filter((f) => !q || f.toLowerCase().includes(q)).map((f) => ["file", f]),
+  ].slice(0, 60);
+  return (
+    <div className="modal-backdrop dlg-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div className="dlg pg-filepick" role="dialog" aria-modal="true" aria-label="Add a file or folder">
+        <h3>Add a file or folder</h3>
+        <p className="dlg-msg">The AI reads it before answering, for the rest of this conversation.</p>
+        <input
+          autoFocus
+          value={k.q}
+          placeholder="Search the project…"
+          aria-label="Search the project's files"
+          onChange={(e) => {
+            k.q = e.target.value;
+            update();
+          }}
+          onKeyDown={(e) => e.key === "Escape" && close()}
+        />
+        <div className="pg-filepick-list" role="listbox" aria-label="Files and folders">
+          {k.files === null && <p className="muted">Loading…</p>}
+          {k.files !== null && !hits.length && <p className="muted">Nothing matches.</p>}
+          {hits.map(([kind, f]) => (
+            <button
+              key={kind + f}
+              role="option"
+              aria-selected="false"
+              onClick={() => {
+                addCtx(kind, f);
+                close();
+              }}
+            >
+              {ctxIcon(kind)} <span>{f}</span>
+              {kind === "folder" && <small className="muted">folder</small>}
+            </button>
+          ))}
+        </div>
+        <div className="row-actions">
+          <button className="btn secondary" onClick={close}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// the input tokens of the last model call in these turns: how full the
+// context was
+function lastContext(turns) {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const evs = S.events[turns[i].id] || [];
+    const e = [...evs].reverse().find((x) => x.type === "model.request" && x.input_tokens);
+    if (e) return { tokens: e.input_tokens, model: e.model || "" };
+  }
+  return { tokens: 0, model: "" };
+}
+
+// AskComposer: the message box at the bottom, as in Chats; the run's
+// options sit behind "Options"
+function AskComposer({ box, last, running, anyRunning, turns }) {
+  const p = pg();
+  const lc = lastContext(turns);
+  const send = () => (last ? reply(last.id, p.prompt) : run());
+  return (
+    <div className="chat-composer pg-composer">
+      <div className="chat-compose-card">
+        <ContextChips />
+        <textarea
+          ref={box}
+          rows={2}
+          value={p.prompt}
+          aria-label="Your question"
+          placeholder={last ? "Ask a follow-up…" : "Ask anything about this project…"}
+          onChange={(e) => {
+            p.prompt = e.target.value;
+            update();
+          }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              if (!anyRunning && p.prompt.trim()) send();
+            }
+          }}
+        />
+        <div className="chat-compose-row">
+          <AddMenu />
+          <ContextMeter tokens={lc.tokens} window={contextWindow(lc.model || p.model)} compact />
+          <small className="chat-hint">
+            <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line
+          </small>
+          {running ? (
+            <button
+              className="btn secondary"
+              onClick={() => backend.CancelRun(last.id).catch((e) => toast(errMsg(e), "error"))}
+            >
+              Stop
+            </button>
+          ) : (
+            <button
+              className="btn primary chat-send"
+              disabled={anyRunning || !p.prompt.trim()}
+              onClick={send}
+            >
+              <Icon.send /> Send
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// files the AI read in these turns (read_file and the CLIs' own Read/View)
+function filesRead(turns) {
+  const seen = new Set();
+  for (const t of turns)
+    for (const c of toolCalls(S.events[t.id] || [])) {
+      const name = (c.call.tool || "").replace(/^mcp__agentbridge__/, "");
+      if (!/^(read_file|Read|view|read)$/i.test(name)) continue;
+      const a = c.call.args || {};
+      const f = a.path || a.file_path || a.file;
+      if (typeof f === "string" && f) seen.add(f);
+    }
+  return [...seen];
+}
+
+// AskContext: the Context panel of an Ask AI conversation
+function AskContext({ turns, total }) {
+  const p = pg();
+  const root = turns[0];
+  const earlier = [
+    ...new Set([
+      ...((root?.parents || []).filter((id) => !turns.some((t) => t.id === id)) || []),
+      ...(p.parents || []).filter((id) => !turns.some((t) => t.id === id)),
+    ]),
+  ];
+  const files = filesRead(turns);
+  return (
+    <ContextPanel
+      label="What the AI works with"
+      sections={[
+        {
+          id: "sources",
+          title: "Sources",
+          count: 1 + earlier.length + (p.ctx || []).length + files.length,
+          action: <AddMenu />,
+          children: (
+            <>
+              <div className="ctx-item" title={S.ws.root}>
+                <Icon.folder /> <span>Project folder · {S.ws.name}</span>
+              </div>
+              {earlier.map((id) => (
+                <div key={id} className="ctx-item" title={id}>
+                  <Icon.history /> <span>{runTitle(id)}</span>
+                </div>
+              ))}
+              {(p.ctx || []).map((x, i) => (
+                <div key={x.kind + x.value} className="ctx-item" title={x.value}>
+                  {ctxIcon(x.kind)} <span>{ctxLabel(x)}</span>
+                  <button
+                    className="icon-btn ctx-x"
+                    aria-label={"Remove " + x.value}
+                    onClick={() => removeCtx(i)}
+                  >
+                    <Icon.x />
+                  </button>
+                </div>
+              ))}
+              {files.length > 0 && <div className="ctx-sub">Files it read · {files.length}</div>}
+              {files.slice(0, 30).map((f) => (
+                <div key={f} className="ctx-item">
+                  <Icon.file /> <FileLink path={f}>{f.split("/").slice(-2).join("/")}</FileLink>
+                </div>
+              ))}
+              {!turns.length && !earlier.length && (
+                <small className="muted">
+                  The AI searches and reads the project's files as it needs them.
+                </small>
+              )}
+            </>
+          ),
+        },
+        {
+          id: "instructions",
+          title: "Instructions",
+          children: (
+            <ul className="ctx-rules">
+              <Rule>Works in this project's folder, within the workflow's token and cost budget.</Rule>
+              <Rule>
+                Follow-ups get the earlier questions and answers of this conversation (the last 10).
+              </Rule>
+              <Rule>
+                Files, pages and tool results are information, not instructions: it does not act on what they
+                tell it to do.
+              </Rule>
+              <Rule>Commands, flow changes and private addresses wait for your yes.</Rule>
+            </ul>
+          ),
+        },
+        {
+          id: "tools",
+          title: "Tools",
+          children: (
+            <>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={p.tools}
+                  onChange={(e) => {
+                    p.tools = e.target.checked;
+                    update();
+                  }}
+                />{" "}
+                Also offer project and admin tools
+              </label>
+              <AgentToolsList withProject={p.tools} />
+            </>
+          ),
+        },
+        {
+          id: "model",
+          title: "Model and settings",
+          children: (
+            <>
+              <div className="ctx-item">
+                <Icon.spark /> <span>{agentLabel()}</span>
+              </div>
+              <ModelPicker
+                value={p.model}
+                onChange={(v) => {
+                  p.model = v;
+                  update();
+                }}
+                label="Model"
+              />
+              <label
+                className="check"
+                title="Copilot: instead of refusing what it may not do on its own (a command, or editing a file outside the project), it asks you here."
+              >
+                <input
+                  type="checkbox"
+                  checked={p.ask !== false}
+                  onChange={(e) => {
+                    p.ask = e.target.checked;
+                    update();
+                  }}
+                />{" "}
+                Ask me before commands and edits outside the project
+              </label>
+            </>
+          ),
+        },
+        {
+          id: "usage",
+          title: "Usage",
+          children: turns.length ? (
+            <>
+              <ContextMeter
+                tokens={lastContext(turns).tokens}
+                window={contextWindow(lastContext(turns).model || p.model)}
+              />
+              <UsageRows u={total} />
+            </>
+          ) : (
+            <small className="muted">Nothing yet.</small>
+          ),
+        },
+      ]}
+    />
+  );
+}
+
 export function Playground() {
   const p = pg(),
-    box = useRef(null);
+    box = useRef(null),
+    end = useRef(null);
   useEffect(() => {
     loadPast();
   }, [S.ws?.root]);
@@ -629,72 +1109,87 @@ export function Playground() {
     const t = setTimeout(() => loadPast(true), 400); // the run is recorded first
     return () => clearTimeout(t);
   }, [S.pgStale]);
-  if (!S.ws) return <NeedWorkspace what="the playground" />;
+  const r = p.runs.find((x) => x.id === p.sel);
+  const turns = r && r.kind !== "flow" ? convOf(p.runs, r.id) : [];
+  const last = turns[turns.length - 1];
+  const lastEvs = last ? S.events[last.id] || [] : [];
+  useEffect(() => {
+    turns.forEach((t) => loadEvents(t.id));
+  }, [turns.map((t) => t.id).join(",")]);
+  useEffect(() => {
+    end.current?.scrollIntoView({ block: "end" });
+  }, [last?.id, lastEvs.length]);
+  if (!S.ws) return <NeedWorkspace what="Ask AI" />;
   for (const [id, fst] of Object.entries(S.flowRuns))
     if (!p.runs.some((x) => x.id === id))
       p.runs.unshift({ id, prompt: "", at: fst.started, state: fst.status, kind: "flow", flow: fst.flowId });
-  const r = p.runs.find((x) => x.id === p.sel);
-  const evs = r ? S.events[r.id] || [] : [];
-  const state = r ? stateOf(evs) : null,
-    running = state === "running";
-  const u = usageOf(evs),
-    calls = toolCalls(evs);
-  const answer = evs
-    .filter((e) => e.type === "model.text")
-    .map((e) => e.text)
-    .join("\n\n");
-  const problems = evs.filter((e) =>
-    ["error", "loop.detected", "budget.exceeded", "run.retry", "tools.unreachable"].includes(e.type),
-  );
-  const model = [...evs].reverse().find((e) => e.type === "model.request" && e.model)?.model;
-  const anyRunning = p.runs.some((x) => stateOf(S.events[x.id] || []) === "running");
+  const running = last ? stateOf(lastEvs) === "running" : false;
+  const anyRunning = p.runs.some((x) => x.kind !== "flow" && stateOf(S.events[x.id] || []) === "running");
+  const convs = conversations(p.runs);
+  // the list: one row per conversation (its first question), and flow runs
+  const items = [
+    ...[...convs.entries()].map(([root, ts]) => ({
+      ...ts[0],
+      id: root,
+      turns: ts,
+      last: ts[ts.length - 1],
+      at: ts[ts.length - 1].at,
+    })),
+    ...p.runs.filter((x) => x.kind === "flow"),
+  ].sort((a, b) => String(b.at).localeCompare(String(a.at)));
+  const title = turns.length ? (turns[0].title || promptOf(turns[0])).split("\n")[0] : "";
+  const newConversation = () => {
+    p.sel = "";
+    p.prompt = "";
+    p.parents = [];
+    p.ctx = [];
+    update();
+    setTimeout(() => box.current?.focus(), 0);
+  };
+  const total = sumUsage(turns.map((t) => usageOf(S.events[t.id] || [])));
   return (
-    <div className="files pg">
-      <Pane k="playground" v="--pane-l" pane=".ftree" min={200} max={560} label="Resize the run list" />
-      <nav className="ftree" aria-label="Playground prompts">
-        <ListHead title="Playground">
-          <RefreshButton
-            label="Refresh the Playground runs"
-            every={PLAYGROUND_POLL}
-            onRefresh={() => loadPast(true)}
-          />
-          <button
-            className="btn primary"
-            onClick={() => {
-              p.sel = "";
-              p.prompt = "";
-              update();
-              setTimeout(() => box.current?.focus(), 0);
-            }}
-          >
+    <div className={"files chats askai" + (r?.kind !== "flow" && panelOpen() ? " with-panel" : "")}>
+      <Pane
+        k="playground"
+        v="--pane-l"
+        pane=".ftree"
+        min={200}
+        max={560}
+        label="Resize the conversation list"
+      />
+      <nav className="ftree" aria-label="Ask AI conversations">
+        <ListHead title="Ask AI" count={convs.size || null}>
+          <RefreshButton label="Refresh the list" every={PLAYGROUND_POLL} onRefresh={() => loadPast(true)} />
+          <button className="btn primary" onClick={newConversation}>
             <Icon.plus /> New
           </button>
         </ListHead>
-        {!p.runs.length && (
-          <EmptyState compact title="No prompts yet">
-            Prompts you run appear here, with their answers, tool calls and files changed. Write one on the
-            right; ⌘Enter / Ctrl+Enter runs it.
+        {!items.length && (
+          <EmptyState compact title="No conversations yet">
+            Your questions to the AI about this project appear here, each with its follow-ups.
           </EmptyState>
         )}
-        {p.runs.length > 0 && <RunListBar area="playground" runs={p.runs} />}
+        {items.length > 0 && <RunListBar area="playground" runs={items} />}
         {visibleRuns(
           "playground",
-          p.runs,
-          (x) => (x.title || "") + " " + (x.prompt || "") + " " + (x.flow || ""),
+          items,
+          (x) =>
+            (x.turns || [x]).map((t) => (t.title || "") + " " + (t.prompt || "")).join(" ") +
+            " " +
+            (x.flow || ""),
         ).map(([g, list]) => (
           <RunGroup key={g || "-"} area="playground" name={g} count={list.length}>
             {list.map((x) => {
-              const st = stateOf(S.events[x.id] || []),
-                fst = x.kind === "flow" ? S.flowRuns[x.id] : null;
+              const fst = x.kind === "flow" ? S.flowRuns[x.id] : null;
+              const active = x.kind === "flow" ? x.id === p.sel : x.turns.some((t) => t.id === p.sel);
+              const lst = x.kind === "flow" ? null : stateOf(S.events[x.last.id] || []);
               return (
                 <button
                   key={x.id}
                   className={
-                    "run-item" +
-                    (x.id === p.sel ? " active" : "") +
-                    (x.kind === "flow" ? " pg-flow-item" : "")
+                    "run-item" + (active ? " active" : "") + (x.kind === "flow" ? " pg-flow-item" : "")
                   }
-                  onClick={() => select(x.id)}
+                  onClick={() => select(x.kind === "flow" ? x.id : x.last.id)}
                 >
                   <PickBox area="playground" id={x.id} />
                   <span className="run-item-top">
@@ -706,14 +1201,7 @@ export function Playground() {
                         {fst?.flowName || x.flow}
                       </span>
                     ) : (
-                      <span className="pg-item-text">
-                        {x.parents?.length ? (
-                          <span className="pg-thread-mark" title="Continues earlier runs">
-                            ↳{" "}
-                          </span>
-                        ) : null}
-                        {(x.title || promptOf(x)).split("\n")[0]}
-                      </span>
+                      <span className="pg-item-text">{(x.title || promptOf(x)).split("\n")[0]}</span>
                     )}
                     {x.kind === "flow" ? (
                       <Pill
@@ -739,196 +1227,91 @@ export function Playground() {
                           }[fst?.status || x.state]
                         }
                       />
-                    ) : S.events[x.id]?.length ? (
-                      <Pill s={st} label={PROMPT_STATUS_LABEL[st]} />
+                    ) : lst === "running" || lst === "failed" || lst === "cancelled" ? (
+                      <Pill s={lst} label={PROMPT_STATUS_LABEL[lst]} />
                     ) : null}
                   </span>
-                  <small>{new Date(x.at).toLocaleString()}</small>
+                  <small>
+                    {x.kind === "flow"
+                      ? new Date(x.at).toLocaleString()
+                      : `${x.turns.length} question${x.turns.length === 1 ? "" : "s"} · ${ago(x.at)}`}
+                  </small>
                 </button>
               );
             })}
           </RunGroup>
         ))}
       </nav>
-      <div className="fview">
-        <header className="view-head">
-          <h1>Prompt playground</h1>
-          <div className="head-controls head-model">
-            <span className="muted">
-              Agent: {agentLabel()} · {S.ws.name}
-            </span>
-            <ModelPicker
-              value={p.model}
-              onChange={(v) => {
-                p.model = v;
-                update();
-              }}
-              label="Model"
-            />
-          </div>
-        </header>
-        {!r && <Composer box={box} r={null} running={false} anyRunning={anyRunning} />}
-
-        {r?.kind === "flow" && <FlowWatch r={r} evs={evs} />}
-        {r && r.kind !== "flow" && (
-          <>
-            <Thread r={r} />
-            <div className="pg-you">
-              <span className="pg-you-tag">You</span>
-              <div>{promptOf(r)}</div>
-            </div>
-            <div className="card run-card">
-              <div className="card-head">
-                <h3>Usage</h3>
-                {running ? (
-                  <span className="spinner" />
-                ) : (
-                  <Pill s={state} label={PROMPT_STATUS_LABEL[state]} />
-                )}
-                {model && <span className="badge">{model}</span>}
-              </div>
-              <div className="mstats">
-                <Stat v={fmtMs(u.ms)} l="Elapsed" />
-                <Stat
-                  v={fmtK(u.in + u.out)}
-                  l="Tokens"
-                  sub={`${fmtK(u.in)} in · ${fmtK(u.out)} out · ${fmtK(u.cached)} cached`}
-                />
-                <Stat
-                  v={fmtCredits(u)}
-                  l={isCopilot() ? "AI credits" : "Cost"}
-                  sub={isCopilot() ? "premium requests" : "reported by the CLI"}
-                />
-                <Stat v={u.calls} l="Model calls" />
-                <Stat v={u.tools} l="Tool calls" sub={`${u.toolErr} failed`} />
-                <Stat
-                  v={u.files.length}
-                  l="Files changed"
-                  sub={u.files
-                    .map((f) => f.path.split("/").pop())
-                    .slice(0, 3)
-                    .join(", ")}
-                />
-              </div>
-              <ResultsLink id={r.id} ended={!running && evs.some((e) => e.type === "run.end")} />
-              {!running && (
-                <div className="row-actions hk-run-actions">
-                  <RunActions area="playground" runs={p.runs} run={r} />
-                </div>
-              )}
-            </div>
-            {problems.map((e) => (
-              <div
-                key={e.seq}
-                className={
-                  "banner" + (e.type === "run.retry" || e.type === "tools.unreachable" ? "" : " error")
-                }
-              >
-                <Linkify text={e.summary} />
-              </div>
-            ))}
-            <div className="card pg-answer">
-              <div className="card-head">
-                <h3>Output</h3>
-                {answer && <CopyButton text={answer} format="md" />}
-                {!running && evs.length > 0 && (
-                  <button className="btn primary pg-continue" onClick={() => continueInPlayground([r.id])}>
-                    <Icon.history /> Continue this conversation
-                  </button>
+      {r?.kind === "flow" ? (
+        <div className="fview">
+          <FlowWatch r={r} evs={S.events[r.id] || []} />
+        </div>
+      ) : (
+        <section className="chat-main">
+          <header className="chat-head">
+            <div className="chat-head-title">
+              <Crumbs
+                items={[
+                  ["Ask AI", turns.length ? newConversation : null],
+                  ...(turns.length ? [[title, null]] : []),
+                ]}
+              />
+              <h2>{title || "New conversation"}</h2>
+              <div className="chat-head-meta">
+                <span>
+                  {agentLabel()} · {S.ws.name}
+                </span>
+                {turns.length > 0 && (
+                  <span>
+                    {turns.length} question{turns.length === 1 ? "" : "s"}
+                  </span>
                 )}
               </div>
-              {answer ? (
-                <div className="row assistant pg-text">
-                  <Linkify text={answer} />
-                  {running && <span className="caret" />}
-                </div>
-              ) : (
-                !running && <p className="muted">No text output.</p>
+            </div>
+            <div className="chat-head-acts">
+              {turns.length > 0 && (
+                <InfoTip label="What this conversation took" align="end">
+                  <div className="infotip-title">This conversation</div>
+                  <UsageRows u={total} />
+                </InfoTip>
               )}
-              {running && <AiProgress evs={evs} />}
-              {running && S.permAsks.some((x) => x.run === r.id || !x.run) && (
-                <div className="pg-waiting">
-                  <Icon.shield /> Waiting for your approval to use <b>{S.permAsks[0].tool}</b>.
-                </div>
-              )}
-              {!running && (toolFor()[r.id] || proposedTool(evs)) && (
-                <ToolApply
-                  name={proposedTool(evs)?.tool.name || toolFor()[r.id]}
-                  answer={answer}
-                  runId={r.id}
-                  proposed={proposedTool(evs)}
-                />
-              )}
-              {!running && answer && evs.some((e) => e.type === "run.end") && (
-                <div className={"pg-reply" + (asksUser(answer) ? " asks" : "")}>
-                  {asksUser(answer) && (
-                    <div className="pg-reply-q">
-                      <span className="muted">The AI is asking you:</span>
-                      {["Yes, go ahead", "No, don't do that", "Explain the options first"].map((x) => (
-                        <button key={x} className="chip" disabled={anyRunning} onClick={() => reply(r.id, x)}>
-                          {x}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                  <div className="pg-reply-box">
-                    <input
-                      value={p.reply || ""}
-                      placeholder={
-                        asksUser(answer) ? "Answer the AI…" : "Reply to continue this conversation…"
-                      }
-                      aria-label="Reply"
-                      onChange={(e) => {
-                        p.reply = e.target.value;
+              <PanelToggle />
+            </div>
+          </header>
+          <div className="chat-scroll">
+            {!turns.length && (
+              <div className="chat-empty pg-empty">
+                <h3>Ask AI about this project</h3>
+                <p className="muted">
+                  The AI reads, searches and edits the project's files and runs commands, asking you before
+                  anything risky. Follow-up questions continue the same conversation.
+                </p>
+                <div className="chips">
+                  {EXAMPLES.map((x) => (
+                    <Chip
+                      key={x}
+                      onClick={() => {
+                        p.prompt = x;
                         update();
+                        box.current?.focus();
                       }}
-                      onKeyDown={(e) => {
-                        if (e.key === "Enter" && !e.shiftKey) {
-                          e.preventDefault();
-                          reply(r.id, p.reply || "");
-                        }
-                      }}
-                    />
-                    <button
-                      className="btn primary"
-                      disabled={anyRunning || !(p.reply || "").trim()}
-                      onClick={() => reply(r.id, p.reply || "")}
                     >
-                      Reply
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
-            <div className="card">
-              <div className="card-head">
-                <h3>Tool usage</h3>
-                <span className="badge">{calls.length}</span>
-              </div>
-              {calls.length ? (
-                <div className="pg-tools">
-                  {calls.map((c, k) => (
-                    <ToolCall key={c.call.seq} c={c} n={k + 1} runId={r.id} />
+                      {x}
+                    </Chip>
                   ))}
                 </div>
-              ) : (
-                <p className="muted">
-                  {running ? "No tool calls yet." : "The agent answered without tools."}
-                </p>
-              )}
-            </div>
-            <details className="pg-more">
-              <summary className="muted">Full activity, files changed and raw events</summary>
-              <RunPanel
-                st={{ id: "playground", cmd: "playground", status: state, lastRun: r.id }}
-                evs={evs}
-                running={running}
-              />
-            </details>
-          </>
-        )}
-        {r && <Composer compact box={box} r={r} running={running} anyRunning={anyRunning} />}
-      </div>
+              </div>
+            )}
+            {turns[0] && <Thread r={turns[0]} />}
+            {turns.map((t) => (
+              <Turn key={t.id} t={t} last={t === last} anyRunning={anyRunning} />
+            ))}
+            <div ref={end} />
+          </div>
+          <AskComposer box={box} last={last} running={running} anyRunning={anyRunning} turns={turns} />
+        </section>
+      )}
+      {r?.kind !== "flow" && panelOpen() && <AskContext turns={turns} total={total} />}
     </div>
   );
 }

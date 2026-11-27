@@ -866,7 +866,8 @@ pre .file-link,
   grid-template-areas:
     "icon name status"
     "icon desc desc"
-    "icon extra extra";
+    "icon rel rel"
+    "icon tags tags";
   column-gap: 10px;
   row-gap: 1px;
   align-items: center;
@@ -906,7 +907,15 @@ pre .file-link,
   white-space: nowrap;
   -webkit-line-clamp: unset;
 }
-.tool-tile.compact .tt-rel,
+/* the run summary and the tags each get a line: a tool with both used to
+   draw them on top of each other */
+.tool-tile.compact .tt-rel {
+  grid-area: rel;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .tool-tile.compact .tt-tags {
-  grid-area: extra;
+  grid-area: tags;
+  margin-top: 3px;
 }

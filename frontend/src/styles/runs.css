@@ -4481,3 +4481,399 @@ main.main[data-view="chats"] {
   margin-bottom: 6px;
   font-size: 12px;
 }
+
+/* ---- Ask AI as a conversation (views/Playground.jsx) ----------------------------- */
+main.main[data-view="playground"] {
+  min-height: 0;
+  overflow: hidden;
+}
+.files.askai {
+  height: calc(100vh - 24px);
+  min-height: 0;
+}
+.files.askai > .fview {
+  overflow: auto;
+  min-height: 0;
+}
+.pg-empty {
+  flex-direction: column;
+  align-items: flex-start;
+  max-width: 640px;
+}
+.pg-empty h3 {
+  margin: 0;
+}
+.pg-calls {
+  margin: 2px 0 8px;
+}
+.pg-calls > summary {
+  list-style: none;
+}
+.pg-calls > summary::-webkit-details-marker {
+  display: none;
+}
+.pg-calls[open] > summary {
+  margin-bottom: 6px;
+}
+.pg-turn-acts {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin-top: 8px;
+  font-size: 12px;
+}
+.pg-turn-acts .pg-more {
+  flex-basis: 100%;
+}
+.pg-options {
+  position: relative;
+}
+.pg-options > summary {
+  list-style: none;
+}
+.pg-options > summary::-webkit-details-marker {
+  display: none;
+}
+.pg-options-card {
+  position: absolute;
+  bottom: calc(100% + 6px);
+  left: 0;
+  z-index: 20;
+  width: min(460px, 80vw);
+  max-height: 60vh;
+  overflow: auto;
+  padding: 12px;
+  display: grid;
+  gap: 8px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.45);
+}
+.pg-where {
+  margin: 0;
+  font-size: 12px;
+}
+.askai .chat-head-acts {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.files.askai {
+  grid-template-columns: var(--pane-l, 260px) minmax(0, 1fr);
+}
+.askai .chat-main,
+.askai .chat-head-title {
+  min-width: 0;
+}
+.askai .chat-head h2 {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+/* ---- Context panel (components/ContextPanel.jsx): Chats and Ask AI ------------------ */
+.files.askai.with-panel {
+  grid-template-columns: var(--pane-l, 260px) minmax(0, 1fr) 280px;
+}
+.ctx-panel {
+  padding: 10px 12px;
+}
+.ctx-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin: 2px 0 10px;
+}
+.ctx-sec {
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+  margin: 0 !important;
+}
+.ctx-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 !important;
+}
+.ctx-fold {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+.ctx-caret {
+  display: inline-block;
+  transform: rotate(90deg);
+  transition: transform 0.12s;
+  font-size: 10px;
+}
+.ctx-sec.folded .ctx-caret {
+  transform: none;
+}
+.ctx-count {
+  font-variant-numeric: tabular-nums;
+  background: var(--chip-bg, var(--border));
+  border-radius: 99px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  letter-spacing: 0;
+}
+.ctx-h .link {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.ctx-body {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ctx-item > span,
+.ctx-item > .file-link {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-item svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+.ctx-sub {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.ctx-rules {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+  font-size: 12.5px;
+}
+.ctx-panel .pg-agenttools {
+  margin: 0;
+}
+.files.chats.with-panel:not(.askai) {
+  grid-template-columns: var(--pane-l, 260px) minmax(0, 1fr) 280px;
+}
+.ctx-instr {
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border);
+  max-height: 180px;
+  overflow: auto;
+}
+
+/* ---- Context chips, the Add menu and the context meter -------------------------- */
+.ctx-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 2px 2px 6px;
+}
+.ctx-chips-sent {
+  padding: 6px 0 0;
+}
+.ctx-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  max-width: 240px;
+  padding: 2px 4px 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 99px;
+  font-size: 12px;
+  background: none;
+  color: inherit;
+  font-family: inherit;
+}
+button.ctx-chip {
+  cursor: pointer;
+  padding-right: 8px;
+}
+.ctx-chip > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-chip svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  color: var(--muted);
+}
+.ctx-chip > button {
+  background: none;
+  border: 0;
+  padding: 0 2px;
+  cursor: pointer;
+  color: var(--muted);
+  display: inline-flex;
+}
+.ctx-x {
+  margin-left: auto;
+}
+.pg-add {
+  position: relative;
+}
+.pg-add > summary {
+  list-style: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.pg-add > summary::-webkit-details-marker {
+  display: none;
+}
+.ctx-h .pg-add > summary {
+  padding: 1px 8px;
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+}
+.pg-add-menu {
+  position: absolute;
+  z-index: 30;
+  bottom: calc(100% + 6px);
+  left: 0;
+  min-width: 240px;
+  padding: 4px;
+  display: grid;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  box-shadow: 0 12px 32px -12px rgb(0 0 0 / 0.45);
+}
+.ctx-h .pg-add-menu {
+  bottom: auto;
+  top: calc(100% + 4px);
+  left: auto;
+  right: 0;
+  text-transform: none;
+  letter-spacing: 0;
+  font-weight: normal;
+}
+.pg-add-menu button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 7px 10px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+.pg-add-menu button:hover,
+.pg-add-menu button:focus-visible {
+  background: var(--hover, rgb(127 127 127 / 0.12));
+}
+.pg-add-menu svg {
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+.pg-filepick {
+  width: min(560px, 92vw);
+}
+.pg-filepick > input {
+  width: 100%;
+}
+.pg-filepick-list {
+  margin-top: 8px;
+  max-height: 50vh;
+  overflow: auto;
+  display: grid;
+}
+.pg-filepick-list button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  text-align: left;
+  background: none;
+  border: 0;
+  padding: 5px 8px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: inherit;
+  font: inherit;
+  font-size: 13px;
+}
+.pg-filepick-list button:hover,
+.pg-filepick-list button:focus-visible {
+  background: var(--hover, rgb(127 127 127 / 0.12));
+}
+.pg-filepick-list button > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.pg-filepick-list button small {
+  margin-left: auto;
+}
+.pg-filepick-list svg {
+  width: 14px;
+  height: 14px;
+  flex: none;
+  color: var(--muted);
+}
+.ctx-meter {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.ctx-meter-bar {
+  display: inline-block;
+  width: 64px;
+  height: 5px;
+  border-radius: 99px;
+  background: var(--border);
+  overflow: hidden;
+}
+.ctx-meter.compact .ctx-meter-bar {
+  width: 40px;
+}
+.ctx-meter-bar > i {
+  display: block;
+  height: 100%;
+  background: var(--accent, #3b82f6);
+}
+.ctx-meter.mid .ctx-meter-bar > i {
+  background: var(--warn, #d97706);
+}
+.ctx-meter.high .ctx-meter-bar > i {
+  background: var(--error, #dc2626);
+}
+.chat-compose-row .chat-hint {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}

@@ -312,7 +312,7 @@ export async function reloadTool(name) {
       kind: "playground",
       at: new Date().toISOString(),
       revision: t.revision,
-      why: "Reloaded from the tool's files after the Prompt Playground changed them.",
+      why: "Reloaded from the tool's files after an Ask AI conversation changed them.",
       before,
       after: t.script || t.command || "",
     });
@@ -1274,9 +1274,9 @@ export function Tools() {
                       <button
                         className="btn secondary"
                         onClick={() => openToolInPlayground()}
-                        title="Talk it through with the AI in the Prompt Playground: it gets this tool, what was tried and the last test, and can read the project and try commands"
+                        title="Talk it through with the AI in Ask AI: it gets this tool, what was tried and the last test, and can read the project and try commands"
                       >
-                        <Icon.playground /> Discuss in Prompt Playground
+                        <Icon.playground /> Discuss in Ask AI
                       </button>
                     </div>
                   </>

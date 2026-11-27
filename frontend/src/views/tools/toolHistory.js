@@ -68,7 +68,7 @@ const KIND_WORD = {
   generate: "Wrote the tool",
   change: "Changed on request",
   fix: "Fix attempt",
-  playground: "Applied from the Prompt Playground",
+  playground: "Applied from Ask AI",
   test: "Test",
 };
 export const kindWord = (h) => KIND_WORD[h.kind] + (h.kind === "fix" && h.attempt ? " " + h.attempt : "");

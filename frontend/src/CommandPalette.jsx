@@ -49,7 +49,7 @@ export function useCommandPalette(views, toggleRail) {
       },
       {
         id: "new:prompt",
-        label: "Ask AI (new Playground prompt)",
+        label: "Ask AI (new conversation)",
         hint: "Create",
         run: () => {
           if (S.pg) Object.assign(S.pg, { sel: "", prompt: "" });

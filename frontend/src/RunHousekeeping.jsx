@@ -301,7 +301,7 @@ export function HousekeepingCard() {
         open <b>Archived</b> above a list to find or restore them. Running runs are never archived.
       </p>
       <div className="two-col">
-        {days("playgroundDays", "Playground prompts")}
+        {days("playgroundDays", "Ask AI questions")}
         {days("historyDays", "History (workflow steps and flow runs)")}
       </div>
       <div className="row-actions">

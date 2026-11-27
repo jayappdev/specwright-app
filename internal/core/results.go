@@ -502,7 +502,7 @@ func str(v any) string {
 
 func (h *Hub) summaryMD(r store.Run, d RunDigest, calls int) string {
 	var b strings.Builder
-	kind := map[string]string{"playground": "Playground prompt", "workflow": "Workflow step", "flow": "Flow run"}[d.Kind]
+	kind := map[string]string{"playground": "Ask AI question", "workflow": "Workflow step", "flow": "Flow run"}[d.Kind]
 	fmt.Fprintf(&b, "# %s: %s\n\n", firstNonEmpty(kind, "Run"), d.Title)
 	fmt.Fprintf(&b, "- **Run id:** `%s`\n", r.ID)
 	fmt.Fprintf(&b, "- **Started:** %s", r.Started.Format("2006-01-02 15:04:05"))
