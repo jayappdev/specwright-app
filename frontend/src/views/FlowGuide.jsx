@@ -7,12 +7,21 @@ import { S, update, toast, errMsg } from "../store.js";
 import { GUIDE, exampleFlow, hasToolGuide, toolGuideSection } from "./flowGuide.js";
 import { StepIcon, openFlowInDesigner } from "./Flows.jsx";
 import { RenderPreview, chartOf } from "../ContentView.jsx";
+import { Icon, ListHead, LearnMore } from "../ui.jsx";
 
 // the guides of the workspace's tools (project, global, managed, Copilot)
 const toolSections = () => (S.ws?.extensions || []).filter(hasToolGuide).map(toolGuideSection);
 
 // Open the guide at a step type (from the Flow designer).
+// opens the Help panel at a step type, beside what you are doing
 export function openFlowGuide(type) {
+  S.help = { type: type || "" };
+  update();
+}
+
+// the whole guide, as a screen (every step and example in one page)
+export function openFullGuide(type) {
+  S.help = null;
   S.guide = type || "";
   S.view = "flowguide";
   update();
@@ -299,6 +308,45 @@ function Section({ g }) {
   );
 }
 
+// how flows pass data, and where to start: the guide's introduction
+function GuideIntro() {
+  return (
+    <div className="card">
+      <h2>How the flow steps work</h2>
+      <p className="wf-desc">
+        A flow passes data from step to step along its connections: each step gets the output of the steps
+        connected into it, and any step can read an earlier one by its step id,{" "}
+        <code className="inline-code" data-nofile>
+          {"{{<step id>.buffer_output}}"}
+        </code>{" "}
+        (its text) or{" "}
+        <code className="inline-code" data-nofile>
+          {"{{<step id>.output_file}}"}
+        </code>{" "}
+        (the file it was saved in). Below, each step type is explained with examples. The results shown are
+        produced by the app from the sample data, and <b>Try it in the designer</b> saves an example as a flow
+        you can open, change and run.
+      </p>
+      <LearnMore summary="More: the Data panel, and AI that builds and fixes flows">
+        <p className="wf-desc">
+          Every step's inspector has a <b>Data</b> panel: the fields it gets and gives (nested objects and
+          lists, with types), whether the shape is declared (by a tool or an AI step's expected reply), worked
+          out from the steps before, or learned from sample data or the last run. Click a field to use it
+          where you are typing; path boxes suggest the fields, and the flow is checked for fields that are not
+          there.
+        </p>
+        <p className="wf-desc">
+          Not sure where to start? <b>✦ New flow with AI</b> (in the Flows list) turns a plain description
+          into a few ready-made flows built from your tools, with AI steps only where needed. After a run,{" "}
+          <b>Run flows</b> offers <b>✦ Fix with AI</b> on a failed step and <b>✦ Improve</b> on a finished
+          one: the AI changes only that step, you try the change (the steps before it reuse the run's results)
+          and apply it to the flow when the result is right.
+        </p>
+      </LearnMore>
+    </div>
+  );
+}
+
 export function FlowGuide() {
   const [cur, setCur] = useState(S.guide || GUIDE[0].type);
   const tools = toolSections();
@@ -316,8 +364,8 @@ export function FlowGuide() {
     <div className="files guide">
       <Pane k="flowguide" v="--pane-l" pane=".ftree" min={200} max={480} label="Resize the step list" />
       <nav className="ftree" aria-label="Flow steps">
+        <ListHead title="Flow step guide" />
         <div style={{ padding: "0 8px 8px" }}>
-          <h1>Flow step guide</h1>
           <button
             className="link"
             onClick={() => {
@@ -325,7 +373,7 @@ export function FlowGuide() {
               update();
             }}
           >
-            ← Back to the Flow designer
+            ← Back to Flows
           </button>
         </div>
         {GUIDE.map((g) => (
@@ -364,37 +412,7 @@ export function FlowGuide() {
         ))}
       </nav>
       <section className="view guide-main">
-        <div className="card">
-          <h2>How the flow steps work</h2>
-          <p className="wf-desc">
-            A flow passes data from step to step along its connections: each step gets the output of the steps
-            connected into it, and any step can read an earlier one by its step id,{" "}
-            <code className="inline-code" data-nofile>
-              {"{{<step id>.buffer_output}}"}
-            </code>{" "}
-            (its text) or{" "}
-            <code className="inline-code" data-nofile>
-              {"{{<step id>.output_file}}"}
-            </code>{" "}
-            (the file it was saved in). Below, each step type is explained with examples. The results shown
-            are produced by the app from the sample data, and <b>Try it in the designer</b> saves an example
-            as a flow you can open, change and run.
-          </p>
-          <p className="wf-desc">
-            Every step's inspector has a <b>Data</b> panel: the fields it gets and gives (nested objects and
-            lists, with types), whether the shape is declared (by a tool or an AI step's expected reply),
-            worked out from the steps before, or learned from sample data or the last run. Click a field to
-            use it where you are typing; path boxes suggest the fields, and the flow is checked for fields
-            that are not there.
-          </p>
-          <p className="wf-desc">
-            Not sure where to start? <b>✦ New flow with AI</b> (in the Flows list) turns a plain description
-            into a few ready-made flows built from your tools, with AI steps only where needed. After a run,{" "}
-            <b>Run flows</b> offers <b>✦ Fix with AI</b> on a failed step and <b>✦ Improve</b> on a finished
-            one: the AI changes only that step, you try the change (the steps before it reuse the run's
-            results) and apply it to the flow when the result is right.
-          </p>
-        </div>
+        <GuideIntro />
         {GUIDE.map((g) => (
           <Section key={g.type} g={g} />
         ))}
@@ -413,5 +431,70 @@ export function FlowGuide() {
         ))}
       </section>
     </div>
+  );
+}
+
+// HelpPanel: the guide beside your work. It opens at the step you asked
+// about (or the one selected in the designer); Esc closes it.
+export function HelpPanel() {
+  const h = S.help;
+  useEffect(() => {
+    if (!h) return;
+    const key = (e) => {
+      if (e.key === "Escape" && !S.dialog) {
+        S.help = null;
+        update();
+      }
+    };
+    window.addEventListener("keydown", key);
+    return () => window.removeEventListener("keydown", key);
+  }, [!!h]);
+  if (!h) return null;
+  const all = [...GUIDE, ...toolSections()];
+  const g = all.find((x) => x.type === h.type);
+  const set = (type) => {
+    S.help = { type };
+    update();
+  };
+  return (
+    <aside className="help-panel" aria-label="Help">
+      <header className="help-head">
+        <h2>Help</h2>
+        <select aria-label="What to read about" value={g ? g.type : ""} onChange={(e) => set(e.target.value)}>
+          <option value="">How flows work</option>
+          <optgroup label="Steps">
+            {GUIDE.map((x) => (
+              <option key={x.type} value={x.type}>
+                {x.name}
+              </option>
+            ))}
+          </optgroup>
+          {toolSections().length > 0 && (
+            <optgroup label="Your tools">
+              {toolSections().map((x) => (
+                <option key={x.type} value={x.type}>
+                  {x.name}
+                </option>
+              ))}
+            </optgroup>
+          )}
+        </select>
+        <button className="link" onClick={() => openFullGuide(h.type)}>
+          Open the full guide
+        </button>
+        <button
+          className="icon-btn"
+          aria-label="Close help"
+          title="Close (Esc)"
+          onClick={() => {
+            S.help = null;
+            update();
+          }}
+        >
+          <Icon.x />
+        </button>
+      </header>
+      <div className="help-body">{g ? <Section g={g} /> : <GuideIntro />}</div>
+    </aside>
   );
 }

@@ -4,6 +4,7 @@ import { useEffect, useRef, useState } from "react";
 import { askText } from "./Dialog.jsx";
 import { mdToHtml, htmlToMd, sanitizeHtml } from "./richtext.js";
 import { mdRender } from "./markdown.js";
+import { Icon } from "./ui.jsx";
 
 const B = (props) => (
   <button type="button" className="rte-btn" onMouseDown={(e) => e.preventDefault()} {...props} />
@@ -106,7 +107,7 @@ export function RichEditor({
               <code>{"</>"}</code>
             </B>
             <B title="Link (⌘K)" onClick={link}>
-              🔗
+              <Icon.link />
             </B>
             <span className="rte-sep" />
             <B title="Heading" onClick={() => block("h3")}>
@@ -122,7 +123,7 @@ export function RichEditor({
               1. List
             </B>
             <B title="Quote" onClick={() => block("blockquote")}>
-              ❝
+              <Icon.quote />
             </B>
             <B title="Code block" onClick={() => block("pre")}>
               {"{ }"}

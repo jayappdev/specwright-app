@@ -78,6 +78,31 @@ export const Field = ({ label, hint, children }) => (
   </label>
 );
 
+// InspSection: a folding group of the inspector's fields, its title and a
+// one-line summary of what it holds; open or not is kept per section
+export function InspSection({ id, title, summary, open: dflt = false, children }) {
+  const st = (S.inspOpen ||= {});
+  const open = st[id] ?? dflt;
+  return (
+    <details
+      className="insp-sec"
+      open={open}
+      onToggle={(e) => {
+        if (e.target.open !== open) {
+          st[id] = e.target.open;
+          update();
+        }
+      }}
+    >
+      <summary>
+        <span className="insp-sec-title">{title}</span>
+        {summary && !open && <span className="insp-sec-sum">{summary}</span>}
+      </summary>
+      <div className="insp-sec-body">{children}</div>
+    </details>
+  );
+}
+
 function FlowSettings() {
   const f = fl(),
     flow = f.flow;
@@ -116,161 +141,200 @@ function FlowSettings() {
   return (
     <>
       <h3>Flow</h3>
-      <Field label="Name">
-        <input
-          value={flow.name}
-          onChange={(e) => {
-            flow.name = e.target.value;
-            changed();
-          }}
-        />
-      </Field>
-      <Field label="Description">
-        <textarea
-          rows={2}
-          value={flow.description || ""}
-          onChange={(e) => {
-            flow.description = e.target.value;
-            changed();
-          }}
-        />
-      </Field>
-      <Field
-        label="Group"
-        hint="Where the flow is listed, e.g. Releases or Billing / Refunds. Empty: not in a group."
-      >
-        <input
-          value={flow.group || ""}
-          list="fls-group-suggestions"
-          placeholder="e.g. Releases"
-          onChange={(e) => {
-            flow.group = e.target.value;
-            changed();
-          }}
-        />
-        <datalist id="fls-group-suggestions">
-          {allGroups(fl().list).map((g) => (
-            <option key={g} value={g} />
-          ))}
-        </datalist>
-      </Field>
-      {flow.id && (
-        <Field
-          label="Heading"
-          hint="Your own arrangement of the flow lists (you can also drag a flow onto a heading). Kept in SpecWright, not in the flow."
-        >
-          <HeadingPicker list="flows" id={flow.id} label="" />
+      <InspSection id="flow:about" title="About" open summary={flow.name}>
+        <Field label="Name">
+          <input
+            value={flow.name}
+            onChange={(e) => {
+              flow.name = e.target.value;
+              changed();
+            }}
+          />
         </Field>
-      )}
-      <Field
-        label="Tags"
-        hint="Labels to find the flow by; the flow lists can be searched and filtered by them."
+        <Field label="Description">
+          <textarea
+            rows={2}
+            value={flow.description || ""}
+            onChange={(e) => {
+              flow.description = e.target.value;
+              changed();
+            }}
+          />
+        </Field>
+        {(flow.revision > 1 || flow.designed) && <VersionNote f={f} flow={flow} />}
+      </InspSection>
+      <InspSection
+        id="flow:listing"
+        title="Listing and hours saved"
+        summary={
+          [
+            flow.group,
+            ...(flow.tags || []).map((t) => "#" + t),
+            flow.minutesSaved ? flow.minutesSaved + " min" : "",
+          ]
+            .filter(Boolean)
+            .join(" · ") || "not in a group, no tags"
+        }
       >
-        <TagEditor
-          tags={flow.tags || []}
-          suggestions={allTags(fl().list)}
-          onChange={(t) => {
-            flow.tags = t;
-            changed();
-          }}
-        />
-      </Field>
-      <Field
-        label="Manual work one run replaces (minutes)"
-        hint="Counted as hours saved in Metrics when a run completes. Empty: estimated from the steps."
-      >
-        <input
-          type="number"
-          min="0"
-          value={flow.minutesSaved || ""}
-          placeholder="estimate"
-          onChange={(e) => {
-            flow.minutesSaved = +e.target.value || 0;
-            changed();
-          }}
-        />
-      </Field>
-      {(flow.revision > 1 || flow.designed) && (
-        <p className="muted fl-help">
-          {flow.revision > 1 && (
-            <>
-              Version {flow.revision}
-              {flow.parent ? (
-                <>
-                  {" "}
-                  of{" "}
-                  <button className="link" onClick={() => openFlow(flow.parent)}>
-                    {(f.list || []).find((x) => x.id === flow.parent)?.name || flow.parent}
-                  </button>
-                </>
-              ) : (
-                ""
-              )}
-              .{" "}
-            </>
-          )}
-          {flow.designed}
-        </p>
-      )}
+        <Field
+          label="Group"
+          hint="Where the flow is listed, e.g. Releases or Billing / Refunds. Empty: not in a group."
+        >
+          <input
+            value={flow.group || ""}
+            list="fls-group-suggestions"
+            placeholder="e.g. Releases"
+            onChange={(e) => {
+              flow.group = e.target.value;
+              changed();
+            }}
+          />
+          <datalist id="fls-group-suggestions">
+            {allGroups(fl().list).map((g) => (
+              <option key={g} value={g} />
+            ))}
+          </datalist>
+        </Field>
+        {flow.id && (
+          <Field
+            label="Heading"
+            hint="Your own arrangement of the flow lists (you can also drag a flow onto a heading). Kept in SpecWright, not in the flow."
+          >
+            <HeadingPicker list="flows" id={flow.id} label="" />
+          </Field>
+        )}
+        <Field
+          label="Tags"
+          hint="Labels to find the flow by; the flow lists can be searched and filtered by them."
+        >
+          <TagEditor
+            tags={flow.tags || []}
+            suggestions={allTags(fl().list)}
+            onChange={(t) => {
+              flow.tags = t;
+              changed();
+            }}
+          />
+        </Field>
+        <Field
+          label="Manual work one run replaces (minutes)"
+          hint="Counted as hours saved in Metrics when a run completes. Empty: estimated from the steps."
+        >
+          <input
+            type="number"
+            min="0"
+            value={flow.minutesSaved || ""}
+            placeholder="estimate"
+            onChange={(e) => {
+              flow.minutesSaved = +e.target.value || 0;
+              changed();
+            }}
+          />
+        </Field>
+      </InspSection>
       <FlowInterface />
-      <h4>Custom context</h4>
-      <p className="muted fl-help">
-        Given to every AI step (and available as {"{{context}}"}): background, conventions, constraints.
-      </p>
-      <textarea
-        rows={6}
-        value={flow.context.text || ""}
-        placeholder="e.g. We build Java 21 Spring services. Specs follow the team template; keep them under two pages."
-        {...track}
-        onPaste={onPasteAttach(ctxFiles.current)}
-        onChange={(e) => {
-          flow.context.text = e.target.value;
-          changed();
-        }}
-      />
-      <AttachBar
-        list={ctxFiles.current}
-        insertText={(t) => {
-          flow.context.text = (flow.context.text ? flow.context.text + "\n" : "") + t;
-          changed();
-        }}
-      />
-      <h4>Skills</h4>
-      <p className="muted fl-help">Skill files the AI steps follow ({"{{skills}}"}).</p>
-      <ul className="fl-checks">
-        {skills.map((l) => (
-          <li key={l.id}>
-            <label className="check">
-              <input type="checkbox" checked={has(l.path)} onChange={() => toggle(l)} /> <b>{l.name}</b>{" "}
-              <span className="muted">{l.scope === "global" ? "corporate" : "project"}</span>
-            </label>
-          </li>
-        ))}
-        {flow.skills
-          .filter((s) => !skills.some((l) => l.path === s.path))
-          .map((s) => (
-            <li key={s.path}>
+      <InspSection
+        id="flow:context"
+        title="AI context"
+        open={!!flow.context.text}
+        summary={
+          flow.context.text
+            ? flow.context.text.slice(0, 60) + (flow.context.text.length > 60 ? "…" : "")
+            : (flow.context.files || []).length
+              ? (flow.context.files || []).length + " file(s)"
+              : "none"
+        }
+      >
+        <p className="muted fl-help">
+          Given to every AI step (and available as {"{{context}}"}): background, conventions, constraints.
+        </p>
+        <textarea
+          rows={6}
+          value={flow.context.text || ""}
+          placeholder="e.g. We build Java 21 Spring services. Specs follow the team template; keep them under two pages."
+          {...track}
+          onPaste={onPasteAttach(ctxFiles.current)}
+          onChange={(e) => {
+            flow.context.text = e.target.value;
+            changed();
+          }}
+        />
+        <AttachBar
+          list={ctxFiles.current}
+          insertText={(t) => {
+            flow.context.text = (flow.context.text ? flow.context.text + "\n" : "") + t;
+            changed();
+          }}
+        />
+      </InspSection>
+      <InspSection
+        id="flow:skills"
+        title="Skills"
+        summary={flow.skills.length ? flow.skills.map((x) => x.name || x.path).join(", ") : "none"}
+      >
+        <p className="muted fl-help">Skill files the AI steps follow ({"{{skills}}"}).</p>
+        <ul className="fl-checks">
+          {skills.map((l) => (
+            <li key={l.id}>
               <label className="check">
-                <input
-                  type="checkbox"
-                  checked
-                  onChange={() => {
-                    flow.skills = flow.skills.filter((x) => x.path !== s.path);
-                    changed();
-                  }}
-                />{" "}
-                <FileLink path={s.path}>{s.name || s.path}</FileLink> <span className="muted">attached</span>
+                <input type="checkbox" checked={has(l.path)} onChange={() => toggle(l)} /> <b>{l.name}</b>{" "}
+                <span className="muted">{l.scope === "global" ? "corporate" : "project"}</span>
               </label>
             </li>
           ))}
-        {!skills.length && !flow.skills.length && <li className="muted">No skills in this project yet.</li>}
-      </ul>
-      <AttachBar list={skillFiles.current} />
-      <p className="muted fl-help">
-        Attach a skill file (.md) that is not in the project's libraries; it is saved with the project and
-        embedded when you export the flow.
-      </p>
+          {flow.skills
+            .filter((s) => !skills.some((l) => l.path === s.path))
+            .map((s) => (
+              <li key={s.path}>
+                <label className="check">
+                  <input
+                    type="checkbox"
+                    checked
+                    onChange={() => {
+                      flow.skills = flow.skills.filter((x) => x.path !== s.path);
+                      changed();
+                    }}
+                  />{" "}
+                  <FileLink path={s.path}>{s.name || s.path}</FileLink>{" "}
+                  <span className="muted">attached</span>
+                </label>
+              </li>
+            ))}
+          {!skills.length && !flow.skills.length && <li className="muted">No skills in this project yet.</li>}
+        </ul>
+        <AttachBar list={skillFiles.current} />
+        <p className="muted fl-help">
+          Attach a skill file (.md) that is not in the project's libraries; it is saved with the project and
+          embedded when you export the flow.
+        </p>
+      </InspSection>
     </>
+  );
+}
+
+// the version this flow is, and how it was made
+function VersionNote({ f, flow }) {
+  return (
+    <p className="muted fl-help">
+      {flow.revision > 1 && (
+        <>
+          Version {flow.revision}
+          {flow.parent ? (
+            <>
+              {" "}
+              of{" "}
+              <button className="link" onClick={() => openFlow(flow.parent)}>
+                {(f.list || []).find((x) => x.id === flow.parent)?.name || flow.parent}
+              </button>
+            </>
+          ) : (
+            ""
+          )}
+          .{" "}
+        </>
+      )}
+      {flow.designed}
+    </p>
   );
 }
 
@@ -1602,7 +1666,7 @@ function MultiInspector({ ids }) {
                 title="Remove from the selection"
                 onClick={() => setSelection(ids.filter((x) => x !== id))}
               >
-                ✕
+                <Icon.x />
               </button>
             </li>
           );
@@ -1886,10 +1950,11 @@ function FlowInterface() {
     ),
   });
   return (
-    <details className="fl-data">
-      <summary>
-        <b>Interface</b> <span className="muted">inputs and outputs, for integrating this flow</span>
-      </summary>
+    <InspSection
+      id="flow:interface"
+      title="Interface"
+      summary={`${flow.inputs.length} input${flow.inputs.length === 1 ? "" : "s"} · ${outs.length} output${outs.length === 1 ? "" : "s"}: for integrating this flow`}
+    >
       <div className="fl-data-sec">
         <div className="fl-data-head">Inputs</div>
         {flow.inputs.length ? (
@@ -1921,7 +1986,7 @@ function FlowInterface() {
       >
         Copy as JSON Schema
       </button>
-    </details>
+    </InspSection>
   );
 }
 

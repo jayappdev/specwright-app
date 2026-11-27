@@ -144,7 +144,7 @@ function CondEditor({ cond, onChange, depth = 0, what = "the data", listId }) {
                 put();
               }}
             >
-              ✕
+              <Icon.x />
             </button>
             <select
               aria-label="Comparison"
@@ -404,7 +404,7 @@ export function DecisionInspector({ n, set }) {
                 put();
               }}
             >
-              ✕
+              <Icon.x />
             </button>
           </div>
           {ai ? (
@@ -638,7 +638,7 @@ export function AggregateInspector({ n, set }) {
                   put();
                 }}
               >
-                ✕
+                <Icon.x />
               </button>
               {fn.arg && (
                 <input

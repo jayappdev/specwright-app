@@ -1,5 +1,6 @@
-// Command palette (⌘K / Ctrl+K): go to any view, open a flow, run one, or
-// toggle the sidebar labels, by typing a few letters. ⌘1…⌘9 go straight to the
+// Command palette (⌘K / Ctrl+K): go to any view, open or run a flow, start
+// or open a chat, make something new, open a Settings tab, or toggle the
+// sidebar labels, by typing a few letters. ⌘1…⌘9 go straight to the
 // views in sidebar order. Both are ignored while another dialog is open.
 import { useEffect, useMemo, useRef, useState } from "react";
 import { backend } from "./backend.js";
@@ -19,6 +20,43 @@ export function useCommandPalette(views, toggleRail) {
         update();
       },
     }));
+    // actions: make something new (the + New menu's)
+    const go = (view) => {
+      S.view = view;
+      update();
+    };
+    out.push(
+      {
+        id: "new:flow",
+        label: "New flow",
+        hint: "Create · ⌘N",
+        run: () => import("./views/Flows.jsx").then((m) => m.createFlow()),
+      },
+      {
+        id: "new:flow-ai",
+        label: "New flow with AI",
+        hint: "Create",
+        run: () => {
+          go("flows");
+          import("./views/flows/FlowWizard.jsx").then((m) => m.openWizard());
+        },
+      },
+      {
+        id: "new:tool",
+        label: "New tool",
+        hint: "Create",
+        run: () => import("./views/Tools.jsx").then((m) => m.newTool(false)),
+      },
+      {
+        id: "new:prompt",
+        label: "Ask AI (new Playground prompt)",
+        hint: "Create",
+        run: () => {
+          if (S.pg) Object.assign(S.pg, { sel: "", prompt: "" });
+          go("playground");
+        },
+      },
+    );
     for (const f of S.cmdFlows || []) {
       out.push({
         id: "flow:" + f.id,
@@ -28,11 +66,39 @@ export function useCommandPalette(views, toggleRail) {
       });
       out.push({
         id: "run:" + f.id,
-        label: "Run flow: " + f.name,
+        label: (f.chat ? "Start chat with: " : "Run flow: ") + f.name,
         hint: "Run flows",
         run: () => import("./views/FlowRun.jsx").then((m) => m.openFlowRunner(f.id)),
       });
     }
+    for (const c of S.cmdChats || []) {
+      if (c.archived) continue;
+      out.push({
+        id: "chat:" + c.flow + "/" + c.id,
+        label: "Open chat: " + (c.title || "New session"),
+        hint: "Chats · " + (c.flowName || c.flow),
+        run: () => import("./views/Chats.jsx").then((m) => m.openChatSession(c.flow, c.id)),
+      });
+    }
+    for (const [tab, name] of [
+      ["appearance", "Appearance"],
+      ["agent", "Agent and model"],
+      ["runs", "Runs"],
+      ["network", "Network and packages"],
+      ["secrets", "Secrets"],
+    ])
+      out.push({
+        id: "settings:" + tab,
+        label: "Settings: " + name,
+        hint: "Settings",
+        run: () => import("./views/Appearance.jsx").then((m) => m.openSettings(tab)),
+      });
+    out.push({
+      id: "keys",
+      label: "Keyboard shortcuts",
+      hint: "Help · ?",
+      run: () => import("./KeysSheet.jsx").then((m) => m.openKeysSheet()),
+    });
     out.push({
       id: "rail",
       label: S.railOpen ? "Hide sidebar labels" : "Show sidebar labels",
@@ -57,7 +123,7 @@ export function useCommandPalette(views, toggleRail) {
         scope: "global",
         keys: ["mod+k"],
         inFields: true,
-        label: "Search views and flows",
+        label: "Search views, flows, chats and actions",
         run: (e) => {
           e.preventDefault();
           openPalette();
@@ -86,13 +152,13 @@ export function openPalette() {
   S.palette = { q: "" };
   update();
   if (S.ws)
-    backend
-      .Flows()
-      .then((l) => {
-        S.cmdFlows = l || [];
+    Promise.all([backend.Flows().catch(() => []), backend.ChatSessions("").catch(() => [])]).then(
+      ([fl, ch]) => {
+        S.cmdFlows = fl || [];
+        S.cmdChats = ch || [];
         update();
-      })
-      .catch(() => {});
+      },
+    );
 }
 
 export function CommandPalette() {
@@ -110,7 +176,7 @@ export function CommandPalette() {
     return commands()
       .filter((c) => words.every((w) => (c.label + " " + c.hint).toLowerCase().includes(w)))
       .slice(0, 40);
-  }, [p, q, S.cmdFlows]);
+  }, [p, q, S.cmdFlows, S.cmdChats]);
   useEffect(() => {
     list.current?.querySelector('[aria-selected="true"]')?.scrollIntoView({ block: "nearest" });
   }, [k]);
@@ -152,7 +218,7 @@ export function CommandPalette() {
           aria-expanded="true"
           aria-controls="cmd-list"
           aria-activedescendant={items[k] ? "cmd-" + k : undefined}
-          placeholder="Go to a view, open or run a flow…"
+          placeholder="Go anywhere, open a flow or chat, or make something new…"
           value={q}
           onChange={(e) => {
             setQ(e.target.value);

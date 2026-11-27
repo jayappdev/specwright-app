@@ -1,7 +1,7 @@
 // Tools: finding tools — search, #tags, grouping, and the tags bar of a tool.
 import { useState } from "react";
 import { backend } from "../../backend.js";
-import { EmptyState } from "../../ui.jsx";
+import { EmptyState, Icon } from "../../ui.jsx";
 import { S, update, toast, errMsg } from "../../store.js";
 import { builtinsVisible, selectBuiltin } from "../Builtins.jsx";
 import { ToolTile, ToolGrid } from "../../ToolTile.jsx";
@@ -233,7 +233,7 @@ export function ToolTagsBar({ name }) {
             aria-label={"Remove tag " + t}
             onClick={() => save(tags.filter((x) => x !== t))}
           >
-            ✕
+            <Icon.x />
           </button>
         </span>
       ))}

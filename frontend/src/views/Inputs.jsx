@@ -5,7 +5,7 @@ import { ProjectPicker } from "../ProjectPicker.jsx";
 import { NeedWorkspace, WorkspaceBar } from "./Wizard.jsx";
 import { ModelPicker } from "../ModelPicker.jsx";
 import { ToolIcon } from "../ToolTile.jsx";
-import { Icon } from "../ui.jsx";
+import { Icon, LearnMore } from "../ui.jsx";
 
 const CTX_SVG = (
   <svg className="diagram-thumb" viewBox="0 0 320 120" aria-hidden="true">
@@ -693,13 +693,16 @@ function SpecKitCard() {
           </>
         ) : (
           <>
-            SpecWright doesn't ship Spec Kit. It downloads the latest release from{" "}
-            <code className="inline-code">github.com/github/spec-kit</code> through the proxy under
-            Development wizard › Packages & proxy, either when you first save the proxy settings or at the
-            first setup. It runs Spec Kit's own CLI with uv, pipx or Python.{" "}
+            Spec Kit is not on this computer yet.{" "}
             <button className="link" onClick={() => downloadSpecKit(false)}>
               Download it now
             </button>
+            <LearnMore>
+              SpecWright doesn't ship Spec Kit. It downloads the latest release from{" "}
+              <code className="inline-code">github.com/github/spec-kit</code> through the proxy under
+              Development wizard › Packages & proxy, either when you first save the proxy settings or at the
+              first setup. It runs Spec Kit's own CLI with uv, pipx or Python.
+            </LearnMore>
           </>
         )}
       </div>
@@ -711,7 +714,7 @@ function SpecKitCard() {
       {taken && (
         <p className="err-text sk-err">{name}/ is already a project here: pick it in Project instead.</p>
       )}
-      <details className="sk-what" open={!info.initialized}>
+      <details className="sk-what">
         <summary>What it sets up</summary>
         <ol>
           <li>

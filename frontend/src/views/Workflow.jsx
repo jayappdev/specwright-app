@@ -403,7 +403,7 @@ export function Workflow() {
                 {k === cur && !allDone && (
                   <>
                     {" "}
-                    <span className="badge">current</span>
+                    <span className="badge badge-info">current</span>
                   </>
                 )}
                 <code>{s.cmd}</code>

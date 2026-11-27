@@ -191,12 +191,17 @@ export const Icon = {
     </>,
     14,
   ),
+  home: mk(<path d="M2.5 7.5L8 3l5.5 4.5M4 6.5V13h3V9.5h2V13h3V6.5" />),
   info: mk(
     <>
       <circle cx="8" cy="8" r="6.2" />
       <path d="M8 7.2v4M8 4.8v.1" />
     </>,
   ),
+  link: mk(
+    <path d="M6.8 9.2a2.6 2.6 0 0 0 3.7 0l2.2-2.2a2.6 2.6 0 0 0-3.7-3.7l-.9.9M9.2 6.8a2.6 2.6 0 0 0-3.7 0L3.3 9a2.6 2.6 0 0 0 3.7 3.7l.9-.9" />,
+  ),
+  quote: mk(<path d="M3 11.5c0-3 1-5 3.5-6.5M3 11.5h3V8.3H3zM9.5 11.5c0-3 1-5 3.5-6.5M9.5 11.5h3V8.3h-3z" />),
   pencil: mk(<path d="M10.5 2.5l3 3L6 13H3v-3zM9 4l3 3" />),
   download: mk(<path d="M8 2v8M4.5 6.5L8 10l3.5-3.5M2.5 13.5h11" />),
   archive: mk(
@@ -281,6 +286,31 @@ export function usePoll(load, ms, deps = []) {
 }
 
 // RefreshButton reloads a list; it turns while the load runs.
+// LearnMore: the details behind a one-line explanation, folded away so a
+// screen leads with what to do rather than how it works.
+export function LearnMore({ summary = "Learn more", children }) {
+  return (
+    <details className="learn-more">
+      <summary>{summary}</summary>
+      <div className="learn-more-body">{children}</div>
+    </details>
+  );
+}
+
+// ListHead: the header of a list column (Chats, Tools, Runs…): its title,
+// how many it lists, and its actions on the right (+ New first).
+export function ListHead({ title, count, children }) {
+  return (
+    <div className="list-pane-head">
+      <h1>
+        {title}
+        {count != null && <span className="list-count">{count}</span>}
+      </h1>
+      {children && <span className="list-pane-acts">{children}</span>}
+    </div>
+  );
+}
+
 export function RefreshButton({ onRefresh, label = "Refresh", every }) {
   const [busy, setBusy] = useState(false);
   return (
@@ -511,6 +541,49 @@ export function Menu({ label = "More actions", items, className = "" }) {
         </div>
       )}
     </span>
+  );
+}
+
+// Crumbs: where a screen sits ("Runs › Sales Q&A › 23:19"), each part but
+// the last a way back. items: [label, onClick] (onClick empty: not a link)
+export function Crumbs({ items }) {
+  return (
+    <nav className="crumbs" aria-label="Breadcrumb">
+      {items.map(([label, go], i) => (
+        <span key={i} className="crumb">
+          {i > 0 && (
+            <span className="crumb-sep" aria-hidden="true">
+              ›
+            </span>
+          )}
+          {go && i < items.length - 1 ? (
+            <button className="crumb-link" onClick={go}>
+              {label}
+            </button>
+          ) : (
+            <span aria-current={i === items.length - 1 ? "page" : undefined}>{label}</span>
+          )}
+        </span>
+      ))}
+    </nav>
+  );
+}
+
+// Skeleton: quiet placeholders while a list loads (rows, or cards), so the
+// screen keeps its shape instead of flashing "nothing here" first.
+export function Skeleton({ rows = 3, kind = "row" }) {
+  return (
+    <div className={"skel skel-" + kind} aria-busy="true" aria-label="Loading">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="skel-item">
+          <span className="skel-icon" />
+          <span className="skel-lines">
+            <span className="skel-line" style={{ width: 60 + ((i * 17) % 30) + "%" }} />
+            <span className="skel-line short" />
+          </span>
+        </div>
+      ))}
+    </div>
   );
 }
 

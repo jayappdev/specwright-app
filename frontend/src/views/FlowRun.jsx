@@ -14,7 +14,7 @@ import { FLOW_STATUS_LABEL as STATUS_LABEL } from "../labels.js";
 export { STATUS_LABEL };
 import { backend } from "../backend.js";
 import { openFlowGuide } from "./FlowGuide.jsx";
-import { EmptyState, RefreshButton, usePoll } from "../ui.jsx";
+import { EmptyState, RefreshButton, usePoll, ListHead, Skeleton } from "../ui.jsx";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, isCopilot, refreshExtensions } from "../store.js";
 import { Icon, Pill } from "../ui.jsx";
@@ -211,9 +211,11 @@ export async function start(mode) {
   if (o.startAt) opts.startAt = new Date(o.startAt).toISOString();
   if (isChatflow(f)) {
     opts.chat = { role: mode === "setup-only" ? "setup-only" : "setup" };
-    delete opts.startAt; // a chat starts now
+    delete opts.startAt; // a chat starts now, once, with its whole setup
     delete opts.forEach;
     opts.repeat = 1;
+    opts.skip = [];
+    opts.stopAfter = "";
   }
   try {
     const st = await backend.RunFlow(f.id, opts);
@@ -442,14 +444,13 @@ export function FlowRun() {
       )}
       {!S.runner && (
         <nav className="ftree" aria-label="Flows and runs">
-          <h1 className="list-head" style={{ padding: "0 8px 8px" }}>
-            Run flows{" "}
+          <ListHead title={S.runner ? "Run flows" : "Runs"} count={r.flows?.length}>
             <RefreshButton
               label="Refresh the flows, their runs and schedules"
               every={FLOWRUN_POLL}
               onRefresh={loadAll}
             />
-          </h1>
+          </ListHead>
           <FlowFilterBar area="runner" list={r.flows} />
           {(() => {
             const groups = groupFlows(r.flows, flowFilter("runner"));
@@ -564,6 +565,7 @@ export function FlowRun() {
               </FlowGroup>
             ));
           })()}
+          {!r.flows && <Skeleton rows={4} />}
           {r.flows && !r.flows.length && (
             <EmptyState
               compact

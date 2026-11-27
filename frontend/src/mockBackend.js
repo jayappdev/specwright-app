@@ -118,6 +118,58 @@ const KEY = "codegen.mock.v1";
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 const clone = (x) => JSON.parse(JSON.stringify(x));
 const now = () => new Date().toISOString();
+function overTime(ledger, r) {
+  const dayOf = (t) => {
+    const d = new Date(t);
+    return new Date(d.getFullYear(), d.getMonth(), d.getDate());
+  };
+  const key = (d) =>
+    `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, "0")}-${String(d.getDate()).padStart(2, "0")}`;
+  const end = dayOf(r.to && Date.parse(r.to) < Date.now() ? r.to : Date.now());
+  let first = r.from
+    ? dayOf(r.from)
+    : ledger.length
+      ? dayOf(Math.min(...ledger.map((e) => Date.parse(e.at))))
+      : null;
+  if (!first || first > end) return { over: [], overUnit: "day" };
+  const week = end - first > 62 * 864e5;
+  const monday = (d) => {
+    const x = new Date(d);
+    while (x.getDay() !== 1) x.setDate(x.getDate() - 1);
+    return x;
+  };
+  if (week) first = monday(first);
+  const over = [],
+    idx = {};
+  for (let d = new Date(first); d <= end; d.setDate(d.getDate() + (week ? 7 : 1))) {
+    idx[key(d)] = over.length;
+    over.push({
+      start: key(d),
+      flowRuns: 0,
+      flowDone: 0,
+      steps: 0,
+      costUsd: 0,
+      premium: 0,
+      tokens: 0,
+      hoursSaved: 0,
+    });
+  }
+  for (const e of ledger) {
+    let d = dayOf(e.at);
+    if (week) d = monday(d);
+    const p = over[idx[key(d)]];
+    if (!p) continue;
+    p.costUsd += e.cost_usd || 0;
+    p.premium += e.premium_requests || 0;
+    p.tokens += (e.input_tokens || 0) + (e.output_tokens || 0);
+    if (String(e.workflow).startsWith("flow:")) {
+      p.flowRuns++;
+      if (e.state === "done") p.flowDone++;
+      p.hoursSaved += (e.minutes_saved || 0) / 60;
+    } else p.steps++;
+  }
+  return { over, overUnit: week ? "week" : "day" };
+}
 
 const FILES = {
   "pom.xml": `<project>\n  <modelVersion>4.0.0</modelVersion>\n  <groupId>com.acme</groupId>\n  <artifactId>orders-service</artifactId>\n  <version>0.1.0</version>\n  <properties>\n    <java.version>21</java.version>\n  </properties>\n</project>`,
@@ -5493,6 +5545,7 @@ export function createMockBackend(methods) {
     async Metrics() {
       return api.MetricsIn({});
     },
+    // the window day by day (week by week past 62 days), as the Go side does
     async MetricsIn(r = {}) {
       const from = r.from ? Date.parse(r.from) : -Infinity,
         to = r.to ? Date.parse(r.to) : Infinity;
@@ -5614,6 +5667,7 @@ export function createMockBackend(methods) {
         flows: flowMetrics(),
         range: { from: r.from || "", to: r.to || "" },
         entries: ledger.length,
+        ...overTime(ledger, r),
       };
     },
     async Workflow() {

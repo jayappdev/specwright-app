@@ -47,7 +47,7 @@ export const S = {
     codeFont: "",
     ...(p.appearance || {}),
   },
-  view: p.view || "wizard",
+  view: p.view || "home",
   setup: { done: false, provider: "", source: "", model: "", ...(p.setup || {}) },
   lastWorkspace: p.lastWorkspace || "",
   // side pane widths in px, by pane key (PaneHandle); persisted

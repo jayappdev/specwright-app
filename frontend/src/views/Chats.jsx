@@ -10,7 +10,7 @@ import { ContentView, chartOf, RenderPreview } from "../ContentView.jsx";
 import { FileLink } from "../FileLinks.jsx";
 import { backend } from "../backend.js";
 import { S, update, toast, errMsg, setChatListener } from "../store.js";
-import { Icon } from "../ui.jsx";
+import { Icon, ListHead, Skeleton, EmptyState, Crumbs } from "../ui.jsx";
 import { mdRender } from "../markdown.js";
 import { ago } from "../time.js";
 import { NeedWorkspace } from "./Wizard.jsx";
@@ -539,6 +539,19 @@ function Conversation({ s, f }) {
     <section className="chat-main">
       <header className="chat-head">
         <div className="chat-head-title">
+          <Crumbs
+            items={[
+              [
+                "Chats",
+                () => {
+                  c.sel = null;
+                  update();
+                },
+              ],
+              [s.flowName || s.flow, () => import("./Flows.jsx").then((m) => m.openFlowInDesigner(s.flow))],
+              [s.title || "New session", null],
+            ]}
+          />
           <h2>{s.title || "New session"}</h2>
           <div className="chat-head-meta">
             <span className={"chat-status chat-status-" + s.status}>
@@ -550,7 +563,6 @@ function Conversation({ s, f }) {
                     ? "Failed"
                     : s.status}
             </span>
-            <span>{s.flowName}</span>
             {s.agent && (
               <span>
                 {s.agent}
@@ -588,7 +600,8 @@ function Conversation({ s, f }) {
         {s.status === "setup" && (
           <div className="banner chat-setup-note">
             <span>
-              ⏳ Setting up the session: {f?.setup?.join(", ") || "the steps before the Chat step"}…
+              <span className="spinner" /> Setting up the session:{" "}
+              {f?.setup?.join(", ") || "the steps before the Chat step"}…
             </span>
             {s.setupRun && (
               <button className="link" onClick={() => showFlowRun(s.setupRun)}>
@@ -804,13 +817,15 @@ function Panel({ s, f }) {
       <section>
         <h4>Setup</h4>
         <div>
-          {s.status === "ready"
-            ? "✔ Ready"
-            : s.status === "setup"
-              ? "⏳ Setting up…"
-              : s.status === "failed"
-                ? "✖ Failed"
-                : s.status}
+          <span className={"chat-status chat-status-" + s.status}>
+            {s.status === "ready"
+              ? "Ready"
+              : s.status === "setup"
+                ? "Setting up…"
+                : s.status === "failed"
+                  ? "Failed"
+                  : s.status}
+          </span>
           {s.setupAt && <small className="muted"> · loaded {ago(s.setupAt)}</small>}
         </div>
         {(f?.setup || []).length > 0 && <small className="muted">{f.setup.join(" → ")}</small>}
@@ -850,7 +865,7 @@ function Panel({ s, f }) {
           ))}
           {(f.secrets || []).map((v) => (
             <div key={v} className="chat-env-name" title="A secret: its value is never shown">
-              <code>{v}</code> 🔒
+              <code>{v}</code> <Icon.lock />
             </div>
           ))}
         </section>
@@ -859,7 +874,8 @@ function Panel({ s, f }) {
         <h4>Data · {(s.data || []).length}</h4>
         {(s.data || []).map((d) => (
           <button key={d.name} className="chat-data" onClick={() => show(d)} title="Show it">
-            {d.setup ? "⚙" : d.step === "attachment" ? "📎" : "▸"} {d.title || d.name}
+            {d.setup ? <Icon.inputs /> : d.step === "attachment" ? <Icon.clip /> : <Icon.file />}{" "}
+            {d.title || d.name}
             <small className="muted">
               {" "}
               {d.bytes > 1024 ? Math.round(d.bytes / 1024) + " KB" : d.bytes + " B"}
@@ -934,14 +950,28 @@ export function Chats() {
   return (
     <div className={"files chats" + (s && !startF && c.panel ? " with-panel" : "")}>
       <nav className="ftree" aria-label="Chatflows and sessions">
-        <h1 className="list-head" style={{ padding: "0 8px 8px" }}>
-          Chats
-        </h1>
+        <ListHead title="Chats" count={c.flows ? c.sessions.filter((x) => !x.archived).length : null} />
+        {!c.flows && <Skeleton rows={4} />}
         {c.flows && !flows.length && (
-          <p className="muted" style={{ padding: "0 8px" }}>
-            No Chatflows yet. In the Flow designer, add a <b>Chat</b> step to a flow: the steps before it set
-            up a session, the paths after it are what the chat can run.
-          </p>
+          <EmptyState
+            compact
+            icon={<Icon.chat />}
+            title="No Chatflows yet"
+            actions={[
+              [
+                "Open Flows",
+                () => {
+                  S.view = "flows";
+                  update();
+                },
+                true,
+              ],
+              ["How Chat works", () => import("./FlowGuide.jsx").then((m) => m.openFlowGuide("chat"))],
+            ]}
+          >
+            Add a Chat step to a flow: the steps before it set up a session, the paths after it are what the
+            chat can run.
+          </EmptyState>
         )}
         {c.sessions.some((x) => x.archived) && (
           <label className="check chat-show-archived">

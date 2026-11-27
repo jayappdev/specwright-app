@@ -3,7 +3,7 @@ import { ModelPicker } from "../ModelPicker.jsx";
 import { backend } from "../backend.js";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, fmtK, fmtMs, fmtCredits } from "../store.js";
-import { Icon, Pill, Chip } from "../ui.jsx";
+import { Icon, Pill, Chip, ListHead } from "../ui.jsx";
 import { NeedWorkspace } from "./Wizard.jsx";
 import { toolCalls, stateOf } from "./Playground.jsx";
 import { loadPackages } from "./Packages.jsx";
@@ -473,7 +473,7 @@ export function Files() {
         />
       )}
       <nav className="ftree" aria-label="Files, packages and folders">
-        <h1 style={{ padding: "0 8px 8px" }}>Files</h1>
+        <ListHead title="Files" />
         <input
           className="tree-filter"
           type="search"

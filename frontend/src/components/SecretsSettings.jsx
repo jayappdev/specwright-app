@@ -292,9 +292,9 @@ function KeychainSecrets({ uses, reloadUses }) {
                 <td className="muted">{u.flows.join(", ")}</td>
                 <td>
                   {u.found ? (
-                    <span className="secret-ok">✓ found</span>
+                    <span className="badge badge-ok">found</span>
                   ) : (
-                    <span className="usage-err">missing</span>
+                    <span className="badge badge-danger">missing</span>
                   )}
                 </td>
                 <td className="secret-acts">
@@ -359,8 +359,8 @@ function KeychainSecrets({ uses, reloadUses }) {
       </form>
       {check && (
         <p className="muted">
-          {check.found ? "✓ " : "✗ "}
-          <b>{check.name}</b> {check.found ? "is in" : "is not in"} {check.where}
+          {check.found ? <Icon.check /> : <Icon.x />} <b>{check.name}</b>{" "}
+          {check.found ? "is in" : "is not in"} {check.where}
           {check.found && (
             <>
               {" · "}
