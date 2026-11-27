@@ -18,7 +18,15 @@ import { agentLabel } from "./Setup.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { openRunnerWindow, showFlowRun } from "./FlowRun.jsx";
 import { MessageUsage, SessionUsage, UsageDialog } from "./ChatUsage.jsx";
-import { ContextPanel, Rule, PanelToggle, panelOpen } from "../components/ContextPanel.jsx";
+import {
+  ContextPanel,
+  ContextMeter,
+  Rule,
+  PanelToggle,
+  panelOpen,
+  setPanelOpen,
+} from "../components/ContextPanel.jsx";
+import { contextWindow } from "./askai.js";
 
 const cs = () =>
   (S.chat ||= {
@@ -670,6 +678,7 @@ function Conversation({ s, f }) {
           </div>
         )}
         <div className="chat-compose-card">
+          <SessionChips s={s} />
           {files.length > 0 && (
             <div className="chat-attach">
               {files.map((x, i) => (
@@ -730,6 +739,7 @@ function Conversation({ s, f }) {
                 e.target.value = "";
               }}
             />
+            <ChatMeter msgs={msgs} s={s} />
             <small className="chat-hint">
               <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line · <kbd>/</kbd> commands
             </small>
@@ -754,6 +764,48 @@ function Conversation({ s, f }) {
       </div>
     </section>
   );
+}
+
+// SessionChips: the session's data, above the message box; a click opens
+// it in the Context panel. (The data went to the AI when the session
+// started, so it cannot be taken back mid-conversation: these show, they do
+// not remove. "Refresh" in the panel loads it again.)
+function SessionChips({ s }) {
+  const data = s.data || [];
+  if (!data.length) return null;
+  const shown = data.slice(0, 3);
+  const open = () => {
+    setPanelOpen(true);
+    setTimeout(() => document.querySelector(".ctx-panel")?.scrollTo({ top: 0, behavior: "smooth" }), 0);
+  };
+  return (
+    <div className="ctx-chips" aria-label="This session's data">
+      {shown.map((d) => (
+        <button
+          key={d.name}
+          className="ctx-chip"
+          title={(d.title || d.name) + ": show in the Context panel"}
+          onClick={open}
+        >
+          {d.step === "attachment" ? <Icon.clip /> : <Icon.file />} <span>{d.title || d.name}</span>
+        </button>
+      ))}
+      {data.length > shown.length && (
+        <button className="ctx-chip" onClick={open} title="Show all in the Context panel">
+          +{data.length - shown.length}
+        </button>
+      )}
+    </div>
+  );
+}
+
+// ChatMeter: how full the AI's context was at its last answer (about: an
+// answer's input tokens over its model calls)
+function ChatMeter({ msgs, s }) {
+  const a = [...msgs].reverse().find((m) => m.role === "assistant" && m.usage?.inputTokens);
+  if (!a) return null;
+  const per = Math.round(a.usage.inputTokens / Math.max(1, a.usage.modelCalls || 1));
+  return <ContextMeter tokens={per} window={contextWindow(a.model || s.model || "")} compact />;
 }
 
 // Panel: the session at a glance (names only: never a secret's value)

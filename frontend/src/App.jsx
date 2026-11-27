@@ -47,7 +47,7 @@ import { FlowGuide, HelpPanel, openFlowGuide, GUIDE_TYPES } from "./views/FlowGu
 import { FilePreview } from "./FilePreview.jsx";
 import { LibraryEditor } from "./views/LibraryEditor.jsx";
 import { DialogHost } from "./Dialog.jsx";
-import { RunPicker } from "./views/Playground.jsx";
+import { RunPicker, FilePicker } from "./views/Playground.jsx";
 import { installFileLinks } from "./FileLinks.jsx";
 import { installModalFocus, installTooltips } from "./a11y.js";
 import { CommandPalette, useCommandPalette, openPalette } from "./CommandPalette.jsx";
@@ -591,6 +591,7 @@ export function App() {
       </ErrorBoundary>
       <ErrorBoundary floating name="The run picker">
         <RunPicker />
+        <FilePicker />
       </ErrorBoundary>
       <ErrorBoundary floating name="The dialog">
         <DialogHost />

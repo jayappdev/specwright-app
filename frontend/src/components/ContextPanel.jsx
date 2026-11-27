@@ -108,3 +108,25 @@ export function PanelToggle() {
     </button>
   );
 }
+
+// ContextMeter: how full the AI's context window was at its last call
+// (the input tokens of that call, against the model's window).
+export function ContextMeter({ tokens, window: win, compact }) {
+  if (!tokens) return null;
+  const pct = Math.min(100, Math.round((tokens / win) * 100));
+  const k = (n) => (n >= 1000 ? Math.round(n / 1000) + "k" : String(n));
+  const level = pct >= 80 ? " high" : pct >= 50 ? " mid" : "";
+  return (
+    <span
+      className={"ctx-meter" + level + (compact ? " compact" : "")}
+      title={`The AI's last call used ${tokens.toLocaleString()} tokens of about ${win.toLocaleString()} it can hold (${pct}%). Near the limit, start a new conversation or remove context.`}
+    >
+      <span className="ctx-meter-bar" aria-hidden="true">
+        <i style={{ width: Math.max(2, pct) + "%" }} />
+      </span>
+      <span className="ctx-meter-text">
+        {k(tokens)} of ~{k(win)} context
+      </span>
+    </span>
+  );
+}

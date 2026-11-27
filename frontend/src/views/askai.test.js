@@ -24,3 +24,28 @@ describe("conversations", () => {
     expect(m.has("f")).toBe(false);
   });
 });
+
+import { contextWindow, contextBlock } from "./askai.js";
+
+describe("contextWindow", () => {
+  it("guesses from the model name", () => {
+    expect(contextWindow("claude-sonnet-4-5")).toBe(200_000);
+    expect(contextWindow("gpt-4o")).toBe(128_000);
+    expect(contextWindow("gemini-2.5-pro")).toBe(1_000_000);
+    expect(contextWindow("")).toBe(200_000);
+  });
+});
+
+describe("contextBlock", () => {
+  it("lists what was added, and nothing when nothing was", () => {
+    expect(contextBlock([])).toBe("");
+    const b = contextBlock([
+      { kind: "file", value: "src/a.java" },
+      { kind: "folder", value: "specs" },
+      { kind: "url", value: "https://example.com/x" },
+    ]);
+    expect(b).toContain("- File: src/a.java");
+    expect(b).toContain("- Folder: specs/");
+    expect(b).toContain("- Web page: https://example.com/x (fetch it with fetch_webpage)");
+  });
+});

@@ -29,8 +29,9 @@ import { ResultsLink } from "../RunResults.jsx";
 import { AiProgress } from "../AiProgress.jsx";
 import { applyToolRevision, reloadTool } from "./Tools.jsx";
 import { proposedTool } from "./tools/toolHistory.js";
-import { conversations } from "./askai.js";
-import { ContextPanel, Rule, PanelToggle, panelOpen } from "../components/ContextPanel.jsx";
+import { conversations, contextWindow, contextBlock } from "./askai.js";
+import { ContextPanel, ContextMeter, Rule, PanelToggle, panelOpen } from "../components/ContextPanel.jsx";
+import { askText } from "../Dialog.jsx";
 
 const EXAMPLES = [
   "Summarize what this project does and how it is organised",
@@ -183,11 +184,14 @@ async function run() {
   if (!prompt) return toast("Type a prompt first.");
   try {
     const parents = [...(p.parents || [])];
-    const id = await backend.RunPrompt(prompt, {
+    const added = [...(p.ctx || [])];
+    const id = await backend.RunPrompt(prompt + contextBlock(added), {
       tools: p.tools,
       model: p.model.trim(),
       parents,
       interactive: p.ask !== false,
+      // history shows the question itself, not the list of what was added
+      ...(added.length ? { ask: prompt, title: prompt.split("\n")[0].slice(0, 100) } : {}),
     });
     S.loaded[id] = true;
     S.events[id] ||= [];
@@ -196,6 +200,7 @@ async function run() {
       prompt,
       title: prompt.split("\n")[0].slice(0, 100),
       parents,
+      ctx: added,
       at: new Date().toISOString(),
       state: "running",
     });
@@ -579,6 +584,15 @@ function Turn({ t, last, anyRunning }) {
             </div>
           )}
           <div className="chat-q">{promptOf(t)}</div>
+          {(t.ctx || []).length > 0 && (
+            <div className="ctx-chips ctx-chips-sent">
+              {t.ctx.map((x) => (
+                <span key={x.kind + x.value} className="ctx-chip" title={x.value}>
+                  {ctxIcon(x.kind)} <span>{ctxLabel(x)}</span>
+                </span>
+              ))}
+            </div>
+          )}
         </div>
       </div>
       <div className="chat-msg chat-assistant">
@@ -681,35 +695,201 @@ function Turn({ t, last, anyRunning }) {
   );
 }
 
+// --- context the person adds (files, folders, web pages) ------------------------
+// It stays with the conversation until removed: each question lists it for
+// the AI (contextBlock), which reads or fetches it.
+function addCtx(kind, value) {
+  const p = pg();
+  p.ctx ||= [];
+  if (!p.ctx.some((x) => x.kind === kind && x.value === value)) p.ctx.push({ kind, value });
+  update();
+}
+function removeCtx(i) {
+  const p = pg();
+  p.ctx = (p.ctx || []).filter((_, j) => j !== i);
+  update();
+}
+async function addWebPage() {
+  const u = await askText("Add a web page", {
+    message:
+      "The AI fetches it with fetch_webpage before answering. Pages on this computer or an intranet ask you first.",
+    placeholder: "https://…",
+    ok: "Add",
+  });
+  if (u == null) return;
+  const v = u.trim();
+  if (!/^https?:\/\/\S+$/i.test(v)) return toast("That is not a web address (http:// or https://).", "error");
+  addCtx("url", v);
+}
+async function openFilePicker() {
+  S.pgFiles = { q: "", files: null };
+  update();
+  const files = (await backend.ListFiles().catch(() => [])) || [];
+  if (S.pgFiles) {
+    S.pgFiles.files = files;
+    update();
+  }
+}
+
+const ctxIcon = (k) => (k === "url" ? <Icon.link /> : k === "folder" ? <Icon.folder /> : <Icon.file />);
+const ctxLabel = (x) =>
+  x.kind === "url"
+    ? x.value.replace(/^https?:\/\//, "").slice(0, 48)
+    : x.value.split("/").slice(-2).join("/");
+
+// AddMenu: "+ Add" with its three kinds of context
+function AddMenu() {
+  return (
+    <details className="pg-add">
+      <summary className="btn secondary pg-add-btn" title="Add files, folders, web pages or earlier runs">
+        <Icon.plus /> Add
+      </summary>
+      <div className="pg-add-menu" role="menu">
+        {[
+          [<Icon.file key="f" />, "File or folder from the project…", openFilePicker],
+          [<Icon.link key="l" />, "Web page…", addWebPage],
+          [<Icon.history key="h" />, "Earlier runs…", () => openPicker()],
+        ].map(([ic, text, fn]) => (
+          <button
+            key={text}
+            role="menuitem"
+            onClick={(e) => {
+              e.currentTarget.closest("details").open = false;
+              fn();
+            }}
+          >
+            {ic} {text}
+          </button>
+        ))}
+      </div>
+    </details>
+  );
+}
+
+// ContextChips: what goes with the next question, above the message box
+function ContextChips() {
+  const p = pg();
+  const ctx = p.ctx || [],
+    parents = p.parents || [];
+  if (!ctx.length && !parents.length) return null;
+  return (
+    <div className="ctx-chips" aria-label="Added to the conversation">
+      {parents.map((id) => (
+        <span key={id} className="ctx-chip" title={"Earlier run: " + runTitle(id)}>
+          <Icon.history /> <span>{runTitle(id)}</span>
+          <button
+            aria-label={"Remove " + runTitle(id)}
+            onClick={() => {
+              p.parents = parents.filter((x) => x !== id);
+              update();
+            }}
+          >
+            <Icon.x />
+          </button>
+        </span>
+      ))}
+      {ctx.map((x, i) => (
+        <span key={x.kind + x.value} className="ctx-chip" title={x.value}>
+          {ctxIcon(x.kind)} <span>{ctxLabel(x)}</span>
+          <button aria-label={"Remove " + x.value} onClick={() => removeCtx(i)}>
+            <Icon.x />
+          </button>
+        </span>
+      ))}
+    </div>
+  );
+}
+
+// FilePicker: search the project's files and folders, and add one
+export function FilePicker() {
+  const k = S.pgFiles;
+  if (!k) return null;
+  const close = () => {
+    S.pgFiles = null;
+    update();
+  };
+  // the app's own folder (runs, results) is not project context
+  const all = (k.files || []).filter((f) => !/^\.(codegen|git)\//.test(f));
+  const folders = [
+    ...new Set(
+      all.flatMap((f) =>
+        f
+          .split("/")
+          .slice(0, -1)
+          .map((_, i, a) => a.slice(0, i + 1).join("/")),
+      ),
+    ),
+  ];
+  const q = k.q.trim().toLowerCase();
+  const hits = [
+    ...folders.filter((f) => !q || f.toLowerCase().includes(q)).map((f) => ["folder", f]),
+    ...all.filter((f) => !q || f.toLowerCase().includes(q)).map((f) => ["file", f]),
+  ].slice(0, 60);
+  return (
+    <div className="modal-backdrop dlg-backdrop" onMouseDown={(e) => e.target === e.currentTarget && close()}>
+      <div className="dlg pg-filepick" role="dialog" aria-modal="true" aria-label="Add a file or folder">
+        <h3>Add a file or folder</h3>
+        <p className="dlg-msg">The AI reads it before answering, for the rest of this conversation.</p>
+        <input
+          autoFocus
+          value={k.q}
+          placeholder="Search the project…"
+          aria-label="Search the project's files"
+          onChange={(e) => {
+            k.q = e.target.value;
+            update();
+          }}
+          onKeyDown={(e) => e.key === "Escape" && close()}
+        />
+        <div className="pg-filepick-list" role="listbox" aria-label="Files and folders">
+          {k.files === null && <p className="muted">Loading…</p>}
+          {k.files !== null && !hits.length && <p className="muted">Nothing matches.</p>}
+          {hits.map(([kind, f]) => (
+            <button
+              key={kind + f}
+              role="option"
+              aria-selected="false"
+              onClick={() => {
+                addCtx(kind, f);
+                close();
+              }}
+            >
+              {ctxIcon(kind)} <span>{f}</span>
+              {kind === "folder" && <small className="muted">folder</small>}
+            </button>
+          ))}
+        </div>
+        <div className="row-actions">
+          <button className="btn secondary" onClick={close}>
+            Cancel
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// the input tokens of the last model call in these turns: how full the
+// context was
+function lastContext(turns) {
+  for (let i = turns.length - 1; i >= 0; i--) {
+    const evs = S.events[turns[i].id] || [];
+    const e = [...evs].reverse().find((x) => x.type === "model.request" && x.input_tokens);
+    if (e) return { tokens: e.input_tokens, model: e.model || "" };
+  }
+  return { tokens: 0, model: "" };
+}
+
 // AskComposer: the message box at the bottom, as in Chats; the run's
 // options sit behind "Options"
-function AskComposer({ box, last, running, anyRunning }) {
+function AskComposer({ box, last, running, anyRunning, turns }) {
   const p = pg();
+  const lc = lastContext(turns);
   const send = () => (last ? reply(last.id, p.prompt) : run());
   return (
     <div className="chat-composer pg-composer">
       <div className="chat-compose-card">
-        {p.parents?.length > 0 && (
-          <div className="pg-cont">
-            <span className="muted">
-              <Icon.history /> With the context of:
-            </span>
-            {p.parents.map((id) => (
-              <span key={id} className="pg-cont-chip" title={id}>
-                {runTitle(id)}
-                <button
-                  aria-label="Remove"
-                  onClick={() => {
-                    p.parents = p.parents.filter((x) => x !== id);
-                    update();
-                  }}
-                >
-                  <Icon.x />
-                </button>
-              </span>
-            ))}
-          </div>
-        )}
+        <ContextChips />
         <textarea
           ref={box}
           rows={2}
@@ -728,6 +908,8 @@ function AskComposer({ box, last, running, anyRunning }) {
           }}
         />
         <div className="chat-compose-row">
+          <AddMenu />
+          <ContextMeter tokens={lc.tokens} window={contextWindow(lc.model || p.model)} compact />
           <small className="chat-hint">
             <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line
           </small>
@@ -785,12 +967,8 @@ function AskContext({ turns, total }) {
         {
           id: "sources",
           title: "Sources",
-          count: 1 + earlier.length + files.length,
-          action: (
-            <button className="link" onClick={() => openPicker()} title="Add earlier runs as context">
-              <Icon.plus /> Add
-            </button>
-          ),
+          count: 1 + earlier.length + (p.ctx || []).length + files.length,
+          action: <AddMenu />,
           children: (
             <>
               <div className="ctx-item" title={S.ws.root}>
@@ -799,6 +977,18 @@ function AskContext({ turns, total }) {
               {earlier.map((id) => (
                 <div key={id} className="ctx-item" title={id}>
                   <Icon.history /> <span>{runTitle(id)}</span>
+                </div>
+              ))}
+              {(p.ctx || []).map((x, i) => (
+                <div key={x.kind + x.value} className="ctx-item" title={x.value}>
+                  {ctxIcon(x.kind)} <span>{ctxLabel(x)}</span>
+                  <button
+                    className="icon-btn ctx-x"
+                    aria-label={"Remove " + x.value}
+                    onClick={() => removeCtx(i)}
+                  >
+                    <Icon.x />
+                  </button>
                 </div>
               ))}
               {files.length > 0 && <div className="ctx-sub">Files it read · {files.length}</div>}
@@ -888,7 +1078,17 @@ function AskContext({ turns, total }) {
         {
           id: "usage",
           title: "Usage",
-          children: turns.length ? <UsageRows u={total} /> : <small className="muted">Nothing yet.</small>,
+          children: turns.length ? (
+            <>
+              <ContextMeter
+                tokens={lastContext(turns).tokens}
+                window={contextWindow(lastContext(turns).model || p.model)}
+              />
+              <UsageRows u={total} />
+            </>
+          ) : (
+            <small className="muted">Nothing yet.</small>
+          ),
         },
       ]}
     />
@@ -942,6 +1142,7 @@ export function Playground() {
     p.sel = "";
     p.prompt = "";
     p.parents = [];
+    p.ctx = [];
     update();
     setTimeout(() => box.current?.focus(), 0);
   };
@@ -1107,7 +1308,7 @@ export function Playground() {
             ))}
             <div ref={end} />
           </div>
-          <AskComposer box={box} last={last} running={running} anyRunning={anyRunning} />
+          <AskComposer box={box} last={last} running={running} anyRunning={anyRunning} turns={turns} />
         </section>
       )}
       {r?.kind !== "flow" && panelOpen() && <AskContext turns={turns} total={total} />}
