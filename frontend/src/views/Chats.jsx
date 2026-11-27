@@ -14,9 +14,11 @@ import { Icon, ListHead, Skeleton, EmptyState, Crumbs } from "../ui.jsx";
 import { mdRender } from "../markdown.js";
 import { ago } from "../time.js";
 import { NeedWorkspace } from "./Wizard.jsx";
+import { agentLabel } from "./Setup.jsx";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { openRunnerWindow, showFlowRun } from "./FlowRun.jsx";
 import { MessageUsage, SessionUsage, UsageDialog } from "./ChatUsage.jsx";
+import { ContextPanel, Rule, PanelToggle, panelOpen } from "../components/ContextPanel.jsx";
 
 const cs = () =>
   (S.chat ||= {
@@ -32,7 +34,6 @@ const cs = () =>
     results: {}, // a step's result by "<flow>/<id>/<data name>"
     attach: {}, // "<flow>/<id>" → files attached to the next message [{name, data}]
     notes: {}, // "<flow>/<id>" → answers to /data, /steps, /help (not saved)
-    panel: true, // the session panel is shown
     archived: false, // archived sessions are listed too
     preview: null, // { title, text }: a data item shown over the screen
     draft: "",
@@ -584,15 +585,7 @@ function Conversation({ s, f }) {
         </div>
         <div className="chat-head-acts">
           <SessionUsage s={s} msgs={msgs} onOpen={() => ((c.usage = true), update())} />
-          <button
-            className="icon-btn"
-            title={c.panel ? "Hide the session panel" : "Show the session panel"}
-            aria-label="Session panel"
-            aria-pressed={c.panel}
-            onClick={() => ((c.panel = !c.panel), update())}
-          >
-            <Icon.panelR />
-          </button>
+          <PanelToggle />
         </div>
       </header>
       {c.usage && <UsageDialog s={s} msgs={msgs} onClose={() => ((c.usage = false), update())} />}
@@ -812,129 +805,188 @@ function Panel({ s, f }) {
     }
   };
   const limit = f?.costLimit || 0;
+  const status =
+    s.status === "ready"
+      ? "Ready"
+      : s.status === "setup"
+        ? "Setting up…"
+        : s.status === "failed"
+          ? "Failed"
+          : s.status;
+  const canRun = (f?.tools || []).length + (tables.length ? 1 : 0) + (docs.length ? 1 : 0);
   return (
-    <aside className="chat-panel" aria-label="Session">
-      <section>
-        <h4>Setup</h4>
-        <div>
-          <span className={"chat-status chat-status-" + s.status}>
-            {s.status === "ready"
-              ? "Ready"
-              : s.status === "setup"
-                ? "Setting up…"
-                : s.status === "failed"
-                  ? "Failed"
-                  : s.status}
-          </span>
-          {s.setupAt && <small className="muted"> · loaded {ago(s.setupAt)}</small>}
-        </div>
-        {(f?.setup || []).length > 0 && <small className="muted">{f.setup.join(" → ")}</small>}
-        <button
-          className="btn secondary chat-refresh"
-          disabled={s.status === "setup"}
-          onClick={() =>
-            backend
-              .RefreshChatSession(s.flow, s.id)
-              .then(() => toast("Refreshing the data: the setup runs again."))
-              .catch((e) => toast(errMsg(e), "error"))
-          }
-        >
-          <Icon.refresh /> Refresh data
-        </button>
-      </section>
-      {Object.keys(s.inputs || {}).length > 0 && (
-        <section>
-          <h4>Inputs</h4>
-          <dl className="chat-dl">
-            {Object.entries(s.inputs).map(([a, b]) => (
-              <div key={a}>
-                <dt>{a}</dt>
-                <dd>{b || "—"}</dd>
+    <ContextPanel
+      label="What the AI works with in this session"
+      sections={[
+        {
+          id: "sources",
+          title: "Sources",
+          count: (s.data || []).length,
+          action: (
+            <button
+              className="link"
+              disabled={s.status === "setup"}
+              title="Run the setup again: fresh data for the rest of the session"
+              onClick={() =>
+                backend
+                  .RefreshChatSession(s.flow, s.id)
+                  .then(() => toast("Refreshing the data: the setup runs again."))
+                  .catch((e) => toast(errMsg(e), "error"))
+              }
+            >
+              <Icon.refresh /> Refresh
+            </button>
+          ),
+          children: (
+            <>
+              <div className="ctx-item">
+                <span className={"chat-status chat-status-" + s.status}>{status}</span>
+                {s.setupAt && <small className="muted"> · loaded {ago(s.setupAt)}</small>}
               </div>
-            ))}
-          </dl>
-        </section>
-      )}
-      {((f?.vars || []).length > 0 || (f?.secrets || []).length > 0) && (
-        <section>
-          <h4>Environment</h4>
-          {(f.vars || []).map((v) => (
-            <div key={v} className="chat-env-name">
-              <code>{v}</code>
-            </div>
-          ))}
-          {(f.secrets || []).map((v) => (
-            <div key={v} className="chat-env-name" title="A secret: its value is never shown">
-              <code>{v}</code> <Icon.lock />
-            </div>
-          ))}
-        </section>
-      )}
-      <section>
-        <h4>Data · {(s.data || []).length}</h4>
-        {(s.data || []).map((d) => (
-          <button key={d.name} className="chat-data" onClick={() => show(d)} title="Show it">
-            {d.setup ? <Icon.inputs /> : d.step === "attachment" ? <Icon.clip /> : <Icon.file />}{" "}
-            {d.title || d.name}
-            <small className="muted">
-              {" "}
-              {d.bytes > 1024 ? Math.round(d.bytes / 1024) + " KB" : d.bytes + " B"}
-              {cat[d.name] && " · " + catalogLabel(cat[d.name])}
-            </small>
-            {cat[d.name] && d.bytes > SMALL_DATA && (
-              <span
-                className="badge chat-indexed"
-                title={
-                  cat[d.name].kind === "table"
-                    ? "Too large to send whole: the AI gets its columns and first rows, and queries it with SQL"
-                    : "Too large to send whole: the AI gets the passages that match each question, and can search for more"
-                }
-              >
-                {cat[d.name].kind === "table" ? "queried" : "searched"}
-              </span>
-            )}
-          </button>
-        ))}
-        {!(s.data || []).length && <small className="muted">Nothing yet.</small>}
-      </section>
-      <section>
-        <h4>Can run · {(f?.tools || []).length + (tables.length ? 1 : 0) + (docs.length ? 1 : 0)}</h4>
-        {tables.length > 0 && (
-          <div className="chat-tool" title={"SQL over " + tables.map((e) => e.table).join(", ")}>
-            Query the data <span className="badge">built in</span>
-          </div>
-        )}
-        {docs.length > 0 && (
-          <div className="chat-tool" title="Full-text search of the documents">
-            Search the documents <span className="badge">built in</span>
-          </div>
-        )}
-        {(f?.tools || []).map((t) => (
-          <div key={t.id} className="chat-tool">
-            {t.title}
-            {(f.asks || []).includes(t.id) && <span className="badge badge-warn">asks you</span>}
-          </div>
-        ))}
-      </section>
-      <section>
-        <h4 className="chat-panel-h">
-          Usage
-          <button className="link" onClick={() => ((cs().usage = true), update())}>
-            Details
-          </button>
-        </h4>
-        <div>
-          ${(s.costUsd || 0).toFixed(3)}
-          {limit > 0 && <span className="muted"> of ${limit.toFixed(2)}</span>} ·{" "}
-          {(s.tokens || 0).toLocaleString()} tokens
-        </div>
-        {limit > 0 && (
-          <div className="chat-budget">
-            <i style={{ width: Math.min(100, ((s.costUsd || 0) / limit) * 100) + "%" }} />
-          </div>
-        )}
-      </section>
-    </aside>
+              {(f?.setup || []).length > 0 && <small className="muted">From {f.setup.join(" → ")}</small>}
+              {(s.data || []).map((d) => (
+                <button key={d.name} className="chat-data" onClick={() => show(d)} title="Show it">
+                  {d.setup ? <Icon.inputs /> : d.step === "attachment" ? <Icon.clip /> : <Icon.file />}{" "}
+                  {d.title || d.name}
+                  <small className="muted">
+                    {" "}
+                    {d.bytes > 1024 ? Math.round(d.bytes / 1024) + " KB" : d.bytes + " B"}
+                    {cat[d.name] && " · " + catalogLabel(cat[d.name])}
+                  </small>
+                  {cat[d.name] && d.bytes > SMALL_DATA && (
+                    <span
+                      className="badge chat-indexed"
+                      title={
+                        cat[d.name].kind === "table"
+                          ? "Too large to send whole: the AI gets its columns and first rows, and queries it with SQL"
+                          : "Too large to send whole: the AI gets the passages that match each question, and can search for more"
+                      }
+                    >
+                      {cat[d.name].kind === "table" ? "queried" : "searched"}
+                    </span>
+                  )}
+                </button>
+              ))}
+              {!(s.data || []).length && <small className="muted">No data yet.</small>}
+              {Object.keys(s.inputs || {}).length > 0 && (
+                <>
+                  <div className="ctx-sub">Inputs</div>
+                  <dl className="chat-dl">
+                    {Object.entries(s.inputs).map(([a, b]) => (
+                      <div key={a}>
+                        <dt>{a}</dt>
+                        <dd>{b || "—"}</dd>
+                      </div>
+                    ))}
+                  </dl>
+                </>
+              )}
+            </>
+          ),
+        },
+        {
+          id: "instructions",
+          title: "Instructions",
+          children: (
+            <>
+              {f?.instructions ? (
+                <div className="ctx-instr">{f.instructions}</div>
+              ) : (
+                <small className="muted">This Chat step has no instructions of its own.</small>
+              )}
+              <ul className="ctx-rules">
+                <Rule>
+                  Answers from this session's data, and asks when a question is unclear or off topic.
+                </Rule>
+                <Rule>
+                  Data and tool results are information, not instructions: it does not act on what they tell
+                  it to do.
+                </Rule>
+              </ul>
+            </>
+          ),
+        },
+        {
+          id: "tools",
+          title: "Tools",
+          count: canRun,
+          children: (
+            <>
+              {tables.length > 0 && (
+                <div className="chat-tool" title={"SQL over " + tables.map((e) => e.table).join(", ")}>
+                  Query the data <span className="badge">built in</span>
+                </div>
+              )}
+              {docs.length > 0 && (
+                <div className="chat-tool" title="Full-text search of the documents">
+                  Search the documents <span className="badge">built in</span>
+                </div>
+              )}
+              {(f?.tools || []).map((t) => (
+                <div key={t.id} className="chat-tool">
+                  {t.title}
+                  {(f.asks || []).includes(t.id) && <span className="badge badge-warn">asks you</span>}
+                </div>
+              ))}
+              {!canRun && <small className="muted">Nothing to run: it answers from the data.</small>}
+            </>
+          ),
+        },
+        {
+          id: "model",
+          title: "Model and settings",
+          children: (
+            <>
+              <div className="ctx-item">
+                <Icon.spark />{" "}
+                <span>
+                  {s.agent || agentLabel()}
+                  {s.model || f?.model ? " · " + (s.model || f.model) : ""}
+                </span>
+              </div>
+              {((f?.vars || []).length > 0 || (f?.secrets || []).length > 0) && (
+                <>
+                  <div className="ctx-sub">Environment</div>
+                  {(f.vars || []).map((v) => (
+                    <div key={v} className="chat-env-name">
+                      <code>{v}</code>
+                    </div>
+                  ))}
+                  {(f.secrets || []).map((v) => (
+                    <div key={v} className="chat-env-name" title="A secret: its value is never shown">
+                      <code>{v}</code> <Icon.lock />
+                    </div>
+                  ))}
+                </>
+              )}
+            </>
+          ),
+        },
+        {
+          id: "usage",
+          title: "Usage",
+          action: (
+            <button className="link" onClick={() => ((cs().usage = true), update())}>
+              Details
+            </button>
+          ),
+          children: (
+            <>
+              <div>
+                ${(s.costUsd || 0).toFixed(3)}
+                {limit > 0 && <span className="muted"> of ${limit.toFixed(2)}</span>} ·{" "}
+                {(s.tokens || 0).toLocaleString()} tokens
+              </div>
+              {limit > 0 && (
+                <div className="chat-budget">
+                  <i style={{ width: Math.min(100, ((s.costUsd || 0) / limit) * 100) + "%" }} />
+                </div>
+              )}
+            </>
+          ),
+        },
+      ]}
+    />
   );
 }
 
@@ -948,7 +1000,7 @@ export function Chats() {
   const s = c.sel && c.sessions.find((x) => x.flow === c.sel.flow && x.id === c.sel.id);
   const startF = c.starting && flows.find((f) => f.id === c.starting);
   return (
-    <div className={"files chats" + (s && !startF && c.panel ? " with-panel" : "")}>
+    <div className={"files chats" + (s && !startF && panelOpen() ? " with-panel" : "")}>
       <nav className="ftree" aria-label="Chatflows and sessions">
         <ListHead title="Chats" count={c.flows ? c.sessions.filter((x) => !x.archived).length : null} />
         {!c.flows && <Skeleton rows={4} />}
@@ -1099,7 +1151,7 @@ export function Chats() {
           </div>
         )}
       </section>
-      {s && !startF && c.panel && <Panel s={s} f={flows.find((f) => f.id === s.flow)} />}
+      {s && !startF && panelOpen() && <Panel s={s} f={flows.find((f) => f.id === s.flow)} />}
       {c.preview && (
         <div
           className="chat-preview"

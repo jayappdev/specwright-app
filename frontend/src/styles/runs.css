@@ -4572,3 +4572,114 @@ main.main[data-view="playground"] {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+
+/* ---- Context panel (components/ContextPanel.jsx): Chats and Ask AI ------------------ */
+.files.askai.with-panel {
+  grid-template-columns: var(--pane-l, 260px) minmax(0, 1fr) 280px;
+}
+.ctx-panel {
+  padding: 10px 12px;
+}
+.ctx-title {
+  font-weight: 600;
+  font-size: 13px;
+  margin: 2px 0 10px;
+}
+.ctx-sec {
+  border-top: 1px solid var(--border);
+  padding: 8px 0;
+  margin: 0 !important;
+}
+.ctx-h {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin: 0 !important;
+}
+.ctx-fold {
+  background: none;
+  border: 0;
+  padding: 2px 0;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: inherit;
+  color: inherit;
+  text-transform: inherit;
+  letter-spacing: inherit;
+}
+.ctx-caret {
+  display: inline-block;
+  transform: rotate(90deg);
+  transition: transform 0.12s;
+  font-size: 10px;
+}
+.ctx-sec.folded .ctx-caret {
+  transform: none;
+}
+.ctx-count {
+  font-variant-numeric: tabular-nums;
+  background: var(--chip-bg, var(--border));
+  border-radius: 99px;
+  padding: 0 6px;
+  font-size: 10.5px;
+  letter-spacing: 0;
+}
+.ctx-h .link {
+  font-size: 12px;
+  text-transform: none;
+  letter-spacing: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+}
+.ctx-body {
+  display: grid;
+  gap: 6px;
+  margin-top: 6px;
+}
+.ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+.ctx-item > span,
+.ctx-item > .file-link {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.ctx-item svg {
+  flex: none;
+  width: 14px;
+  height: 14px;
+  color: var(--muted);
+}
+.ctx-sub {
+  margin-top: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.ctx-rules {
+  margin: 0;
+  padding-left: 16px;
+  display: grid;
+  gap: 4px;
+  font-size: 12.5px;
+}
+.ctx-panel .pg-agenttools {
+  margin: 0;
+}
+.files.chats.with-panel:not(.askai) {
+  grid-template-columns: var(--pane-l, 260px) minmax(0, 1fr) 280px;
+}
+.ctx-instr {
+  white-space: pre-wrap;
+  font-size: 12.5px;
+  padding: 6px 8px;
+  border-left: 2px solid var(--border);
+  max-height: 180px;
+  overflow: auto;
+}

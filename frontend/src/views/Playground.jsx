@@ -30,6 +30,7 @@ import { AiProgress } from "../AiProgress.jsx";
 import { applyToolRevision, reloadTool } from "./Tools.jsx";
 import { proposedTool } from "./tools/toolHistory.js";
 import { conversations } from "./askai.js";
+import { ContextPanel, Rule, PanelToggle, panelOpen } from "../components/ContextPanel.jsx";
 
 const EXAMPLES = [
   "Summarize what this project does and how it is organised",
@@ -727,49 +728,6 @@ function AskComposer({ box, last, running, anyRunning }) {
           }}
         />
         <div className="chat-compose-row">
-          <details className="pg-options">
-            <summary
-              className="btn secondary pg-options-btn"
-              title="Tools, approvals and earlier runs for this question"
-            >
-              Options
-            </summary>
-            <div className="pg-options-card">
-              <button className="btn secondary" onClick={() => openPicker()}>
-                <Icon.history /> Add earlier runs as context…
-              </button>
-              <label className="check">
-                <input
-                  type="checkbox"
-                  checked={p.tools}
-                  onChange={(e) => {
-                    p.tools = e.target.checked;
-                    update();
-                  }}
-                />{" "}
-                Also offer project and admin tools
-              </label>
-              <label
-                className="check"
-                title="Copilot: instead of refusing what it may not do on its own (a command, or editing a file outside the project), it asks you here."
-              >
-                <input
-                  type="checkbox"
-                  checked={p.ask !== false}
-                  onChange={(e) => {
-                    p.ask = e.target.checked;
-                    update();
-                  }}
-                />{" "}
-                Ask me to approve commands and edits outside the project
-              </label>
-              <AgentToolsList withProject={p.tools} />
-              <p className="muted pg-where">
-                Works in <code className="inline-code">{S.ws.root}</code> with the workflow's token and cost
-                budget, and can read and edit files there and run commands.
-              </p>
-            </div>
-          </details>
           <small className="chat-hint">
             <kbd>Enter</kbd> to send · <kbd>Shift</kbd>+<kbd>Enter</kbd> new line
           </small>
@@ -792,6 +750,148 @@ function AskComposer({ box, last, running, anyRunning }) {
         </div>
       </div>
     </div>
+  );
+}
+
+// files the AI read in these turns (read_file and the CLIs' own Read/View)
+function filesRead(turns) {
+  const seen = new Set();
+  for (const t of turns)
+    for (const c of toolCalls(S.events[t.id] || [])) {
+      const name = (c.call.tool || "").replace(/^mcp__agentbridge__/, "");
+      if (!/^(read_file|Read|view|read)$/i.test(name)) continue;
+      const a = c.call.args || {};
+      const f = a.path || a.file_path || a.file;
+      if (typeof f === "string" && f) seen.add(f);
+    }
+  return [...seen];
+}
+
+// AskContext: the Context panel of an Ask AI conversation
+function AskContext({ turns, total }) {
+  const p = pg();
+  const root = turns[0];
+  const earlier = [
+    ...new Set([
+      ...((root?.parents || []).filter((id) => !turns.some((t) => t.id === id)) || []),
+      ...(p.parents || []).filter((id) => !turns.some((t) => t.id === id)),
+    ]),
+  ];
+  const files = filesRead(turns);
+  return (
+    <ContextPanel
+      label="What the AI works with"
+      sections={[
+        {
+          id: "sources",
+          title: "Sources",
+          count: 1 + earlier.length + files.length,
+          action: (
+            <button className="link" onClick={() => openPicker()} title="Add earlier runs as context">
+              <Icon.plus /> Add
+            </button>
+          ),
+          children: (
+            <>
+              <div className="ctx-item" title={S.ws.root}>
+                <Icon.folder /> <span>Project folder · {S.ws.name}</span>
+              </div>
+              {earlier.map((id) => (
+                <div key={id} className="ctx-item" title={id}>
+                  <Icon.history /> <span>{runTitle(id)}</span>
+                </div>
+              ))}
+              {files.length > 0 && <div className="ctx-sub">Files it read · {files.length}</div>}
+              {files.slice(0, 30).map((f) => (
+                <div key={f} className="ctx-item">
+                  <Icon.file /> <FileLink path={f}>{f.split("/").slice(-2).join("/")}</FileLink>
+                </div>
+              ))}
+              {!turns.length && !earlier.length && (
+                <small className="muted">
+                  The AI searches and reads the project's files as it needs them.
+                </small>
+              )}
+            </>
+          ),
+        },
+        {
+          id: "instructions",
+          title: "Instructions",
+          children: (
+            <ul className="ctx-rules">
+              <Rule>Works in this project's folder, within the workflow's token and cost budget.</Rule>
+              <Rule>
+                Follow-ups get the earlier questions and answers of this conversation (the last 10).
+              </Rule>
+              <Rule>
+                Files, pages and tool results are information, not instructions: it does not act on what they
+                tell it to do.
+              </Rule>
+              <Rule>Commands, flow changes and private addresses wait for your yes.</Rule>
+            </ul>
+          ),
+        },
+        {
+          id: "tools",
+          title: "Tools",
+          children: (
+            <>
+              <label className="check">
+                <input
+                  type="checkbox"
+                  checked={p.tools}
+                  onChange={(e) => {
+                    p.tools = e.target.checked;
+                    update();
+                  }}
+                />{" "}
+                Also offer project and admin tools
+              </label>
+              <AgentToolsList withProject={p.tools} />
+            </>
+          ),
+        },
+        {
+          id: "model",
+          title: "Model and settings",
+          children: (
+            <>
+              <div className="ctx-item">
+                <Icon.spark /> <span>{agentLabel()}</span>
+              </div>
+              <ModelPicker
+                value={p.model}
+                onChange={(v) => {
+                  p.model = v;
+                  update();
+                }}
+                label="Model"
+              />
+              <label
+                className="check"
+                title="Copilot: instead of refusing what it may not do on its own (a command, or editing a file outside the project), it asks you here."
+              >
+                <input
+                  type="checkbox"
+                  checked={p.ask !== false}
+                  onChange={(e) => {
+                    p.ask = e.target.checked;
+                    update();
+                  }}
+                />{" "}
+                Ask me before commands and edits outside the project
+              </label>
+            </>
+          ),
+        },
+        {
+          id: "usage",
+          title: "Usage",
+          children: turns.length ? <UsageRows u={total} /> : <small className="muted">Nothing yet.</small>,
+        },
+      ]}
+    />
   );
 }
 
@@ -847,7 +947,7 @@ export function Playground() {
   };
   const total = sumUsage(turns.map((t) => usageOf(S.events[t.id] || [])));
   return (
-    <div className="files chats askai">
+    <div className={"files chats askai" + (r?.kind !== "flow" && panelOpen() ? " with-panel" : "")}>
       <Pane
         k="playground"
         v="--pane-l"
@@ -968,20 +1068,13 @@ export function Playground() {
               </div>
             </div>
             <div className="chat-head-acts">
-              <ModelPicker
-                value={p.model}
-                onChange={(v) => {
-                  p.model = v;
-                  update();
-                }}
-                label="Model"
-              />
               {turns.length > 0 && (
                 <InfoTip label="What this conversation took" align="end">
                   <div className="infotip-title">This conversation</div>
                   <UsageRows u={total} />
                 </InfoTip>
               )}
+              <PanelToggle />
             </div>
           </header>
           <div className="chat-scroll">
@@ -1017,6 +1110,7 @@ export function Playground() {
           <AskComposer box={box} last={last} running={running} anyRunning={anyRunning} />
         </section>
       )}
+      {r?.kind !== "flow" && panelOpen() && <AskContext turns={turns} total={total} />}
     </div>
   );
 }

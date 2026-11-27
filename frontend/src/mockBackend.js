@@ -6679,6 +6679,8 @@ export function createMockBackend(methods) {
             secrets: (f.secrets || []).map((v) => v.name),
             asks: [],
             costLimit: chat.costLimit || 0,
+            instructions: (chat.instructions || "").trim(),
+            model: chat.model || "",
           };
         });
     },
