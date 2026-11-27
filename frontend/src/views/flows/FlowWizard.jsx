@@ -173,7 +173,7 @@ export function FlowWizard() {
             </button>
           )}
           <button className="link" style={{ marginLeft: "auto" }} aria-label="Close" onClick={close}>
-            ✕
+            <Icon.x />
           </button>
         </div>
         <ol className="fwz-steps" aria-label="Phases">
@@ -413,7 +413,7 @@ function Clarify({ s }) {
               aria-label={`Remove ${r.id}`}
               onClick={() => setReqs(list.filter((_, k) => k !== i))}
             >
-              ✕
+              <Icon.x />
             </button>
             {r.status === "not-clear" && r.unclear && (
               <div className="muted fwz-unclear">Not clear: {r.unclear}</div>

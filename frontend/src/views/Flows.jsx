@@ -565,6 +565,13 @@ if (typeof window !== "undefined") {
   });
 }
 
+// createFlow: a new flow from anywhere (the + New menu): it opens in the designer
+export async function createFlow() {
+  S.view = "flows";
+  update();
+  await newFlow();
+}
+
 async function newFlow() {
   const name = await askText("New flow", { label: "Name", value: "New flow", ok: "Create" });
   if (name == null) return;
@@ -1405,6 +1412,7 @@ export function Flows() {
             list={f.list}
             actions={{
               open: openFlow,
+              run: openFlowRunner,
               create: newFlow,
               withAI: () => openWizard(),
               importFile: () => imp.current?.click(),

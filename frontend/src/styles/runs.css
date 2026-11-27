@@ -2382,7 +2382,7 @@
   flex-wrap: wrap;
 }
 .hk-note {
-  font-size: max(11px, 0.78em);
+  font-size: 12px;
 }
 .hk-group {
   display: grid;
@@ -3028,8 +3028,6 @@ select.fl-secret-pick {
   padding: 0 10px 4px;
 }
 .badge-sched {
-  background: color-mix(in srgb, var(--ok) 16%, transparent);
-  border-color: color-mix(in srgb, var(--ok) 50%, transparent);
   color: var(--ok);
 }
 /* Run History: runs found by what they contain */
@@ -3060,7 +3058,7 @@ select.fl-secret-pick {
 /* tool reliability (tiles, the Flow Designer's tool step) */
 .tt-rel {
   display: block;
-  font-size: 0.8em;
+  font-size: 12px;
 }
 .tt-rel.rel-ok {
   color: var(--muted);

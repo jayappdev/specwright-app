@@ -12,6 +12,11 @@ func TestParseAIDecision(t *testing.T) {
 		"Here it is:\n```json\n{\"path\": \"Hold\", \"confidence\": 0.4}\n```":  {Path: "hold", Confidence: 40},
 		`{"path": "otherwise", "reason": "Neither fits.", "confidence": "75%"}`: {Path: ElseBranch, Reason: "Neither fits.", Confidence: 75},
 		`{"path": "ship", "confidence": 140}`:                                   {Path: "ship", Confidence: 100},
+		// how GPT models often answer: a fraction, a decimal, 1 for "certain"
+		`{"path": "ship", "confidence": 0.86}`:  {Path: "ship", Confidence: 86},
+		`{"path": "ship", "confidence": 87.5}`:  {Path: "ship", Confidence: 88},
+		`{"path": "ship", "confidence": 1}`:     {Path: "ship", Confidence: 100},
+		`{"path": "ship", "confidence": "0.9"}`: {Path: "ship", Confidence: 90},
 	} {
 		got, err := ParseAIDecision(reply, n)
 		if err != nil || got != want {

@@ -9,7 +9,7 @@ import { RunListBar, RunGroup, PickBox, RunActions, visibleRuns } from "../RunHo
 import { useEffect, useRef, useState } from "react";
 import { ContentView } from "../ContentView.jsx";
 import { backend } from "../backend.js";
-import { EmptyState, RefreshButton, usePoll } from "../ui.jsx";
+import { EmptyState, RefreshButton, usePoll, ListHead } from "../ui.jsx";
 import { Pane } from "../Pane.jsx";
 import { S, update, toast, errMsg, usageOf, isCopilot, fmtK, fmtMs, fmtCredits } from "../store.js";
 import { Icon, Pill, Stat, Chip } from "../ui.jsx";
@@ -652,22 +652,12 @@ export function Playground() {
     <div className="files pg">
       <Pane k="playground" v="--pane-l" pane=".ftree" min={200} max={560} label="Resize the run list" />
       <nav className="ftree" aria-label="Playground prompts">
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            alignItems: "center",
-            padding: "0 8px 8px",
-          }}
-        >
-          <h1 className="list-head">
-            Playground{" "}
-            <RefreshButton
-              label="Refresh the Playground runs"
-              every={PLAYGROUND_POLL}
-              onRefresh={() => loadPast(true)}
-            />
-          </h1>
+        <ListHead title="Playground">
+          <RefreshButton
+            label="Refresh the Playground runs"
+            every={PLAYGROUND_POLL}
+            onRefresh={() => loadPast(true)}
+          />
           <button
             className="btn primary"
             onClick={() => {
@@ -677,9 +667,9 @@ export function Playground() {
               setTimeout(() => box.current?.focus(), 0);
             }}
           >
-            + New
+            <Icon.plus /> New
           </button>
-        </div>
+        </ListHead>
         {!p.runs.length && (
           <EmptyState compact title="No prompts yet">
             Prompts you run appear here, with their answers, tool calls and files changed. Write one on the

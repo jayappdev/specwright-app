@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { ContentView } from "../../ContentView.jsx";
 import { backend } from "../../backend.js";
 import { S, update, toast, errMsg, fmtMs } from "../../store.js";
-import { Icon, Pill } from "../../ui.jsx";
+import { Icon, Pill, Crumbs } from "../../ui.jsx";
 import { StepIcon } from "../Flows.jsx";
 import { RunPanel } from "../../components/RunPanel.jsx";
 import { continueInPlayground } from "../Playground.jsx";
@@ -695,6 +695,42 @@ export function RunView({ st }) {
     details = !!S.layout[DETAILS];
   return (
     <>
+      {!S.runner && (
+        <Crumbs
+          items={[
+            [
+              "Flows",
+              () => {
+                S.view = "flows";
+                update();
+              },
+            ],
+            [
+              "Runs",
+              () => {
+                r.runId = "";
+                update();
+              },
+            ],
+            [
+              st.flowName,
+              () => {
+                r.runId = "";
+                update();
+              },
+            ],
+            [
+              (st.options?.chat?.role === "setup"
+                ? "Chat setup · "
+                : st.options?.chat?.role === "tool"
+                  ? "Chat tool · "
+                  : "Run · ") +
+                new Date(st.started).toLocaleString([], { dateStyle: "medium", timeStyle: "short" }),
+              null,
+            ],
+          ]}
+        />
+      )}
       <header className="view-head">
         <h1>{st.flowName}</h1>
         <Pill s={pill(st.status)} label={STATUS_LABEL[st.status] || st.status} />

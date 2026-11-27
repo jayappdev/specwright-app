@@ -35,11 +35,15 @@ import { Metrics } from "./views/Metrics.jsx";
 import { History } from "./views/History.jsx";
 import { Playground } from "./views/Playground.jsx";
 import { Admin } from "./views/Admin.jsx";
+import { Home } from "./views/Home.jsx";
+import { NewMenuHost, openNewMenu } from "./NewMenu.jsx";
+import { KeysSheet, openKeysSheet } from "./KeysSheet.jsx";
+import { needsYou } from "./attention.js";
 import { Appearance } from "./views/Appearance.jsx";
 import { Flows } from "./views/Flows.jsx";
 import { FlowRun, showFlowRun, openFlowRunner } from "./views/FlowRun.jsx";
 import { Chats } from "./views/Chats.jsx";
-import { FlowGuide } from "./views/FlowGuide.jsx";
+import { FlowGuide, HelpPanel, openFlowGuide, GUIDE_TYPES } from "./views/FlowGuide.jsx";
 import { FilePreview } from "./FilePreview.jsx";
 import { LibraryEditor } from "./views/LibraryEditor.jsx";
 import { DialogHost } from "./Dialog.jsx";
@@ -51,52 +55,87 @@ import { Notices } from "./Notices.jsx";
 import { Pane } from "./Pane.jsx";
 import { openSettings } from "./views/Appearance.jsx";
 
-// The sidebar, in groups: building from a spec, tools, utilities, admin.
+// Every screen (view), by id. The sidebar shows them by job: some entries
+// are one screen, others a section of screens shown as tabs (SECTIONS).
+const VIEWS = [
+  { id: "home", label: "Home", icon: Icon.home, C: Home },
+  { id: "wizard", label: "Development wizard", tab: "Setup", icon: Icon.wizard, C: Wizard },
+  { id: "inputs", label: "Choose input", tab: "Input", icon: Icon.inputs, C: Inputs },
+  { id: "workflow", label: "Run spec workflow", tab: "Run", icon: Icon.workflow, C: Workflow },
+  { id: "flows", label: "Flow designer", tab: "Library", icon: Icon.flow, C: Flows },
+  { id: "flowrun", label: "Run flows", tab: "Runs", icon: Icon.run, C: FlowRun },
+  { id: "chats", label: "Chats", icon: Icon.chat, C: Chats },
+  { id: "playground", label: "Ask AI (Playground)", icon: Icon.playground, C: Playground },
+  { id: "tools", label: "Tools", icon: Icon.tool, C: Tools },
+  { id: "files", label: "Files", icon: Icon.files, C: Files },
+  { id: "history", label: "History", icon: Icon.history, C: History },
+  { id: "flowguide", label: "Flow step guide", icon: Icon.book, C: FlowGuide },
+  { id: "metrics", label: "Metrics", icon: Icon.metrics, C: Metrics },
+  { id: "appearance", label: "Settings", icon: Icon.appearance, C: Appearance },
+  { id: "admin", label: "Admin", icon: Icon.shield, C: Admin },
+];
+const viewOf = (id) => VIEWS.find((v) => v.id === id);
+
+// sections: one sidebar entry, its screens as tabs (in order)
+export const SECTIONS = {
+  spec: {
+    label: "Spec workflow",
+    icon: Icon.workflow,
+    views: ["wizard", "inputs", "workflow"],
+    first: "workflow",
+  },
+  flowsec: { label: "Flows", icon: Icon.flow, views: ["flows", "flowrun"], first: "flows" },
+};
+const sectionOf = (view) => Object.keys(SECTIONS).find((k) => SECTIONS[k].views.includes(view)) || "";
+
+// the sidebar: entries (a view id, or a section id) by group
 const GROUPS = [
   {
-    id: "build",
-    label: "Build",
-    title: "Build from a spec",
-    views: [
-      { id: "wizard", label: "Development wizard", icon: Icon.wizard, C: Wizard },
-      { id: "inputs", label: "Choose input", icon: Icon.inputs, C: Inputs },
-      { id: "workflow", label: "Run spec workflow", icon: Icon.workflow, C: Workflow },
-    ],
+    id: "work",
+    title: "Work",
+    items: ["home", "spec", "flowsec", "chats", "playground", "tools", "files", "history"],
   },
-  {
-    id: "tools",
-    label: "Tools",
-    title: "Tools, playground and flows",
-    views: [
-      { id: "tools", label: "Tools", icon: Icon.tool, C: Tools },
-      { id: "playground", label: "Prompt playground", icon: Icon.playground, C: Playground },
-      { id: "flows", label: "Flow designer", icon: Icon.flow, C: Flows },
-      { id: "flowrun", label: "Run flows", icon: Icon.run, C: FlowRun },
-      { id: "chats", label: "Chats", icon: Icon.chat, C: Chats },
-      { id: "flowguide", label: "Flow step guide", icon: Icon.book, C: FlowGuide, sub: true }, // under the Flow designer; labelled only when the sidebar is open
-    ],
-  },
-  {
-    id: "utils",
-    label: "Utils",
-    title: "Utilities",
-    views: [
-      { id: "files", label: "Project files", icon: Icon.files, C: Files },
-      { id: "history", label: "Run history and replay", icon: Icon.history, C: History },
-      { id: "metrics", label: "Metrics", icon: Icon.metrics, C: Metrics },
-      { id: "appearance", label: "Settings", icon: Icon.appearance, C: Appearance },
-    ],
-  },
-  {
-    id: "admin",
-    label: "Admin",
-    title: "Administration",
-    bottom: true,
-    views: [{ id: "admin", label: "Admin", icon: Icon.shield, C: Admin }],
-  },
+  { id: "more", title: "Settings and admin", bottom: true, items: ["metrics", "appearance", "admin"] },
 ];
-const VIEWS = GROUPS.flatMap((g) => g.views);
-const NAV = GROUPS.flatMap((g) => g.views.map((v) => ({ id: v.id, label: v.label, group: g.label })));
+const entryOf = (id) =>
+  SECTIONS[id]
+    ? { id, label: SECTIONS[id].label, icon: SECTIONS[id].icon, section: SECTIONS[id] }
+    : { ...viewOf(id), label: id === "playground" ? "Ask AI" : viewOf(id).label };
+// ⌘1…⌘9 and the palette: the sidebar's entries in order (a section opens
+// its last tab), then the screens that are only tabs or reached otherwise
+const NAV = [
+  ...GROUPS.flatMap((g) =>
+    g.items.map((id) => ({
+      id: SECTIONS[id] ? SECTIONS[id].first : id,
+      label: entryOf(id).label,
+      group: g.title,
+    })),
+  ),
+  ...["wizard", "inputs", "flowrun", "flowguide"].map((id) => ({
+    id,
+    label: viewOf(id).label,
+    group: SECTIONS[sectionOf(id)]?.label || "Help",
+  })),
+].filter((x, i, all) => all.findIndex((y) => y.id === x.id && y.label === x.label) === i);
+
+// Help opens at the step selected in the designer (else the introduction)
+const toggleHelp = () => {
+  if (S.help) {
+    S.help = null;
+    update();
+    return;
+  }
+  const n = S.view === "flows" && S.fl?.flow?.nodes?.find((x) => x.id === S.fl.sel);
+  openFlowGuide(n && GUIDE_TYPES.has(n.type) ? n.type : "");
+};
+
+// the tab a section opens on: the one you were on last
+const lastTab = {};
+const openEntry = (id) => {
+  const sec = SECTIONS[id];
+  S.view = sec ? lastTab[id] || sec.first : id;
+  update();
+};
 
 // the sidebar shows labels when it is open: by choice, or automatically on wide windows
 const WIDE = "(min-width: 1280px)";
@@ -157,6 +196,35 @@ export function App() {
   // Back / Forward (navigation.js): ⌘[ ⌘], Alt+← Alt+→, and the mouse's side buttons
   useEffect(() => {
     const off = [
+      register({
+        id: "keys",
+        keys: ["shift+?", "?", "shift+/"],
+        help: [["?", "Keyboard shortcuts"]],
+        run: (e) => {
+          e.preventDefault();
+          openKeysSheet();
+        },
+      }),
+      register({
+        id: "help",
+        keys: ["f1"],
+        inFields: true,
+        help: [["f1", "Help: how each flow step works"]],
+        run: (e) => {
+          e.preventDefault();
+          toggleHelp();
+        },
+      }),
+      register({
+        id: "new-menu",
+        keys: ["mod+n"],
+        inFields: true,
+        help: [["mod+n", "New flow, tool, chat or prompt"]],
+        run: (e) => {
+          e.preventDefault();
+          openNewMenu(document.querySelector(".activity-new"));
+        },
+      }),
       register({
         id: "nav-back",
         keys: ["mod+[", "alt+arrowleft"],
@@ -239,7 +307,12 @@ export function App() {
         </main>
       </div>
     );
-  const view = VIEWS.find((v) => v.id === S.view) || VIEWS[0];
+  const view = viewOf(S.view) || VIEWS[0];
+  const sec = sectionOf(S.view);
+  if (sec) lastTab[sec] = S.view;
+  // a section's tabs, above its screen (not while a flow is open in the
+  // designer, or in a runner window: they use the whole window)
+  const tabs = sec && !S.runner && !(S.view === "flows" && S.fl?.flow) ? SECTIONS[sec] : null;
   const wf = S.wf,
     statuses = wf?.steps.map((s) => s.status) || [];
   const gate = statuses.includes("paused");
@@ -259,22 +332,33 @@ export function App() {
   const cur = wf ? currentStep(wf) : 0,
     allDone = statuses.length && statuses.every((s) => s === "done");
   const t = totals();
+  const needs = needsYou();
   return (
     <>
       <div className={"app" + (S.railOpen ? " rail-open" : "")}>
         <nav className="activity" aria-label="Views">
           <button
             className="brand-mark"
-            title="SpecWright · go to the workflow"
+            title="SpecWright · Home"
             aria-label="SpecWright home"
             onClick={() => {
-              S.view = "workflow";
+              S.view = "home";
               update();
             }}
           >
             <Logo size={42} />
           </button>
           <NavArrows />
+          <button
+            className="activity-btn activity-new"
+            title="New flow, tool, chat or prompt (⌘N / Ctrl+N)"
+            aria-label="New"
+            aria-haspopup="menu"
+            onClick={(e) => openNewMenu(e.currentTarget)}
+          >
+            <Icon.plus />
+            <span className="activity-text">New</span>
+          </button>
           {GROUPS.map((g) => (
             <div
               key={g.id}
@@ -282,58 +366,61 @@ export function App() {
               role="group"
               aria-label={g.title}
             >
-              <span className="activity-label" title={g.title}>
-                {g.label}
-              </span>
-              {g.views
-                .filter((v) => !v.sub || S.railOpen || S.view === v.id)
-                .map((v) => {
-                  const k = NAV.findIndex((x) => x.id === v.id);
-                  return (
-                    <button
-                      key={v.id}
-                      className={
-                        "activity-btn" + (S.view === v.id ? " active" : "") + (v.sub ? " activity-sub" : "")
-                      }
-                      title={`${v.label} · ${g.title}${k < 9 ? ` (⌘${k + 1})` : ""}`}
-                      aria-label={v.label}
-                      aria-current={S.view === v.id ? "page" : undefined}
-                      onClick={() => {
-                        S.view = v.id;
-                        update();
-                      }}
-                    >
-                      <v.icon />
-                      <span className="activity-text">{v.label}</span>
-                      {v.id === "workflow" && wf && !allDone && (
-                        <span className="activity-meta">
-                          {cur + 1}/{wf.steps.length}
-                        </span>
-                      )}
-                      {v.id === "inputs" && S.ws?.speckit?.initialized && (
-                        <span className="activity-meta" aria-label="Spec Kit set up">
-                          ✓
-                        </span>
-                      )}
-                      {v.id === "workflow" && gate && (
-                        <span className="activity-dot" aria-label="needs approval" />
-                      )}
-                      {v.id === "flowrun" && flowWait.length > 0 && (
-                        <span
-                          className="activity-dot"
-                          aria-label={`${flowWait.length} flow run${flowWait.length === 1 ? "" : "s"} waiting for you`}
-                        />
-                      )}
-                    </button>
-                  );
-                })}
+              {g.items.map((id) => {
+                const e = entryOf(id),
+                  active = e.section ? e.section.views.includes(S.view) : S.view === id,
+                  k = NAV.findIndex((x) => x.label === e.label);
+                return (
+                  <button
+                    key={id}
+                    className={"activity-btn" + (active ? " active" : "")}
+                    title={`${e.label}${k >= 0 && k < 9 ? ` (⌘${k + 1})` : ""}`}
+                    aria-label={e.label}
+                    aria-current={active ? "page" : undefined}
+                    onClick={() => openEntry(id)}
+                  >
+                    <e.icon />
+                    <span className="activity-text">{e.label}</span>
+                    {id === "spec" && wf && !allDone && (
+                      <span className="activity-meta">
+                        {cur + 1}/{wf.steps.length}
+                      </span>
+                    )}
+                    {id === "home" && needs.length > 0 && (
+                      <span
+                        className="activity-count"
+                        aria-label={`${needs.length} thing${needs.length === 1 ? "" : "s"} need${needs.length === 1 ? "s" : ""} you`}
+                      >
+                        {needs.length}
+                      </span>
+                    )}
+                    {id === "spec" && gate && <span className="activity-dot" aria-label="needs approval" />}
+                    {id === "flowsec" && flowWait.length > 0 && (
+                      <span
+                        className="activity-dot"
+                        aria-label={`${flowWait.length} flow run${flowWait.length === 1 ? "" : "s"} waiting for you`}
+                      />
+                    )}
+                  </button>
+                );
+              })}
             </div>
           ))}
           <div className="activity-tools">
             <button
+              className={"activity-btn" + (S.help ? " active" : "")}
+              title="Help: how each flow step works, with examples (F1)"
+              aria-label="Help"
+              aria-expanded={!!S.help}
+              onClick={toggleHelp}
+            >
+              <Icon.book />
+              <span className="activity-text">Help</span>
+            </button>
+            <button
               className="activity-btn"
-              title="Search views and flows (⌘K / Ctrl+K)"
-              aria-label="Search views and flows"
+              title="Search views, flows, chats and actions (⌘K / Ctrl+K)"
+              aria-label="Search views, flows, chats and actions"
               onClick={openPalette}
             >
               <Icon.search />
@@ -366,7 +453,10 @@ export function App() {
             className="rail-handle"
           />
         )}
-        <main className="main" data-view={S.view}>
+        <main className={"main" + (tabs ? " has-tabs" : "")} data-view={S.view}>
+          {tabs && (
+            <SectionTabs sec={tabs} wf={wf} cur={cur} allDone={allDone} gate={gate} flowWait={flowWait} />
+          )}
           <ErrorBoundary name={view.label || "This view"} resetKey={S.view}>
             <view.C />
           </ErrorBoundary>
@@ -508,6 +598,15 @@ export function App() {
       <ErrorBoundary floating name="The command palette">
         <CommandPalette />
       </ErrorBoundary>
+      <ErrorBoundary floating name="The New menu">
+        <NewMenuHost />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="Help">
+        <HelpPanel />
+      </ErrorBoundary>
+      <ErrorBoundary floating name="Keyboard shortcuts">
+        <KeysSheet viewLabel={viewOf(S.view)?.label} />
+      </ErrorBoundary>
       <div className="toast" aria-live="polite" onMouseEnter={toastHold} onMouseLeave={toastRelease}>
         {S.toast && S.toastKind !== "error" && <div className="banner">{S.toast}</div>}
       </div>
@@ -523,6 +622,48 @@ export function App() {
         )}
       </div>
     </>
+  );
+}
+
+// SectionTabs: a section's screens as tabs (Spec workflow: Setup · Input ·
+// Run; Flows: Library · Runs), with what each needs at a glance
+function SectionTabs({ sec, wf, cur, allDone, gate, flowWait }) {
+  return (
+    <nav className="section-tabs" aria-label={sec.label}>
+      <span className="section-tabs-title">{sec.label}</span>
+      <div className="section-tabs-list" role="tablist">
+        {sec.views.map((id, i) => {
+          const v = viewOf(id),
+            on = S.view === id;
+          return (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={on}
+              className={"section-tab" + (on ? " on" : "")}
+              title={v.label}
+              onClick={() => {
+                S.view = id;
+                update();
+              }}
+            >
+              {sec.views.length === 3 && <span className="section-tab-num">{i + 1}</span>}
+              {v.tab}
+              {id === "inputs" && S.ws?.speckit?.initialized && <Icon.check />}
+              {id === "workflow" && wf && !allDone && (
+                <span className="section-tab-meta">
+                  step {cur + 1}/{wf.steps.length}
+                </span>
+              )}
+              {id === "workflow" && gate && <span className="badge badge-warn">approval</span>}
+              {id === "flowrun" && flowWait.length > 0 && (
+                <span className="badge badge-warn">{flowWait.length} waiting</span>
+              )}
+            </button>
+          );
+        })}
+      </div>
+    </nav>
   );
 }
 

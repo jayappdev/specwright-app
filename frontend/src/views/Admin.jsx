@@ -4,7 +4,7 @@
 import { useEffect, useState } from "react";
 import { confirmDialog, askText } from "../Dialog.jsx";
 import { backend } from "../backend.js";
-import { EmptyState } from "../ui.jsx";
+import { EmptyState, LearnMore } from "../ui.jsx";
 import { S, update, toast, errMsg, refreshAdmin, refreshExtensions, saveText } from "../store.js";
 import { Icon, Card } from "../ui.jsx";
 import { openTool, newManagedTool } from "./Tools.jsx";
@@ -229,7 +229,8 @@ function ManagedCard({ a }) {
   };
   return (
     <Card title="Managed tools" badge={<span className="badge">{list.length}</span>}>
-      <p className="wf-desc">
+      <p className="wf-desc">Tools every project can run; only an admin can change them.</p>
+      <LearnMore summary="Where they are kept">
         Global to the app: available in every project, runnable and testable by everyone, editable only in
         admin mode. Published to <code className="inline-code">{a.managedFile}</code>
         {a.machineCatalog ? (
@@ -239,7 +240,7 @@ function ManagedCard({ a }) {
           </>
         ) : null}
         .
-      </p>
+      </LearnMore>
       <ul className="lib-list">
         {list.map((t) => (
           <li key={t.name}>
@@ -380,14 +381,15 @@ function TrustCard({ a }) {
   };
   return (
     <Card title="Trusted admins">
-      <p className="wf-desc">
+      <p className="wf-desc">Managed tools run only when they are signed by a key trusted here.</p>
+      <LearnMore summary="How trust works">
         Managed tools only run when their signature matches a trusted admin key. Keys in the machine policy (
         <code className="inline-code">{a.policyPath}</code>) cannot be changed by regular users
         {a.policyFound ? "" : "; no policy file is installed on this computer"}.
         {a.allowLocal
           ? " Keys can also be trusted for this user only."
           : " The policy does not allow trusting keys locally."}
-      </p>
+      </LearnMore>
       {a.policyError && <div className="banner error">{a.policyError}</div>}
       <ul className="lib-list">
         {(a.trusted || []).map((t) => (
@@ -514,11 +516,12 @@ export function Admin() {
           </span>
         )}
       </header>
-      <p className="wf-desc">
+      <p className="wf-desc">Publish signed tools that every project can run and nobody else can change.</p>
+      <LearnMore>
         Admins publish tools for the whole app. They are built and tested on the Tools screen like any other
         tool, then signed and published: every project sees them, and regular users cannot edit, replace or
         remove them.
-      </p>
+      </LearnMore>
       <KeySetup a={a} />
       <LockCard a={a} />
       <ManagedCard a={a} />

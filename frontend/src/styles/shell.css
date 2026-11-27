@@ -748,3 +748,611 @@ textarea[aria-invalid="true"] {
   border-radius: 4px;
   overflow-wrap: anywhere;
 }
+
+/* ---- the sidebar's + New, and Home's count of what needs you ---- */
+.activity-new {
+  color: var(--activity-fg);
+}
+.activity-new svg {
+  width: 18px;
+  height: 18px;
+  padding: 3px;
+  border-radius: 7px;
+  background: var(--btn-bg);
+  color: var(--btn-fg);
+  box-sizing: content-box;
+}
+.activity-count {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  min-width: 16px;
+  height: 16px;
+  padding: 0 4px;
+  border-radius: 999px;
+  background: var(--warn);
+  color: #fff;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 16px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+.app.rail-open .activity .activity-count {
+  position: static;
+  margin-left: auto;
+}
+
+/* ---- the + New menu (NewMenu.jsx) ---- */
+.new-menu {
+  position: fixed;
+  z-index: 80;
+  width: 320px;
+  max-height: 420px;
+  overflow: auto;
+  padding: 6px;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 48px -18px rgb(0 0 0 / 0.45);
+  animation: fadein 0.1s ease-out;
+}
+.new-item {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  width: 100%;
+  padding: 8px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.new-item:hover,
+.new-item:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.new-item-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--focus);
+  background: color-mix(in srgb, var(--focus) 14%, transparent);
+}
+.new-item-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+.new-item-text b {
+  font-size: 13px;
+  font-weight: 600;
+}
+.new-item-text small {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+.new-sep {
+  height: 1px;
+  background: var(--border);
+  margin: 6px 4px;
+}
+.new-head {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  padding: 4px 10px;
+}
+.new-note {
+  font-size: 12px;
+  padding: 4px 10px 8px;
+  margin: 0;
+}
+
+/* ---- Home (views/Home.jsx) ---- */
+.home {
+  overflow: auto;
+}
+.home-head,
+.home-grid {
+  width: 100%;
+  max-width: 1180px;
+  margin: 0 auto;
+}
+.home-head {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-end;
+  gap: 16px;
+  padding: 8px 4px 14px;
+  border-bottom: 1px solid var(--border);
+}
+.home-head h1 {
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.015em;
+  margin: 0 0 2px;
+}
+.home-head p {
+  margin: 0;
+  font-size: 13px;
+}
+.home-head .btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border-radius: 8px;
+}
+.home-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr);
+  gap: 20px 28px;
+  padding: 16px 4px 32px;
+}
+@media (max-width: 1000px) {
+  .home-grid {
+    grid-template-columns: 1fr;
+  }
+}
+.home-col {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
+  min-width: 0;
+}
+.home-sec-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 8px;
+}
+.home-sec-head h2 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.home-sec-head .link {
+  font-size: 12px;
+  text-decoration: none;
+}
+.home-list {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+  overflow: hidden;
+}
+.home-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 10px 14px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.home-row:last-child {
+  border-bottom: 0;
+}
+.home-row:hover,
+.home-row:focus-visible {
+  background: var(--hover);
+  outline: none;
+}
+.home-row-icon {
+  flex: none;
+  width: 30px;
+  height: 30px;
+  border-radius: 8px;
+  display: grid;
+  place-items: center;
+  color: var(--focus);
+  background: color-mix(in srgb, var(--focus) 12%, transparent);
+}
+.home-row-text {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  flex: 1;
+}
+.home-row-text b {
+  font-size: 13.5px;
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-row-text small {
+  font-size: 12px;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.home-row-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  flex: none;
+}
+.home-row-go {
+  flex: none;
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--link);
+}
+.home-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0;
+  padding: 14px;
+  border: 1px dashed var(--border);
+  border-radius: 12px;
+  font-size: 13px;
+}
+.home-empty svg {
+  color: var(--ok);
+}
+.home-steps {
+  list-style: none;
+  margin: 0;
+  padding: 6px 0;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: var(--surface);
+}
+.home-steps li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 7px 14px;
+  font-size: 13px;
+}
+.home-steps li.done {
+  color: var(--muted);
+}
+.home-steps li.done > span:last-child {
+  text-decoration: line-through;
+}
+.home-steps .link {
+  text-align: left;
+  padding: 0;
+  text-decoration: none;
+}
+.home-step-mark {
+  flex: none;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 1.5px solid var(--border);
+  display: grid;
+  place-items: center;
+}
+.home-steps li.done .home-step-mark {
+  background: var(--ok);
+  border-color: var(--ok);
+  color: #fff;
+}
+.home-step-mark svg {
+  width: 11px;
+  height: 11px;
+}
+
+/* ---- a section's tabs (Spec workflow, Flows), above its screen ---- */
+.main.has-tabs > :not(.section-tabs) {
+  flex: 1 1 auto;
+  min-height: 0;
+  height: auto;
+}
+.section-tabs {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 0 16px;
+  min-height: 42px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.section-tabs-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--fg);
+  padding-right: 16px;
+  border-right: 1px solid var(--border);
+  line-height: 20px;
+}
+.section-tabs-list {
+  display: flex;
+  align-self: stretch;
+  gap: 4px;
+}
+.section-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 12px;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  margin-bottom: -1px;
+  background: none;
+  color: var(--muted);
+  font: inherit;
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+.section-tab:hover {
+  color: var(--fg);
+}
+.section-tab.on {
+  color: var(--fg);
+  border-bottom-color: var(--focus);
+}
+.section-tab svg {
+  width: 13px;
+  height: 13px;
+  color: var(--ok);
+}
+.section-tab-num {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  font-size: 11px;
+  font-weight: 600;
+  background: color-mix(in srgb, var(--muted) 16%, transparent);
+  color: var(--muted);
+}
+.section-tab.on .section-tab-num {
+  background: var(--focus);
+  color: #fff;
+}
+.section-tab-meta {
+  font-size: 11.5px;
+  color: var(--muted);
+  font-weight: 400;
+}
+/* the screens under the tabs fill what is left, not the whole window */
+.main.has-tabs .files.chats {
+  height: auto;
+}
+
+/* ---- Help: the step guide beside your work (FlowGuide.jsx HelpPanel) ---- */
+.help-panel {
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 24px; /* above the status bar */
+  width: min(640px, 52vw);
+  z-index: 60;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg);
+  border-left: 1px solid var(--border);
+  box-shadow: -18px 0 40px -24px rgb(0 0 0 / 0.45);
+  animation: help-in 0.14s ease-out;
+}
+@keyframes help-in {
+  from {
+    transform: translateX(16px);
+    opacity: 0;
+  }
+}
+.help-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface);
+}
+.help-head h2 {
+  margin: 0;
+  font-size: 15px;
+  font-weight: 600;
+}
+.help-head select {
+  flex: 1;
+  min-width: 0;
+}
+.help-head .link {
+  font-size: 12px;
+  white-space: nowrap;
+}
+.help-body {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+.help-body > .card {
+  margin: 0;
+}
+
+/* ---- Skeleton: placeholders while a list loads (ui.jsx) ---- */
+.skel {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 4px 8px;
+}
+.skel-card {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 12px;
+  padding: 8px 0;
+}
+.skel-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 6px;
+}
+.skel-card .skel-item {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 16px 14px;
+  min-height: 96px;
+  align-items: flex-start;
+}
+.skel-icon,
+.skel-line {
+  background: linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--muted) 14%, transparent) 0%,
+    color-mix(in srgb, var(--muted) 24%, transparent) 50%,
+    color-mix(in srgb, var(--muted) 14%, transparent) 100%
+  );
+  background-size: 200% 100%;
+  animation: skel-shine 1.4s ease-in-out infinite;
+  border-radius: 6px;
+}
+.skel-icon {
+  flex: none;
+  width: 28px;
+  height: 28px;
+  border-radius: 8px;
+}
+.skel-lines {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.skel-line {
+  height: 10px;
+}
+.skel-line.short {
+  width: 35%;
+  height: 8px;
+}
+@keyframes skel-shine {
+  from {
+    background-position: 100% 0;
+  }
+  to {
+    background-position: -100% 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .skel-icon,
+  .skel-line {
+    animation: none;
+  }
+}
+
+/* ---- breadcrumbs (ui.jsx Crumbs) ---- */
+.crumbs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 2px;
+  font-size: 12px;
+  color: var(--muted);
+  margin-bottom: 2px;
+  min-width: 0;
+}
+.crumb {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  min-width: 0;
+}
+.crumb > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 320px;
+}
+.crumb-sep {
+  padding: 0 4px;
+  opacity: 0.7;
+}
+.crumb-link {
+  background: none;
+  border: 0;
+  padding: 0;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+}
+.crumb-link:hover,
+.crumb-link:focus-visible {
+  color: var(--link);
+  text-decoration: underline;
+}
+.chat-head-title .crumbs {
+  margin-bottom: 1px;
+}
+
+/* ---- the keyboard shortcuts sheet (KeysSheet.jsx) ---- */
+.keys-sheet {
+  width: min(760px, calc(100vw - 32px));
+  max-height: calc(100vh - 64px);
+  overflow: auto;
+}
+.keys-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.keys-head h3 {
+  margin: 0;
+}
+.keys-cols {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 8px 28px;
+}
+.keys-cols h4 {
+  margin: 8px 0 6px;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.keys-cols dl {
+  margin: 0;
+}
+.keys-cols dl > div {
+  display: flex;
+  justify-content: space-between;
+  gap: 16px;
+  padding: 5px 0;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+}
+.keys-cols dd {
+  margin: 0;
+  flex: none;
+}
+.keys-cols kbd {
+  font-family: var(--font-mono);
+  font-size: 11.5px;
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-bottom-width: 2px;
+  border-radius: 5px;
+  background: var(--surface);
+}

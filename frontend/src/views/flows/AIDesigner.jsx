@@ -375,7 +375,7 @@ export function AIDesigner({ inline }) {
           aria-label="Close"
           onClick={() => set("open", false)}
         >
-          ✕
+          <Icon.x />
         </button>
       </div>
       {improving &&
