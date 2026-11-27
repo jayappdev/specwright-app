@@ -51,6 +51,7 @@ func TestAgentEditedFlowStillLoads(t *testing.T) {
 
 func TestSaveFlowToolMakesAVersion(t *testing.T) {
 	h, ws := flowHub(t)
+	allowAgentActions(h) // the person says yes to the AI's actions (agentactions.go)
 	orig, _ := flow.Load(ws, "notes")
 	edited := map[string]any{"name": "Release notes", "nodes": []any{
 		map[string]any{"id": "start", "type": "start"},

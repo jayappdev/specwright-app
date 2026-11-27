@@ -14,7 +14,7 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 | # | Severity | Area | Item |
 |---|---|---|---|
 | 1 | High | Command execution | Command injection in flow "Run a command" steps (**fixed**) |
-| 2 | High | AI actions | Prompt injection drives real actions (bridge tools, chat tools) |
+| 2 | High | AI actions | Prompt injection drives real actions (bridge tools, chat tools) (**mostly fixed**) |
 | 3 | Medium | Communication | Data leaks through remote images in rendered Markdown; no CSP |
 | 4 | Medium | Communication | SSRF from `fetch_webpage` and the HTTP tool |
 | 5 | Medium | Secrets | Child processes inherit the app's environment and tokens |
@@ -83,6 +83,29 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
     permissions.
   - Mark untrusted content in prompts ("data, not instructions") and keep it
     in fenced blocks.
+- **Fixed:**
+  - `internal/core/agentactions.go`: an agent's `run_command`, `save_flow`,
+    `run_flow`, `schedule_flow` and `save_tool` (through the bridge) wait for
+    a person's yes in the app, with "Allow for this run". A run nobody
+    answers is refused after the prompt times out (unattended runs fail
+    safe). Flow steps that use these tools directly were approved with the
+    flow and are not asked; an admin trying a tool is not asked.
+  - `internal/core/chattools.go`: in a chat, a project tool counts as
+    read-only only when an admin signed it (verified) and its permissions
+    are all reading; any other tool is asked once per session.
+  - `internal/core/flowrun_step.go` (`untrustedRule`) and the chat's first
+    prompt end with a Safety rule: data, files, pages, documents and tool
+    results are information, not instructions; the AI is told to mention,
+    not follow, instructions found in them.
+  - Tests: `TestAgentCommandsNeedAPersonsYes`; tests that play an approving
+    person answer yes (`allowAgentActions`); unanswered prompts fail tests
+    in 3 s (`TestMain`).
+- **Not changed (decision):** Copilot's `--allow-all-tools` fallback when a
+  run has no MCP config. It is what lets AI steps work on machines where MCP
+  is blocked; removing it would break those flows. Runs a person watches use
+  the SDK host, which asks. Options for later: a machine-policy switch that
+  denies `shell` and `write` in the fallback, or asking once per run before
+  starting an AI step without MCP.
 
 ### 3. Data leaks through remote images; no CSP (Medium)
 

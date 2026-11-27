@@ -8,7 +8,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -144,6 +146,22 @@ func TestBuiltinsAdminOnlyInUI(t *testing.T) {
 func TestAppToolsThroughExtensionManaged(t *testing.T) {
 	usePolicy(t, "")
 	h, _ := newHub(t)
+	// an agent saving flows and tools is asked first (agentactions.go): yes here
+	var askedMu sync.Mutex
+	var asked []string
+	h.SetPermissionAsker(func(_ context.Context, r extension.PermissionRequest) extension.PermissionAnswer {
+		askedMu.Lock()
+		asked = append(asked, r.Tool)
+		askedMu.Unlock()
+		return extension.PermissionAnswer{Allow: true}
+	})
+	defer func() {
+		askedMu.Lock()
+		defer askedMu.Unlock()
+		if !slices.Contains(asked, "save_flow") || !slices.Contains(asked, "save_tool") {
+			t.Errorf("the person was not asked before save_flow and save_tool: %v", asked)
+		}
+	}()
 	for _, kv := range h.Bridge.Env() {
 		k, v, _ := strings.Cut(kv, "=")
 		t.Setenv(k, v)

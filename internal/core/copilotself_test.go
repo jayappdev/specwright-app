@@ -57,6 +57,10 @@ func TestCopilotSelfExtension(t *testing.T) {
 		t.Fatalf("tools outside a SpecWright run: %s", out)
 	}
 	h, _ := flowHub(t)
+	// an agent saving a tool is asked first (agentactions.go): yes here
+	h.SetPermissionAsker(func(context.Context, extension.PermissionRequest) extension.PermissionAnswer {
+		return extension.PermissionAnswer{Allow: true}
+	})
 	env := h.Bridge.Env()
 	out := node(env, "list", entry)
 	for _, want := range []string{"specwright_save_flow", "specwright_save_tool", "specwright_run_flow", "specwright_tool", "read_file", "echo-arg"} {

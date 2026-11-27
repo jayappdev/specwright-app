@@ -511,6 +511,7 @@ func chatPrompt(f *flow.Flow, data *chatData, s chat.Session, history []chat.Mes
 		b.WriteString("\nSESSION DATA (from the setup steps; it stays the same for the session):" + d)
 	}
 	b.WriteString(tools)
+	b.WriteString(untrustedRule + "\n")
 	b.WriteString("\nEnd every answer with one last line: `Follow-ups: <question> | <question> | <question>`: two or three short questions the person may want to ask next.\n")
 	if len(history) > 0 {
 		b.WriteString("\nTHE CONVERSATION SO FAR:\n")

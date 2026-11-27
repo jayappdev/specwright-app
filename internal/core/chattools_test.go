@@ -49,6 +49,9 @@ func TestChatRunsItsTools(t *testing.T) {
 	var asked []string
 	h.SetPermissionAsker(func(_ context.Context, r extension.PermissionRequest) extension.PermissionAnswer {
 		asked = append(asked, r.Tool)
+		if r.Tool == "Shout" { // a project tool: asked once (only admin-signed tools count as read-only)
+			return extension.PermissionAnswer{Allow: true}
+		}
 		return extension.PermissionAnswer{Allow: false, Message: "No saving today."}
 	})
 	f := flow.New("sales-qa", "Sales Q&A")
@@ -92,7 +95,7 @@ func TestChatRunsItsTools(t *testing.T) {
 	if len(a.Steps) != 2 || a.Steps[0].Tool != "echo" || a.Steps[0].Error != "" || a.Steps[0].Data == "" || a.Steps[1].Error != "No saving today." {
 		t.Fatalf("steps %+v", a.Steps)
 	}
-	if len(asked) != 1 || asked[0] != "Save it" {
+	if len(asked) != 2 || asked[0] != "Shout" || asked[1] != "Save it" {
 		t.Fatalf("asked %v", asked)
 	}
 	if tr, err := h.FlowRun(a.Steps[0].Run); err != nil || tr.Options.Chat == nil || tr.Options.Chat.Role != "tool" || tr.Options.Chat.Session != s.ID || tr.FlowName != "Sales Q&A · Shout" {

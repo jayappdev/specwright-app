@@ -125,6 +125,7 @@ func TestNotifyDesktop(t *testing.T) {
 // an agent reuses a flow: its outputs come back, the run is tagged
 func TestRunFlowTool(t *testing.T) {
 	h, _ := flowHub(t)
+	allowAgentActions(h) // the person says yes to the AI's actions (agentactions.go)
 	out, err := h.RunBuiltin(h.ctx, RunFlowTool, map[string]any{"flow_id": "notes", "inputs": map[string]any{"version": "5.0"}, "timeout_seconds": 60.0})
 	if err != nil || !strings.Contains(out, ": done") || !strings.Contains(out, "# 5.0") {
 		t.Fatalf("%v\n%s", err, out)

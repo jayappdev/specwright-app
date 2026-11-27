@@ -15,6 +15,7 @@ import (
 // "$CODEGEN_TOOL" tool <name> '<json>'.
 func TestToolCommandWithoutMCP(t *testing.T) {
 	h, _ := flowHub(t)
+	allowAgentActions(h) // the person says yes to the AI's actions (agentactions.go)
 	for _, kv := range h.Bridge.Env() {
 		k, v, _ := strings.Cut(kv, "=")
 		t.Setenv(k, v)

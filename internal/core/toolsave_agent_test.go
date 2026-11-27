@@ -9,6 +9,7 @@ import (
 
 func TestSaveToolProposesWithoutSaving(t *testing.T) {
 	h, _ := flowHub(t)
+	allowAgentActions(h) // the person says yes to the AI's actions (agentactions.go)
 	listed := false
 	for _, b := range h.Builtins() {
 		listed = listed || b.Name == SaveToolTool
