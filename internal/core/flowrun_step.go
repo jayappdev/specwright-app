@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -117,7 +118,12 @@ func (h *Hub) execStep(ctx context.Context, root string, fr *flowRun, n *flow.No
 			prompt := instr + "\n\nData:\n```\n" + in + "\n```\n\nReturn only the transformed data, with no explanation and no code fences." + h.aiSuffix(f, n, d)
 			return h.flowAgent(ctx, root, fr, n.ID, prompt, fr.st.Options.Model)
 		case "command":
-			out, err := h.flowCommand(ctx, root, fr, n.ID, flow.Render(n.Expr, d), in)
+			// the approved command, its values quoted so none can change it (flow/shell.go)
+			cmdText, err := flow.RenderShell(n.Expr, d, runtime.GOOS == "windows")
+			if err != nil {
+				return "", u, err
+			}
+			out, err := h.flowCommand(ctx, root, fr, n.ID, cmdText, in)
 			return out, u, err
 		}
 		out, err := flow.Transform(*n, in, d)

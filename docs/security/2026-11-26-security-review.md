@@ -13,7 +13,7 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 
 | # | Severity | Area | Item |
 |---|---|---|---|
-| 1 | High | Command execution | Command injection in flow "Run a command" steps |
+| 1 | High | Command execution | Command injection in flow "Run a command" steps (**fixed**) |
 | 2 | High | AI actions | Prompt injection drives real actions (bridge tools, chat tools) |
 | 3 | Medium | Communication | Data leaks through remote images in rendered Markdown; no CSP |
 | 4 | Medium | Communication | SSRF from `fetch_webpage` and the HTTP tool |
@@ -44,6 +44,17 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
     is not possible.
 - **Test:** a flow whose input is `x; touch /tmp/pwned` must not create the
   file.
+- **Fixed** (`internal/flow/shell.go` `RenderShell`, used by
+  `internal/core/flowrun_step.go`): every value filling a command is quoted
+  for where its placeholder sits (outside quotes: a single-quoted word;
+  inside `'…'`: its `'` closed, escaped and reopened; inside `"…"`: its
+  `\ " $` and backtick escaped), so it reaches the command as one literal
+  argument. On Windows (`cmd /C`), a value with `" % ! ^ & | < > ( )`, a
+  backtick or a line break is refused with a message instead of run.
+  Tests: `TestRenderShellQuotesValues` runs `/bin/sh` with ten hostile values
+  in four quoting positions; `TestCommandStepValuesCannotInject` runs a flow
+  whose input tries to create a file. A command typed by a person in a
+  review is run as typed (it has no placeholders).
 
 ### 2. Prompt injection drives real actions (High)
 
@@ -182,7 +193,7 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 
 ## Suggested order
 
-1. Item 1 (command injection): small, high impact.
+1. ~~Item 1 (command injection)~~: fixed.
 2. Item 2 (ask before bridge actions; no `--allow-all-tools` fallback).
 3. Items 3 and 4 (images and CSP; SSRF guard).
 4. Item 5 (environment allowlist, scoped bridge token).
