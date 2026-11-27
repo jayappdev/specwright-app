@@ -19,7 +19,9 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -481,6 +483,30 @@ func Exec(ctx context.Context, root string, e Extension, args map[string]any, se
 	return ExecInput(ctx, root, e, args, secrets, extraEnv, timeout, nil)
 }
 
+// optionLike refuses a value that fills a whole word of the command and
+// starts with "-": the program would read it as an option (git log
+// {{ref}} with "--output=/some/file" writes a file). Allowed: one of the
+// parameter's listed values (the tool's author chose it) and a number for
+// a number parameter. A tool that takes options from its caller puts "--"
+// before the word, or writes the option itself: --name={{value}}.
+// (docs/security/2026-11-26-security-review.md, item 9)
+func optionLike(p Param, name, v, prog string) error {
+	if !strings.HasPrefix(v, "-") || v == "-" {
+		return nil
+	}
+	if slices.Contains(p.Enum, v) {
+		return nil
+	}
+	if p.Type == "number" || p.Type == "integer" {
+		if _, err := strconv.ParseFloat(v, 64); err == nil {
+			return nil
+		}
+	}
+	return fmt.Errorf("%s is %q, which starts with \"-\": %s would read it as an option, not a value. "+
+		"If the tool should accept options, its command needs \"--\" before {{%s}} (or the option written out, like --name={{%s}})",
+		name, v, filepath.Base(prog), name, name)
+}
+
 // ExecInput is Exec with data on the tool's standard input (flows pass the
 // previous step's output this way; nil means no input).
 func ExecInput(ctx context.Context, root string, e Extension, args map[string]any, secrets map[string]string, extraEnv []string, timeout time.Duration, stdin *string) RunResult {
@@ -503,8 +529,16 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 	} else if len(words) == 0 {
 		return RunResult{Error: "extension has no command"}
 	}
+	params := map[string]Param{}
+	for _, p := range e.Params {
+		params[p.Name] = p
+	}
+	endOfOptions := false // a "--" word: what follows is never an option
 	for _, w := range words {
 		only := placeholderRE.FindStringSubmatch(w)
+		if w == "--" {
+			endOfOptions = true
+		}
 		sub := placeholderRE.ReplaceAllStringFunc(w, func(m string) string {
 			k := placeholderRE.FindStringSubmatch(m)[1]
 			if v, ok := args[k]; ok && v != nil {
@@ -520,16 +554,25 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 		if only != nil && only[0] == w && sub == "" {
 			continue // optional parameter left out
 		}
+		if only != nil && only[0] == w && len(argv) > 0 && !endOfOptions {
+			if err := optionLike(params[only[1]], only[1], sub, argv[0]); err != nil {
+				return RunResult{Error: err.Error()}
+			}
+		}
 		argv = append(argv, sub)
 	}
 	if e.Kind == "npm" && len(argv) > 0 {
 		if _, err := exec.LookPath("npm"); err != nil {
 			return RunResult{Error: "Node.js (npm) is needed to run ext:* scripts but was not found on PATH"}
 		}
-		// pass arguments to the script as --name=value after "--"
+		// pass the declared arguments to the script as --name=value after
+		// "--" (npm reads nothing after it; a name the tool does not declare
+		// is not passed, so a caller cannot add options of its own)
 		var keys []string
 		for k := range args {
-			keys = append(keys, k)
+			if _, ok := params[k]; ok {
+				keys = append(keys, k)
+			}
 		}
 		sort.Strings(keys)
 		if len(keys) > 0 {

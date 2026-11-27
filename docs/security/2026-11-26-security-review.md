@@ -21,7 +21,7 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 | 6 | Medium | Secrets | Secret masking matches exact text only (**fixed**) |
 | 7 | Medium | Communication | Dev server token: non-constant-time, in the URL, address not forced to loopback (**fixed**) |
 | 8 | Low | Secrets | Encryption key stored beside the data when no keychain is available (**fixed**) |
-| 9 | Low | Command execution | Option injection through npm tool arguments |
+| 9 | Low | Command execution | Option injection through npm tool arguments (**fixed**) |
 
 ---
 
@@ -289,6 +289,26 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
   to npm scripts as `--key=value`.
 - **Fix:** end options with `--` before values, or refuse values that start
   with `-` for parameters that are not flags.
+- **Fixed** (`internal/extension/extension.go`, `optionLike`):
+  - npm already put `--` before the arguments, so npm itself never read
+    them. Now only the arguments the tool declares are passed to the
+    script; a caller (an AI) can no longer add `--registry=…` or other names
+    of its own.
+  - The wider problem was in every tool, not only npm: a `{{param}}` that
+    fills a whole word became an option when its value started with `-`
+    (`git log {{ref}}` with `--output=/some/file` writes a file). Such a
+    value is now refused with a message.
+  - Still allowed: one of the parameter's listed values (the author chose
+    it), a number for a number parameter, a lone `-`, a value after a `--`
+    word, and an option the author wrote out (`--name={{value}}`).
+  - Tests: `TestToolValuesCannotBecomeOptions`,
+    `TestNpmToolGetsDeclaredArgumentsOnly`.
+- **Left open:** flow "Run a command" steps quote values for the shell
+  (item 1), but a value starting with `-` in a whole-word position is still
+  an option to the program. Refusing it there would break flows that pass
+  text such as an AI's bulleted list (`- item`) to a command, and steps do
+  not declare listed values or number types. When writing a command step,
+  put `--` before the values (`grep -- {{inputs.q}} file`).
 
 ---
 
