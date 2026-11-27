@@ -85,6 +85,9 @@ type policyFile struct {
 	AllowLocalTrust *bool `json:"allowLocalTrust,omitempty"`
 	// DisabledBuiltinTools turns individual built-in tools off on this machine.
 	DisabledBuiltinTools []string `json:"disabledBuiltinTools,omitempty"`
+	// KeepEnvVars: secret-looking variables that commands still inherit
+	// (safeenv), e.g. ["NPM_TOKEN"] for a private registry.
+	KeepEnvVars []string `json:"keepEnvVars,omitempty"`
 }
 
 type localTrust struct {

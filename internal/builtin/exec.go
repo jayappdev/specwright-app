@@ -6,6 +6,7 @@ import (
 
 	"bytes"
 	"codegen/internal/flow"
+	"codegen/internal/safeenv"
 	"context"
 	"errors"
 	"fmt"
@@ -85,7 +86,7 @@ func (b *Box) startCmd(command, dir string, timeout time.Duration) *proc {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	cmd := shellCmd(ctx, command)
 	cmd.Dir = dir
-	cmd.Env = os.Environ()
+	cmd.Env = safeenv.Clean(os.Environ())
 	if b.env != nil {
 		cmd.Env = append(cmd.Env, b.env()...)
 	}
@@ -368,9 +369,9 @@ func fetchWebpage(ctx context.Context, b *Box, a args) (string, error) {
 	req, _ := http.NewRequestWithContext(ctx, "GET", u.String(), nil)
 	req.Header.Set("User-Agent", "SpecWright/1 (agent tool fetch_webpage)")
 	req.Header.Set("Accept", "text/html,text/plain,application/json,text/markdown;q=0.9,*/*;q=0.5")
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr := guardTransport(http.DefaultTransport.(*http.Transport).Clone())
 	tr.Proxy = proxyFrom(b)
-	resp, err := (&http.Client{Transport: tr, Timeout: 25 * time.Second}).Do(req)
+	resp, err := (&http.Client{Transport: tr, Timeout: 25 * time.Second, CheckRedirect: guardRedirect}).Do(req)
 	if err != nil {
 		return "", fmt.Errorf("fetch failed: %v", err)
 	}

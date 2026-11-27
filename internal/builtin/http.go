@@ -75,9 +75,9 @@ func (b *Box) client(timeout time.Duration) *http.Client {
 	if testTransport != nil {
 		return &http.Client{Transport: testTransport, Timeout: timeout}
 	}
-	tr := http.DefaultTransport.(*http.Transport).Clone()
+	tr := guardTransport(http.DefaultTransport.(*http.Transport).Clone())
 	tr.Proxy = proxyFrom(b)
-	return &http.Client{Transport: tr, Timeout: timeout}
+	return &http.Client{Transport: tr, Timeout: timeout, CheckRedirect: guardRedirect}
 }
 
 func localHost(h string) bool {

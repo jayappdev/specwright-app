@@ -59,6 +59,15 @@ func (h *Hub) newToolbox() *builtin.Box {
 	})
 }
 
+// policyKeepEnv is the machine policy's keepEnvVars (safeenv.SetKeep).
+func policyKeepEnv() []string {
+	var pf policyFile
+	if b, err := os.ReadFile(PolicyPath); err == nil && json.Unmarshal(b, &pf) == nil {
+		return pf.KeepEnvVars
+	}
+	return nil
+}
+
 func (h *Hub) disabledBuiltins() map[string]bool {
 	out := map[string]bool{}
 	b, err := os.ReadFile(PolicyPath)
@@ -129,6 +138,12 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 	if e := h.agentOutwardAllowed(ctx, name, args); e != nil { // outward.go: a person approves what sends data out
 		return "", e
 	}
+	if e := h.agentActionAllowed(ctx, name, args); e != nil { // agentactions.go: a person approves commands and changes
+		return "", e
+	}
+	if e := h.agentNetworkAllowed(ctx, name, args); e != nil { // agentactions.go: a person approves reaching inside addresses
+		return "", e
+	}
 	switch name {
 	case SaveFlowTool:
 		out, err = h.agentSaveFlow(args)
@@ -175,7 +190,7 @@ func (h *Hub) CallBuiltin(name string, args map[string]any) (string, error) {
 	if _, err := h.need(); err != nil {
 		return "", err
 	}
-	ctx, cancel := context.WithTimeout(h.ctx, 10*time.Minute)
+	ctx, cancel := context.WithTimeout(byPerson(h.ctx), 10*time.Minute)
 	defer cancel()
 	return h.RunBuiltin(ctx, name, args)
 }

@@ -57,6 +57,14 @@ func TestDevServerAccess(t *testing.T) {
 	if c := check("", "wrong"); c != http.StatusUnauthorized {
 		t.Fatalf("wrong token: %d", c)
 	}
+	// the token only counts in the header, never in the URL
+	r := httptest.NewRequest(http.MethodGet, "/api/events?token=secret", nil)
+	if w := httptest.NewRecorder(); devAllowed(w, r, "secret") || w.Code != http.StatusUnauthorized {
+		t.Fatalf("token in the URL: %d", w.Code)
+	}
+	if c := check("", "secre"); c != http.StatusUnauthorized {
+		t.Fatalf("a prefix of the token: %d", c)
+	}
 	if c := check("http://evil.example", "secret"); c != http.StatusForbidden {
 		t.Fatalf("other origin: %d", c)
 	}

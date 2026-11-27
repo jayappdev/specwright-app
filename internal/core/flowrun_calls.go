@@ -19,6 +19,7 @@ import (
 
 	"codegen/internal/agent"
 	"codegen/internal/extension"
+	"codegen/internal/safeenv"
 	"codegen/internal/store"
 )
 
@@ -213,7 +214,7 @@ func (h *Hub) flowCommand(ctx context.Context, root string, fr *flowRun, step, c
 		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	}
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), h.agentPackageEnv(root)...)
+	cmd.Env = append(safeenv.Clean(os.Environ()), h.agentPackageEnv(root)...)
 	cmd.Stdin = strings.NewReader(stdin)
 	start := time.Now()
 	out, err := cmd.Output()
@@ -244,7 +245,11 @@ func (h *Hub) flowAgent(ctx context.Context, root string, fr *flowRun, step, pro
 	if err != nil {
 		return "", u, err
 	}
-	mcp, done, err := h.mcpConfig(true)
+	// a bridge token of this run's own: its calls are matched to this flow's
+	// pre-approved AI actions (flowaiapprovals.go)
+	scoped, endScope := h.Bridge.NewScope(fr.st.ID)
+	defer endScope()
+	mcp, done, err := h.mcpConfigToken(true, scoped)
 	if err != nil {
 		return "", u, err
 	}
@@ -298,7 +303,7 @@ func (h *Hub) flowAgent(ctx context.Context, root string, fr *flowRun, step, pro
 		}
 		h.flowPublish(fr, typ, ev.Summary, data)
 	}
-	res, err := drv.Run(ctx, agent.Request{Purpose: "flow", Step: step, Prompt: prompt, Dir: root, Model: model, Env: h.childEnv(), MCPConfig: mcp,
+	res, err := drv.Run(ctx, agent.Request{Purpose: "flow", Step: step, Prompt: prompt, Dir: root, Model: model, Env: append(h.childEnv(), "CODEGEN_BRIDGE_TOKEN="+scoped), MCPConfig: mcp,
 		AllowTools: []string{"mcp__agentbridge"}}, emit)
 	if res.CostUSD > 0 && u.CostUSD == 0 {
 		u.CostUSD = res.CostUSD

@@ -375,6 +375,139 @@ function KeychainSecrets({ uses, reloadUses }) {
   );
 }
 
+// KeyCard: where the key that encrypts project and trigger secrets is kept,
+// and, when it is a plain file (no keychain), a passphrase lock for it
+// (security review item 8).
+function KeyCard() {
+  const [st, reload] = useLoad(() => backend.SecretKeyStatus(), []);
+  const [p1, setP1] = useState(""),
+    [p2, setP2] = useState(""),
+    [busy, setBusy] = useState(false);
+  if (!st || !st.store) return null;
+  const run = async (e, fn, done) => {
+    e?.preventDefault();
+    setBusy(true);
+    try {
+      await fn();
+      setP1("");
+      setP2("");
+      toast(done);
+      reload();
+    } catch (err) {
+      toast(errMsg(err), "error");
+    }
+    setBusy(false);
+  };
+  const head = (badge) => (
+    <div className="card-head">
+      <Icon.lock />
+      <h3>Encryption key</h3>
+      {badge}
+    </div>
+  );
+  if (st.store === "keychain")
+    return (
+      <div className="card">
+        {head(<span className="badge">system keychain</span>)}
+        <p className="wf-desc">
+          Project and trigger secrets are encrypted with a key kept in this computer's keychain.
+        </p>
+      </div>
+    );
+  if (st.store === "passphrase")
+    return (
+      <div className="card">
+        {head(
+          st.locked ? (
+            <span className="badge badge-warn">locked</span>
+          ) : (
+            <span className="badge">unlocked</span>
+          ),
+        )}
+        <p className="wf-desc">
+          The key is locked with your passphrase. Unlock it once each time the app starts; until then, flows
+          and triggers that read a project or trigger secret stop and say so.
+        </p>
+        {st.locked ? (
+          <form
+            className="row-actions"
+            onSubmit={(e) => run(e, () => backend.UnlockSecretKey(p1), "Secrets unlocked for this session.")}
+          >
+            <label className="field" style={{ flex: 1 }}>
+              <span className="muted">Passphrase</span>
+              <input
+                type="password"
+                value={p1}
+                onChange={(e) => setP1(e.target.value)}
+                autoComplete="current-password"
+              />
+            </label>
+            <button className="btn primary" disabled={busy || !p1}>
+              {busy ? "Unlocking…" : "Unlock"}
+            </button>
+          </form>
+        ) : (
+          <div className="row-actions">
+            <button
+              className="btn"
+              disabled={busy}
+              onClick={(e) => run(e, () => backend.LockSecretKey(), "Secrets locked.")}
+            >
+              Lock now
+            </button>
+          </div>
+        )}
+      </div>
+    );
+  return (
+    <form
+      className="card"
+      onSubmit={(e) =>
+        run(e, () => backend.ProtectSecretKey(p1), "The key is now locked with your passphrase.")
+      }
+    >
+      {head(<span className="badge badge-warn">plain file</span>)}
+      <p className="wf-desc">
+        This computer has no keychain the app can use, so the key that encrypts project and trigger secrets is
+        a file beside them (<code className="inline-code">{st.path}</code>). That stops someone who copies
+        only the secrets file, but any program running as you can read both. Lock the key with a passphrase to
+        close that gap.
+      </p>
+      <div className="two-col">
+        <label className="field">
+          <span className="muted">Passphrase (10+ characters)</span>
+          <input
+            type="password"
+            value={p1}
+            autoComplete="new-password"
+            aria-invalid={(p1.length > 0 && p1.length < 10) || undefined}
+            onChange={(e) => setP1(e.target.value)}
+          />
+        </label>
+        <label className="field">
+          <span className="muted">Repeat passphrase</span>
+          <input
+            type="password"
+            value={p2}
+            autoComplete="new-password"
+            aria-invalid={(p2.length > 0 && p2 !== p1) || undefined}
+            onChange={(e) => setP2(e.target.value)}
+          />
+        </label>
+      </div>
+      <p className="muted" style={{ marginTop: 8 }}>
+        You will type it once each time the app starts; scheduled triggers that need a secret wait until then.
+        There is no recovery: if it is lost, set the secrets again.
+      </p>
+      <div className="row-actions">
+        <button className="btn primary" disabled={busy || p1.length < 10 || p1 !== p2}>
+          {busy ? "Locking…" : "Lock with a passphrase"}
+        </button>
+      </div>
+    </form>
+  );
+}
+
 function EnvHelp() {
   return (
     <div className="card">
@@ -393,13 +526,17 @@ export function SecretsSettings() {
   const [uses, reloadUses] = useLoad(() => backend.SecretRefUses(), [S.ws?.root]);
   if (!S.ws)
     return (
-      <div className="card">
-        <h3>Secrets</h3>
-        <p className="muted">Open a project first: project secrets are kept in it.</p>
-      </div>
+      <>
+        <KeyCard />
+        <div className="card">
+          <h3>Secrets</h3>
+          <p className="muted">Open a project first: project secrets are kept in it.</p>
+        </div>
+      </>
     );
   return (
     <>
+      <KeyCard />
       <ProjectSecrets uses={uses} reloadUses={reloadUses} />
       <KeychainSecrets uses={uses} reloadUses={reloadUses} />
       <EnvHelp />

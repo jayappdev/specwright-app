@@ -13,6 +13,14 @@ const safeUrl = (u) => {
   return /^\s*(javascript|vbscript|data):/i.test(u) && !/^data:image\//i.test(u) ? "#" : u;
 };
 
+const hostOf = (u) => {
+  try {
+    return new URL(u, "https://x.invalid").host;
+  } catch {
+    return "another site";
+  }
+};
+
 // --- inline ------------------------------------------------------------------------
 
 export function mdInline(src) {
@@ -32,7 +40,14 @@ export function mdInline(src) {
   );
   // images and links: [text](url "title")
   s = s.replace(/!\[([^\]]*)\]\(\s*<?([^)\s>]+)>?(?:\s+"([^"]*)")?\s*\)/g, (_, a, u, t) =>
-    put(`<img src="${esc(safeUrl(u))}" alt="${esc(a)}"${t ? ` title="${esc(t)}"` : ""}>`),
+    // an image from another site is a link, not loaded: loading it would send
+    // whatever its address carries (e.g. data an injected answer put in it)
+    // to that site (docs/security, item 3)
+    /^(https?:)?\/\//i.test(u)
+      ? put(
+          `<a href="${esc(safeUrl(u))}" class="md-remote-img" title="An image from ${esc(hostOf(u))}: not loaded automatically">Image: ${esc(a || hostOf(u))}</a>`,
+        )
+      : put(`<img src="${esc(safeUrl(u))}" alt="${esc(a)}"${t ? ` title="${esc(t)}"` : ""}>`),
   );
   s = s.replace(/\[([^\]]+)\]\(\s*<?([^)\s>]+)>?(?:\s+"([^"]*)")?\s*\)/g, (_, txt, u, t) =>
     put(`<a href="${esc(safeUrl(u))}"${t ? ` title="${esc(t)}"` : ""}>${mdInline(txt)}</a>`),

@@ -208,7 +208,7 @@ func (h *Hub) refSecrets(root string, f *flow.Flow) (map[string]string, error) {
 		case flow.RefProjectSecret:
 			v, err = h.projectSecret(root, r.Name)
 		case flow.RefKeychain:
-			if !KeychainAvailable() {
+			if !keychainUsable() {
 				err = fmt.Errorf("{{keychain.%s}}: this computer has no keychain to read", r.Name)
 			} else if x, ok := kcGet(r.Name); ok {
 				v = x
@@ -293,7 +293,7 @@ func (h *Hub) SecretRefUses() ([]SecretRefUse, error) {
 				case flow.RefProjectSecret:
 					_, u.Found = pf.Secrets[r.Name]
 				case flow.RefKeychain:
-					if KeychainAvailable() {
+					if keychainUsable() {
 						_, u.Found = kcGet(r.Name)
 					}
 				}

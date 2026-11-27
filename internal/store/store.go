@@ -458,10 +458,13 @@ func writeAtomic(path string, b []byte) error {
 	return os.Rename(tmp, path)
 }
 
-// Redactor removes token-shaped strings and registered secret values.
+// Redactor removes token-shaped strings and registered secret values,
+// with their common encodings (redact.go).
 type Redactor struct {
 	mu      sync.RWMutex
 	secrets map[string]struct{}
+	forms   []string       // every masked form, longest first
+	wrapped *regexp.Regexp // the forms with a line break anywhere inside
 }
 
 var tokenRE = regexp.MustCompile(`(sk-ant-[A-Za-z0-9_\-]{8,}|github_pat_[A-Za-z0-9_]{20,}|gh[pousr]_[A-Za-z0-9]{20,}|xox[abpr]-[A-Za-z0-9\-]{10,}|AKIA[0-9A-Z]{16}|(?i:bearer)\s+[A-Za-z0-9._\-]{16,})`)
@@ -473,10 +476,15 @@ func NewRedactor() *Redactor { return &Redactor{secrets: map[string]struct{}{}} 
 func (r *Redactor) Add(vals ...string) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	added := false
 	for _, v := range vals {
-		if len(v) >= 4 {
+		if _, ok := r.secrets[v]; len(v) >= 4 && !ok {
 			r.secrets[v] = struct{}{}
+			added = true
 		}
+	}
+	if added {
+		r.forms, r.wrapped = secretForms(r.secrets)
 	}
 }
 
@@ -485,10 +493,13 @@ func (r *Redactor) String(s string) string {
 	s = tokenRE.ReplaceAllString(s, "[REDACTED]")
 	r.mu.RLock()
 	defer r.mu.RUnlock()
-	for v := range r.secrets {
+	for _, v := range r.forms {
 		if strings.Contains(s, v) {
 			s = strings.ReplaceAll(s, v, "[REDACTED]")
 		}
+	}
+	if r.wrapped != nil && strings.ContainsAny(s, "\r\n") && mayHoldWrapped(s, r.forms) {
+		s = r.wrapped.ReplaceAllString(s, "[REDACTED]")
 	}
 	return s
 }

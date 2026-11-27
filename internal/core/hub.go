@@ -22,6 +22,7 @@ import (
 	"codegen/internal/aishim"
 	"codegen/internal/bus"
 	"codegen/internal/extension"
+	"codegen/internal/safeenv"
 	"codegen/internal/session"
 	"codegen/internal/speckit"
 	"codegen/internal/store"
@@ -68,6 +69,7 @@ type Hub struct {
 	// and the app-wide catalog of managed tools (global, not per workspace)
 	adminPriv ed25519.PrivateKey
 	adminName string
+	secretKey []byte // the passphrase-protected secrets key, unlocked (secretkey.go)
 	managed   *extension.ManagedStore
 	libs      *extension.LibraryStore // corporate (global) libraries
 	tools     *builtin.Box            // built-in agent tools (read_file, edit_file, …)
@@ -102,6 +104,7 @@ func New(o Options) (*Hub, error) {
 	if o.StoreDir == "" {
 		o.StoreDir = store.DefaultDir()
 	}
+	safeenv.SetKeep(policyKeepEnv) // commands do not inherit secrets (item 5)
 	st, err := store.Open(o.StoreDir)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)
