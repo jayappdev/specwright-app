@@ -231,7 +231,7 @@ type KeychainStatus struct {
 // CheckKeychain reports whether ref has a value.
 func (h *Hub) CheckKeychain(ref flow.KeychainRef) KeychainStatus {
 	ref = ref.Normalized("")
-	st := KeychainStatus{Available: KeychainAvailable(), Where: describeRef(ref)}
+	st := KeychainStatus{Available: keychainUsable(), Where: describeRef(ref)}
 	if st.Available && ref.Account != "" {
 		_, st.Found = kcGetRef(ref)
 	}

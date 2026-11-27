@@ -8,6 +8,7 @@ package builtin
 
 import (
 	"bytes"
+	"codegen/internal/safeenv"
 	"context"
 	"encoding/json"
 	"errors"
@@ -36,7 +37,7 @@ func checkRef(name, v string) error {
 func (b *Box) git(ctx context.Context, gitArgs ...string) (string, error) {
 	c := exec.CommandContext(ctx, "git", append([]string{"-c", "core.quotepath=false", "--no-pager"}, gitArgs...)...)
 	c.Dir = b.Root()
-	c.Env = append(c.Environ(), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
+	c.Env = append(safeenv.Clean(c.Environ()), "GIT_TERMINAL_PROMPT=0", "GIT_OPTIONAL_LOCKS=0")
 	var out, errb bytes.Buffer
 	c.Stdout, c.Stderr = &out, &errb
 	if err := c.Run(); err != nil {

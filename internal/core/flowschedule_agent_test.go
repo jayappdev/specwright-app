@@ -14,6 +14,7 @@ func TestScheduleFlowTool(t *testing.T) {
 	triggerNow = func() time.Time { return time.Date(2026, 11, 18, 8, 0, 0, 0, time.Local) }
 	t.Cleanup(func() { triggerNow = old })
 	h, ws := flowHub(t)
+	allowAgentActions(h) // the person says yes to the AI's actions (agentactions.go)
 	call := func(args map[string]any) (string, error) { return h.RunBuiltin(h.ctx, ScheduleFlowTool, args) }
 
 	found := false

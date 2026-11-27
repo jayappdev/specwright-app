@@ -172,8 +172,13 @@ func (h *Hub) Env() []string {
 }
 
 func (h *Hub) mcpConfig(extensions bool) (string, func(), error) {
+	return h.mcpConfigToken(extensions, "")
+}
+
+// mcpConfigToken is mcpConfig with a scoped bridge token (Bridge.NewScope).
+func (h *Hub) mcpConfigToken(extensions bool, token string) (string, func(), error) {
 	h.ensureCopilotTools()
-	p, err := h.Bridge.WriteMCPConfig(filepath.Join(h.Store.Dir(), "tmp"), extensions)
+	p, err := h.Bridge.WriteMCPConfigToken(filepath.Join(h.Store.Dir(), "tmp"), extensions, token)
 	if err != nil {
 		return "", nil, err
 	}

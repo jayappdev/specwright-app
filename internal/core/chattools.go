@@ -155,12 +155,16 @@ func (h *Hub) chatToolsText(f *flow.Flow, builtins string) string {
 }
 
 // chatToolReadOnly reports whether a branch only reads: its tools are
-// read-only (built-ins that say so, project tools whose permissions are
-// all reading), and its outputs only show their result.
+// read-only (built-ins that say so; project tools only when an admin signed
+// them and their permissions are all reading: a tool's own label is not
+// enough, an AI may have written it), and its outputs only show their
+// result. Anything else is asked once per session (security review item 2).
 func (h *Hub) chatToolReadOnly(f *flow.Flow, t flow.ChatTool) bool {
 	perms := map[string][]string{}
 	for _, e := range h.Callable() {
-		perms[e.Name] = e.Perms
+		if e.Managed != nil && e.Managed.Status == "verified" {
+			perms[e.Name] = e.Perms
+		}
 	}
 	for _, id := range t.Steps {
 		n := f.Node(id)

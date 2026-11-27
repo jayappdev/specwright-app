@@ -11,7 +11,8 @@ import (
 func stubKeychain(t *testing.T) map[string]string {
 	t.Helper()
 	store := map[string]string{}
-	oldR, oldW := keychainRead, keychainWrite
+	oldR, oldW, oldU := keychainRead, keychainWrite, keychainUsable
+	keychainUsable = func() bool { return true } // CI's Linux has no secret-tool
 	keychainRead = func(r flow.KeychainRef) (string, bool) {
 		v, ok := store[r.Service+"/"+r.Account]
 		return v, ok && v != ""
@@ -21,7 +22,7 @@ func stubKeychain(t *testing.T) map[string]string {
 	kc.m = map[string]kcEntry{}
 	kc.Unlock()
 	t.Cleanup(func() {
-		keychainRead, keychainWrite = oldR, oldW
+		keychainRead, keychainWrite, keychainUsable = oldR, oldW, oldU
 		kc.Lock()
 		kc.m = map[string]kcEntry{}
 		kc.Unlock()

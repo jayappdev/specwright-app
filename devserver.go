@@ -7,19 +7,22 @@ package main
 // It runs core.Hub without the desktop window and serves the App methods the
 // UI calls, so `npm run dev` (http://localhost:5173) can work against the real
 // Go code instead of mockBackend.js. Open the printed URL; the page keeps the
-// address and token for the session.
+// address and token for the session. They are in the URL's #fragment, which
+// the browser never sends to a server (the preview's own server included).
 //
 //	POST /api/call    {"method": "OpenWorkspace", "args": ["/path"]} -> {"result": …} or {"error": "…"}
 //	GET  /api/events  server-sent events: every hub event, as "hub:event" in the desktop app
 //
 // It listens on the loopback interface only, needs the random token printed
-// at start on every request (header X-Dev-Token, or ?token= for the event
-// stream), and answers only the preview's origin. Methods that open a native
+// at start on every request (header X-Dev-Token only, compared in constant
+// time; never in a URL, where logs and history keep it), and answers only
+// the preview's origin. Methods that open a native
 // dialog are refused: they need the desktop window.
 
 import (
 	"context"
 	"crypto/rand"
+	"crypto/subtle"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -120,7 +123,7 @@ func devServer(args []string) error {
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "SpecWright dev server on http://%s\nOpen the preview with the real backend:\n  %s/?devbackend=http://%s&token=%s\n", ln.Addr(), previewOrigin, ln.Addr(), token)
+	fmt.Fprintf(os.Stderr, "SpecWright dev server on http://%s\nOpen the preview with the real backend:\n  %s/#devbackend=http://%s&token=%s\n", ln.Addr(), previewOrigin, ln.Addr(), token)
 	return http.Serve(ln, mux)
 }
 
@@ -140,10 +143,7 @@ func devAllowed(w http.ResponseWriter, r *http.Request, token string) bool {
 		return false
 	}
 	got := r.Header.Get("X-Dev-Token")
-	if got == "" {
-		got = r.URL.Query().Get("token")
-	}
-	if got != token {
+	if subtle.ConstantTimeCompare([]byte(got), []byte(token)) != 1 {
 		http.Error(w, "wrong or missing token", http.StatusUnauthorized)
 		return false
 	}

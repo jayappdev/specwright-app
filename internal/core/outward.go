@@ -89,13 +89,10 @@ func (h *Hub) outwardAllowed(root string, fr *flowRun, step, name string, args m
 // data out.
 func (h *Hub) agentOutwardAllowed(ctx context.Context, name string, args map[string]any) error {
 	sends, desc := builtin.SendsOut(name, args)
-	if !sends {
+	if !sends || h.preApproved(ctx, AISendOut) {
 		return nil
 	}
-	agent := "agents"
-	if a := h.activeRun(); a != nil {
-		agent = a.Session.ID
-	}
+	agent := h.askingAgent(ctx)
 	input := map[string]any{"description": "SpecWright's " + name + " would " + desc}
 	for k, v := range args {
 		if k != "json" && k != "body" && k != "message" {

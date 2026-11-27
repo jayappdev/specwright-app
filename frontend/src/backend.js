@@ -129,6 +129,10 @@ const METHODS = [
   "AdminStatus",
   "CreateAdminKey",
   "UnlockAdmin",
+  "SecretKeyStatus",
+  "ProtectSecretKey",
+  "UnlockSecretKey",
+  "LockSecretKey",
   "LockAdmin",
   "AdminPolicySnippet",
   "TrustAdminKey",
@@ -151,6 +155,8 @@ const METHODS = [
   "PickCAFile",
   "FlowCommands",
   "ApproveFlowCommands",
+  "FlowAIActions",
+  "SetFlowAIActions",
   "SetCopilotWeb",
   "ExportTools",
   "PreviewToolImport",
@@ -211,12 +217,13 @@ function wailsBackend() {
 }
 
 // The real Go backend over HTTP, for the browser preview (`SpecWright devserver`
-// prints the URL to open: ?devbackend=http://127.0.0.1:5174&token=…). The
-// address and token are kept for the browser tab's session.
+// prints the URL to open: #devbackend=http://127.0.0.1:5174&token=…, a
+// fragment, so the token never reaches a server). The address and token are
+// kept for the browser tab's session.
 function devConfig() {
   if (typeof window === "undefined") return null;
   try {
-    const q = new URLSearchParams(window.location.search);
+    const q = new URLSearchParams(window.location.hash.slice(1) || window.location.search);
     if (q.get("devbackend") && q.get("token")) {
       sessionStorage.setItem(
         "devbackend",
@@ -245,10 +252,44 @@ function devBackend({ url, token }) {
       if (j.error) throw new Error(j.error);
       return j.result;
     };
+  // the event stream, read with fetch so the token goes in a header (an
+  // EventSource can only put it in the URL); reconnects after a drop
   api.on = (cb) => {
-    const es = new EventSource(url + "/api/events?token=" + encodeURIComponent(token));
-    es.onmessage = (ev) => cb(JSON.parse(ev.data));
-    return () => es.close();
+    const ctl = new AbortController();
+    const listen = async () => {
+      while (!ctl.signal.aborted) {
+        try {
+          const r = await fetch(url + "/api/events", {
+            headers: { "X-Dev-Token": token },
+            signal: ctl.signal,
+          });
+          if (!r.ok || !r.body) throw new Error(`dev server events: ${r.status}`);
+          const reader = r.body.pipeThrough(new TextDecoderStream()).getReader();
+          let buf = "";
+          for (;;) {
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += value;
+            let i;
+            while ((i = buf.indexOf("\n\n")) >= 0) {
+              const block = buf.slice(0, i);
+              buf = buf.slice(i + 2);
+              const data = block
+                .split("\n")
+                .filter((l) => l.startsWith("data: "))
+                .map((l) => l.slice(6))
+                .join("\n");
+              if (data) cb(JSON.parse(data));
+            }
+          }
+        } catch {
+          if (ctl.signal.aborted) return;
+        }
+        await new Promise((res) => setTimeout(res, 1000));
+      }
+    };
+    listen();
+    return () => ctl.abort();
   };
   return api;
 }

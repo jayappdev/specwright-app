@@ -110,6 +110,7 @@ export async function loadFlow(id) {
     }
     r.creds = await backend.FlowCredentials(id).catch(() => []);
     r.cmds = (await backend.FlowCommands(id).catch(() => [])) || [];
+    r.ai = await backend.FlowAIActions(id).catch(() => null);
     r.secretStatus = Object.fromEntries(
       ((await backend.FlowSecretStatus(id).catch(() => [])) || []).map((s) => [s.name, s]),
     );
@@ -329,6 +330,69 @@ export function Commands() {
           </button>
         </div>
       )}
+    </div>
+  );
+}
+
+// what a flow's AI steps may do without asking (each kind otherwise waits
+// for a person's yes, which a scheduled run cannot get)
+const AI_KINDS = [
+  ["commands", "Run shell commands", "run_command in the project folder"],
+  ["flows", "Change or run flows and tools", "save, run or schedule a flow; propose a tool"],
+  ["send", "Send data out", "HTTP calls that change things; Slack, Teams or webhook messages"],
+  [
+    "network",
+    "Open local and intranet addresses",
+    "this computer, and private networks such as Confluence or internal APIs",
+  ],
+];
+
+export function AIActions() {
+  const r = frs(),
+    ai = r.ai;
+  if (!ai?.hasAI) return null;
+  const allowed = ai.allowed || [];
+  const toggle = async (k, on) => {
+    const next = on ? [...allowed, k] : allowed.filter((x) => x !== k);
+    try {
+      r.ai = await backend.SetFlowAIActions(r.flow.id, next);
+      update();
+    } catch (e) {
+      toast(errMsg(e), "error");
+    }
+  };
+  return (
+    <div className="card fr-ai-actions" role="region" aria-label="What the AI may do without asking">
+      <div className="card-head">
+        <Icon.shield />
+        <h3>What the AI may do without asking</h3>
+        {allowed.length ? (
+          <span className="badge badge-warn">{allowed.length} allowed</span>
+        ) : (
+          <span className="badge">asks first</span>
+        )}
+      </div>
+      <p className="wf-desc">
+        This flow's AI steps ask you before these actions. A scheduled or triggered run has nobody to answer,
+        so the step waits 10 minutes and then fails. Tick what this flow's AI may do unasked; it applies to
+        this flow in this project only, and other flows still ask.
+      </p>
+      <ul className="fr-ai-list">
+        {AI_KINDS.map(([k, label, hint]) => (
+          <li key={k}>
+            <label className="check">
+              <input
+                type="checkbox"
+                checked={allowed.includes(k)}
+                onChange={(e) => toggle(k, e.target.checked)}
+              />
+              <span>
+                <b>{label}</b> <span className="muted">· {hint}</span>
+              </span>
+            </label>
+          </li>
+        ))}
+      </ul>
     </div>
   );
 }

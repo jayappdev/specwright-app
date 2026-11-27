@@ -580,6 +580,15 @@ func (a *App) ApproveFlowCommands(id string, steps []string) ([]core.FlowCommand
 	return ok(a.hub.ApproveFlowCommands(id, steps))
 }
 
+// FlowAIActions / SetFlowAIActions: what a flow's AI steps may do without
+// asking (flowaiapprovals.go).
+func (a *App) FlowAIActions(id string) (core.FlowAIActions, error) {
+	return ok(a.hub.FlowAIActions(id))
+}
+func (a *App) SetFlowAIActions(id string, kinds []string) (core.FlowAIActions, error) {
+	return ok(a.hub.SetFlowAIActions(id, kinds))
+}
+
 // RunFlow starts a flow run.
 func (a *App) RunFlow(id string, o core.FlowRunOptions) (core.FlowRunState, error) {
 	return ok(a.hub.RunFlow(id, o))
@@ -713,7 +722,18 @@ func (a *App) CreateAdminKey(name, passphrase string) (core.AdminStatus, error) 
 func (a *App) UnlockAdmin(passphrase string) (core.AdminStatus, error) {
 	return ok(a.hub.UnlockAdmin(passphrase))
 }
-func (a *App) LockAdmin()                          { a.hub.LockAdmin() }
+func (a *App) LockAdmin() { a.hub.LockAdmin() }
+
+// --- secrets key (item 8 of the security review) ---------------------------
+
+func (a *App) SecretKeyStatus() core.SecretKeyStatus { return a.hub.SecretKeyStatus() }
+func (a *App) ProtectSecretKey(passphrase string) (core.SecretKeyStatus, error) {
+	return ok(a.hub.ProtectSecretKey(passphrase))
+}
+func (a *App) UnlockSecretKey(passphrase string) (core.SecretKeyStatus, error) {
+	return ok(a.hub.UnlockSecretKey(passphrase))
+}
+func (a *App) LockSecretKey() core.SecretKeyStatus { return a.hub.LockSecretKey() }
 func (a *App) AdminPolicySnippet() (string, error) { return ok(a.hub.AdminPolicySnippet()) }
 func (a *App) TrustAdminKey(name, publicKey string) error {
 	return a.hub.TrustAdminKey(name, publicKey)

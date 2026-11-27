@@ -727,6 +727,13 @@ textarea[aria-invalid="true"] {
   height: 16px;
   color: var(--warn);
 }
+.fr-ai-list {
+  list-style: none;
+  margin: 8px 0 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
 .fr-cmd-list {
   list-style: none;
   margin: 0;

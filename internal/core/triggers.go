@@ -232,51 +232,6 @@ func (ts *triggerStore) save() error {
 
 // --- encryption --------------------------------------------------------------------
 
-const triggerKeyAccount = "SpecWright trigger secrets key"
-
-// triggerKey returns the key trigger secrets are encrypted with, making one
-// the first time: in the system keychain, else in a file (0600).
-func (h *Hub) triggerKey() ([]byte, string, error) {
-	ref := flow.KeychainRef{Service: keychainService, Account: triggerKeyAccount}
-	file := filepath.Join(h.Store.Dir(), "triggers", "key")
-	decode := func(s string) []byte {
-		b, err := base64.StdEncoding.DecodeString(strings.TrimSpace(s))
-		if err != nil || len(b) != 32 {
-			return nil
-		}
-		return b
-	}
-	if KeychainAvailable() {
-		if v, ok := keychainRead(ref); ok {
-			if k := decode(v); k != nil {
-				return k, "keychain", nil
-			}
-		}
-	}
-	if b, err := os.ReadFile(file); err == nil {
-		if k := decode(string(b)); k != nil {
-			return k, "file", nil
-		}
-	}
-	k := make([]byte, 32)
-	if _, err := rand.Read(k); err != nil {
-		return nil, "", err
-	}
-	enc := base64.StdEncoding.EncodeToString(k)
-	if KeychainAvailable() {
-		if err := keychainWrite(ref, enc); err == nil {
-			return k, "keychain", nil
-		}
-	}
-	if err := os.MkdirAll(filepath.Dir(file), 0o700); err != nil {
-		return nil, "", err
-	}
-	if err := os.WriteFile(file, []byte(enc), 0o600); err != nil {
-		return nil, "", err
-	}
-	return k, "file", nil
-}
-
 func seal(key []byte, plain string) (string, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -372,7 +327,7 @@ func (h *Hub) triggerView(root string, f *flow.Flow, t flow.Trigger, st TriggerS
 			}
 		}
 	}
-	if KeychainAvailable() {
+	if keychainUsable() {
 		v.KeyIn = "keychain"
 	} else {
 		v.KeyIn = "file"
