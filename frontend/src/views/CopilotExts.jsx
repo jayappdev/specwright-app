@@ -401,8 +401,8 @@ export function CopilotExtView() {
             experimental: <code className="inline-code">copilot --experimental</code>).
           </li>
           <li>
-            <b>SpecWright's Copilot runs</b> (workflow steps, Playground, flows) load them automatically when
-            the project has any.
+            <b>SpecWright's Copilot runs</b> (workflow steps, Ask AI, flows) load them automatically when the
+            project has any.
           </li>
           <li>
             <b>Share it</b> by committing <code className="inline-code">{rel}</code>; installed packages are

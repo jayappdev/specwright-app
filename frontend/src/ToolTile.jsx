@@ -263,9 +263,10 @@ export function Reliability({ name, long }) {
     <small
       className={"tt-rel rel-" + r.level}
       title={
-        r.stat.lastError
-          ? "Last error: " + r.stat.lastError
-          : "Calls from flows, agents and the test form in this project"
+        r.text +
+        (r.stat.lastError
+          ? " · last error: " + r.stat.lastError
+          : " · calls from flows, agents and the test form in this project")
       }
     >
       {r.text}

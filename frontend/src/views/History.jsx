@@ -239,7 +239,7 @@ export function History() {
               ],
             ]}
           >
-            Runs of workflow steps, flows and Playground prompts{S.ws ? " in this project" : ""} show up here,
+            Runs of workflow steps, flows and Ask AI questions{S.ws ? " in this project" : ""} show up here,
             to replay and compare.
           </EmptyState>
         )}

@@ -1357,8 +1357,8 @@ export function Flows() {
                 </>
               ) : (
                 <>
-                  <b>This flow was changed outside the designer</b> (for example by the AI in the Playground)
-                  while you had unsaved edits here. Nothing has been overwritten.
+                  <b>This flow was changed outside the designer</b> (for example by the AI in Ask AI) while
+                  you had unsaved edits here. Nothing has been overwritten.
                   <span className="row-actions">
                     <button className="btn primary" onClick={() => resolveConflict("theirs")}>
                       Load the new version

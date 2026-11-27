@@ -402,8 +402,8 @@ export function Appearance() {
               />
             </div>
             <p className="muted" style={{ marginTop: 4 }}>
-              Used wherever a screen leaves its own model on Default: workflow steps, the Playground, Ask AI,
-              tool tests and flows.
+              Used wherever a screen leaves its own model on Default: workflow steps, Ask AI, tool tests and
+              flows.
             </p>
             <p className="muted" style={{ marginTop: 8 }}>
               The app never stores agent credentials. The CLIs use their own sign-in; a pasted token lives in

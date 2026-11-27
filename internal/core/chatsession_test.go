@@ -97,7 +97,8 @@ func TestChatSessionSetupAndConversation(t *testing.T) {
 		t.Fatal(err)
 	}
 	list, err := h.Chatflows()
-	if err != nil || len(list) != 1 || list[0].Setup[0] != "Load sales" || list[0].Tools[0].Title != "Query sales" || list[0].Secrets[0] != "DB_SALES" || len(list[0].Issues) != 0 {
+	if err != nil || len(list) != 1 || list[0].Setup[0] != "Load sales" || list[0].Tools[0].Title != "Query sales" || list[0].Secrets[0] != "DB_SALES" || len(list[0].Issues) != 0 ||
+		list[0].Instructions != "Answer sales questions briefly." {
 		t.Fatalf("%+v %v", list, err)
 	}
 

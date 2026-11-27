@@ -45,7 +45,7 @@ func TestRunIDsResultsAndContinuation(t *testing.T) {
 		}
 	}
 	sum, _ := os.ReadFile(filepath.Join(ws, filepath.FromSlash(res.Dir), "summary.md"))
-	if !strings.Contains(string(sum), id) || !strings.Contains(string(sum), "Playground prompt") {
+	if !strings.Contains(string(sum), id) || !strings.Contains(string(sum), "Ask AI question") {
 		t.Fatal(string(sum))
 	}
 	if _, err := os.Stat(filepath.Join(ws, ResultsDir, ".gitignore")); err != nil {
