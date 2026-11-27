@@ -15,8 +15,8 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 |---|---|---|---|
 | 1 | High | Command execution | Command injection in flow "Run a command" steps (**fixed**) |
 | 2 | High | AI actions | Prompt injection drives real actions (bridge tools, chat tools) (**mostly fixed**) |
-| 3 | Medium | Communication | Data leaks through remote images in rendered Markdown; no CSP |
-| 4 | Medium | Communication | SSRF from `fetch_webpage` and the HTTP tool |
+| 3 | Medium | Communication | Data leaks through remote images in rendered Markdown; no CSP (**fixed**) |
+| 4 | Medium | Communication | SSRF from `fetch_webpage` and the HTTP tool (**fixed**) |
 | 5 | Medium | Secrets | Child processes inherit the app's environment and tokens |
 | 6 | Medium | Secrets | Secret masking matches exact text only |
 | 7 | Medium | Communication | Dev server token: non-constant-time, in the URL, address not forced to loopback |
@@ -120,6 +120,20 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
     `data:image/` and workspace files.
   - Add a CSP: `default-src 'self'; img-src 'self' data: blob:;
     connect-src 'self'; frame-src 'self'; object-src 'none'`.
+- **Fixed:**
+  - `markdown.js` renders an image from another site (`http(s)://` or
+    `//…`) as a link, "Image: <alt or host>", which loads nothing until the
+    person opens it. `data:` images and project files still show.
+  - `index.html` has a CSP: `default-src 'self'`, scripts only from the app,
+    images from the app, `data:` and `blob:`, connections only to the app and
+    `127.0.0.1`/`localhost` (the bridge and dev server), `object-src 'none'`,
+    `base-uri 'none'`, `form-action 'none'`. Inline styles stay allowed
+    (React `style=`).
+  - Tests: `frontend/src/markdown.test.js` (raw HTML, `javascript:` links,
+    remote images, `data:` images). The preview loads every screen with no
+    CSP errors. **Not yet checked in the desktop (Wails) build**, whose
+    runtime injects its own scripts: run it once and look for CSP errors in
+    the web inspector.
 
 ### 4. SSRF from `fetch_webpage` and the HTTP tool (Medium)
 
@@ -131,6 +145,25 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 - **Fix:** resolve the host and refuse loopback, link-local, private and
   unique-local ranges (unless the user allows a host), check again on every
   redirect (`CheckRedirect`), and pin the resolved address for the request.
+- **Fixed** (`internal/builtin/netguard.go`, `internal/core/agentactions.go`):
+  - Link-local addresses (`169.254.0.0/16`, `fe80::/10`) and the other
+    cloud metadata addresses are refused for everyone, flows included. The
+    check runs on the address actually dialled, after DNS, so a name that
+    resolves (or rebinds) there is refused too.
+  - A redirect from a public address to this computer or a private network
+    is not followed; more than 10 redirects stop.
+  - An AI's `fetch_webpage` or `http_request` (through the bridge) to
+    `localhost`, a loopback, private or unique-local address, or a name that
+    resolves to one, asks the person first, with "Allow for this run".
+  - Flow steps and a person's own try on the Tools screen may still reach
+    intranet and local services (Confluence, internal APIs): the flow was
+    approved by a person.
+  - Tests: `TestNetGuardAddresses`, `TestNetGuardDialRefusesMetadata`,
+    `TestNetGuardRedirects`, `TestAgentLocalFetchNeedsAPersonsYes`.
+  - **Left open:** the yes is asked on the address the name resolves to
+    when checked; a name that resolves to a public address then rebinds to a
+    private one at connect time is not caught (only link-local is checked at
+    connect time). Through a proxy, the proxy decides where the request goes.
 
 ### 5. Child processes inherit the app's environment and tokens (Medium)
 

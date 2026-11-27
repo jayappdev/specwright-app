@@ -84,9 +84,11 @@ func TestAgentOutwardAsks(t *testing.T) {
 		asked = append(asked, req.Tool+": "+req.Input["description"].(string))
 		return extension.PermissionAnswer{Allow: allow, Message: "no"}
 	})
-	if _, err := h.RunBuiltin(h.ctx, "http_request", map[string]any{"url": srv.URL}); err != nil || len(asked) != 0 {
-		t.Fatalf("GET is not asked: %v %v", err, asked)
+	// a GET sends nothing out, but this server is on this computer: asked (agentNetworkAllowed)
+	if _, err := h.RunBuiltin(h.ctx, "http_request", map[string]any{"url": srv.URL}); err == nil || len(asked) != 1 || !strings.Contains(asked[0], "on this computer") {
+		t.Fatalf("a local GET is asked once: %v %v", err, asked)
 	}
+	asked = nil
 	if _, err := h.RunBuiltin(h.ctx, "http_request", map[string]any{"method": "POST", "url": srv.URL, "body": "x"}); err == nil || len(asked) != 1 || !strings.Contains(asked[0], "POST "+srv.URL) {
 		t.Fatalf("POST is asked and refused: %v %v", err, asked)
 	}

@@ -3,6 +3,13 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <!-- what the page may load and contact (docs/security, item 3): only the app
+         itself, data/blob previews, and the local dev backend; no remote images,
+         scripts or connections, so injected content cannot send data out -->
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; font-src 'self' data:; connect-src 'self' http://127.0.0.1:* http://localhost:* ws://127.0.0.1:* ws://localhost:*; frame-src 'self' blob: data:; object-src 'none'; base-uri 'none'; form-action 'none'"
+    />
     <title>SpecWright</title>
     <link rel="icon" type="image/svg+xml" href="logo.svg" />
     <link rel="stylesheet" href="app.css" />

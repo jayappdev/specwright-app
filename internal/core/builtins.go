@@ -132,6 +132,9 @@ func (h *Hub) RunBuiltin(ctx context.Context, name string, args map[string]any) 
 	if e := h.agentActionAllowed(ctx, name, args); e != nil { // agentactions.go: a person approves commands and changes
 		return "", e
 	}
+	if e := h.agentNetworkAllowed(ctx, name, args); e != nil { // agentactions.go: a person approves reaching inside addresses
+		return "", e
+	}
 	switch name {
 	case SaveFlowTool:
 		out, err = h.agentSaveFlow(args)

@@ -13,7 +13,10 @@ package core
 import (
 	"context"
 	"fmt"
+	"net/url"
+	"strings"
 
+	"codegen/internal/builtin"
 	"codegen/internal/extension"
 )
 
@@ -58,6 +61,42 @@ func (h *Hub) agentActionAllowed(ctx context.Context, name string, args map[stri
 		input[k] = v
 	}
 	ans := h.AskPermission(ctx, extension.PermissionRequest{Agent: agent, Tool: name, Input: input})
+	if !ans.Allow {
+		return fmt.Errorf("not allowed: %s", firstNonEmpty(ans.Message, "the person did not let the AI "+what))
+	}
+	return nil
+}
+
+// agentNetworkAllowed asks a person before an agent's fetch_webpage or
+// http_request reaches this computer or a private network (item 4: SSRF):
+// a page the AI read could steer it to a local admin page or an intranet
+// service. Flow steps were approved with the flow and are not asked;
+// link-local and cloud metadata addresses are refused for everyone
+// (builtin/netguard.go).
+func (h *Hub) agentNetworkAllowed(ctx context.Context, name string, args map[string]any) error {
+	if (name != "fetch_webpage" && name != "http_request") || ctx.Value(byPersonKey{}) != nil {
+		return nil
+	}
+	if sends, _ := builtin.SendsOut(name, args); sends {
+		return nil // agentOutwardAllowed has asked already
+	}
+	raw, _ := args["url"].(string)
+	u, err := url.Parse(strings.TrimSpace(raw))
+	if err != nil || u.Hostname() == "" {
+		return nil // the tool reports the bad URL itself
+	}
+	if in, _ := builtin.PrivateHost(ctx, u.Hostname()); !in {
+		return nil
+	}
+	agent := "agents"
+	if a := h.activeRun(); a != nil {
+		agent = a.Session.ID
+	} else if fr := h.onlyFlowRun(); fr != "" {
+		agent = "flow:" + fr
+	}
+	what := "open " + u.Host + ", an address on this computer or a private network"
+	ans := h.AskPermission(ctx, extension.PermissionRequest{Agent: agent, Tool: name,
+		Input: map[string]any{"description": "The AI wants to " + what, "url": raw}})
 	if !ans.Allow {
 		return fmt.Errorf("not allowed: %s", firstNonEmpty(ans.Message, "the person did not let the AI "+what))
 	}
