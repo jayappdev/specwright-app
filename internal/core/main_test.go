@@ -24,3 +24,10 @@ func allowAgentActions(h *Hub) {
 		return extension.PermissionAnswer{Allow: true}
 	})
 }
+
+// setTriggerClock gives the trigger scheduler a fake clock for this test.
+func setTriggerClock(t *testing.T, f func() time.Time) {
+	t.Helper()
+	triggerClock.Store(&f)
+	t.Cleanup(func() { triggerClock.Store(nil) })
+}

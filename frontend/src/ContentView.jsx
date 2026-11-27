@@ -6,7 +6,8 @@ import { useState } from "react";
 import { S, update, toast, errMsg } from "./store.js";
 import { backend } from "./backend.js";
 import { Icon } from "./ui.jsx";
-import { mdRender } from "./markdown.js";
+
+import { HtmlFrame, MdView } from "./Diagrams.jsx";
 import { highlight } from "./highlight.js";
 import { CopyButton } from "./CopyButton.jsx";
 import { FileLink, Linkify } from "./FileLinks.jsx";
@@ -20,6 +21,8 @@ export function contentFormat(text, name = "") {
   if (ext === "json") return "json";
   if (ext === "csv") return "csv";
   if (ext === "md" || ext === "markdown") return "md";
+  if (ext === "mmd" || ext === "mermaid") return "mermaid";
+  if (ext === "puml" || ext === "plantuml" || ext === "pu") return "plantuml";
   const t = String(text || "").trim();
   if (!t) return "txt";
   if (/^\s*(<!doctype|<html|<(div|p|h[1-6]|table|ul|ol|section|article|body|svg)\b)/i.test(t)) return "html";
@@ -43,7 +46,7 @@ export function contentFormat(text, name = "") {
   return "txt";
 }
 
-export const canPreview = (fmt) => ["html", "md", "json", "csv"].includes(fmt);
+export const canPreview = (fmt) => ["html", "md", "json", "csv", "mermaid", "plantuml"].includes(fmt);
 
 function parseCSV(t) {
   const rows = [];
@@ -141,9 +144,11 @@ export function RenderPreview({ text, format }) {
         <img src={"data:image/svg+xml;charset=utf-8," + encodeURIComponent(chart)} alt="Chart" />
       </div>
     );
-  if (format === "html") return <iframe className="cv-html" sandbox="" srcDoc={t} title="HTML preview" />;
-  if (format === "md")
-    return <div className="rich md cv-md" dangerouslySetInnerHTML={{ __html: mdRender(t) }} />;
+  if (format === "html") return <HtmlFrame className="cv-html" html={t} />;
+  if (format === "md") return <MdView className="rich md cv-md" text={t} />;
+  // a diagram file (.mmd, .puml): drawn
+  if (format === "mermaid" || format === "plantuml")
+    return <MdView className="rich md cv-md" text={"```" + format + "\n" + t + "\n```"} />;
   if (format === "csv") {
     const rows = parseCSV(t.trim());
     if (rows.length > 1)

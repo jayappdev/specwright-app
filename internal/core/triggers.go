@@ -44,6 +44,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"codegen/internal/bus"
@@ -148,12 +149,24 @@ type filePend struct {
 	timer *time.Timer
 }
 
+// triggerClock replaces the scheduler's clock in tests (setTriggerClock).
+// It is atomic: the scheduler and finished runs read it from their own
+// goroutines, also while a test puts the real clock back.
+var triggerClock atomic.Pointer[func() time.Time]
+
+// triggerNow is the trigger scheduler's clock.
+func triggerNow() time.Time {
+	if f := triggerClock.Load(); f != nil {
+		return (*f)()
+	}
+	return time.Now()
+}
+
 // triggerTick is how often the scheduler looks (replaceable in tests);
 // triggerGrace is how late a run may start before it counts as missed.
 var (
 	triggerTick  = 15 * time.Second
 	triggerGrace = 2 * time.Minute
-	triggerNow   = time.Now
 	// triggerQuiet is how long a files trigger waits for quiet (tests shorten it)
 	triggerQuiet = func(w flow.FileWatch) time.Duration { return w.Quiet() }
 )

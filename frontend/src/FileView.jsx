@@ -14,7 +14,7 @@ import { useEffect, useRef, useState } from "react";
 import { backend } from "./backend.js";
 import { errMsg, update } from "./store.js";
 import { highlight } from "./highlight.js";
-import { mdRender } from "./markdown.js";
+import { MdView } from "./Diagrams.jsx";
 import { Icon } from "./ui.jsx";
 import { fmtSize } from "./Attachments.jsx";
 import { FileLink } from "./FileLinks.jsx";
@@ -272,7 +272,7 @@ export function FileView({ slot, line = 0, label = "File contents" }) {
           md &&
           mode === "rendered" &&
           (fmt === "md" ? (
-            <div className="fp-md rich md" dangerouslySetInnerHTML={{ __html: mdRender(d.text) }} />
+            <MdView className="fp-md rich md" text={d.text} />
           ) : (
             <RenderPreview text={d.text} format={fmt} />
           ))}

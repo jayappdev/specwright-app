@@ -19,6 +19,10 @@ const opts = {
   bundle: true,
   outdir,
   format: "esm",
+  // large parts used only sometimes (Mermaid, for diagrams in previews)
+  // load when first needed, from chunks next to app.js
+  splitting: true,
+  chunkNames: "chunks/[name]-[hash]",
   target: ["safari15", "chrome110"],
   jsx: "automatic",
   loader: { ".css": "css", ".svg": "dataurl", ".woff2": "file" },

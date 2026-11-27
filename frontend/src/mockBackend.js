@@ -5545,6 +5545,12 @@ export function createMockBackend(methods) {
       });
       return rel;
     },
+    async RenderPlantUML() {
+      // the desktop app runs PlantUML on this computer; the browser preview cannot
+      throw new Error(
+        "the browser preview cannot run PlantUML; the desktop app draws it with PlantUML on your computer",
+      );
+    },
     async ListFiles() {
       return Object.keys(db.files).sort();
     },
