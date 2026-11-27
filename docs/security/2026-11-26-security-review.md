@@ -19,7 +19,7 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 | 4 | Medium | Communication | SSRF from `fetch_webpage` and the HTTP tool (**fixed**) |
 | 5 | Medium | Secrets | Child processes inherit the app's environment and tokens (**mostly fixed**) |
 | 6 | Medium | Secrets | Secret masking matches exact text only (**fixed**) |
-| 7 | Medium | Communication | Dev server token: non-constant-time, in the URL, address not forced to loopback |
+| 7 | Medium | Communication | Dev server token: non-constant-time, in the URL, address not forced to loopback (**fixed**) |
 | 8 | Low | Secrets | Encryption key stored beside the data when no keychain is available |
 | 9 | Low | Command execution | Option injection through npm tool arguments |
 
@@ -242,6 +242,18 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 - **Fix:** compare in constant time (`subtle.ConstantTimeCompare`), accept the
   token only in the header (use a cookie or a one-time exchange for the event
   stream), and refuse non-loopback addresses.
+- **Fixed** (`devserver.go`, `frontend/src/backend.js`):
+  - The token is compared in constant time and accepted only in the
+    `X-Dev-Token` header; `?token=` is refused.
+  - The preview reads the event stream with `fetch` instead of
+    `EventSource`, so the token goes in a header. It reconnects after a drop.
+  - The startup URL carries the address and token in its `#fragment`, which
+    the browser never sends to a server (the preview's own server included).
+    The page removes it from the address bar.
+  - Non-loopback `-addr` values were already refused.
+  - Checked: `TestDevServerAccess` (header only, wrong or partial token,
+    other origin). In the preview against the real backend, calls and live
+    events work and a token in the URL gets 401.
 
 ### 8. Encryption key beside the data without a keychain (Low)
 
