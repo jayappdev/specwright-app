@@ -59,6 +59,15 @@ func (h *Hub) newToolbox() *builtin.Box {
 	})
 }
 
+// policyKeepEnv is the machine policy's keepEnvVars (safeenv.SetKeep).
+func policyKeepEnv() []string {
+	var pf policyFile
+	if b, err := os.ReadFile(PolicyPath); err == nil && json.Unmarshal(b, &pf) == nil {
+		return pf.KeepEnvVars
+	}
+	return nil
+}
+
 func (h *Hub) disabledBuiltins() map[string]bool {
 	out := map[string]bool{}
 	b, err := os.ReadFile(PolicyPath)

@@ -6,6 +6,7 @@ import (
 
 	"bytes"
 	"codegen/internal/flow"
+	"codegen/internal/safeenv"
 	"context"
 	"errors"
 	"fmt"
@@ -85,7 +86,7 @@ func (b *Box) startCmd(command, dir string, timeout time.Duration) *proc {
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	cmd := shellCmd(ctx, command)
 	cmd.Dir = dir
-	cmd.Env = os.Environ()
+	cmd.Env = safeenv.Clean(os.Environ())
 	if b.env != nil {
 		cmd.Env = append(cmd.Env, b.env()...)
 	}

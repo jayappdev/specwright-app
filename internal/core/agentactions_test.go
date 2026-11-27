@@ -87,3 +87,21 @@ func TestAgentLocalFetchNeedsAPersonsYes(t *testing.T) {
 		t.Fatalf("metadata address: %v", err)
 	}
 }
+
+// Commands do not inherit the app's secrets (item 5); the policy can keep one.
+func TestCommandsDoNotInheritSecrets(t *testing.T) {
+	usePolicy(t, "")
+	h, _ := newHub(t)
+	t.Setenv("ACME_API_KEY", "leak-1")
+	t.Setenv("NPM_TOKEN", "leak-2")
+	t.Setenv("ACME_HOME", "/opt/acme")
+	cmd := map[string]any{"command": `echo "[$ACME_API_KEY][$NPM_TOKEN][$ACME_HOME]"`}
+	out, err := h.RunBuiltin(byPerson(context.Background()), "run_command", cmd)
+	if err != nil || !strings.Contains(out, "[][][/opt/acme]") {
+		t.Fatalf("%q %v", out, err)
+	}
+	usePolicy(t, `{"keepEnvVars":["NPM_TOKEN"]}`)
+	if out, _ = h.RunBuiltin(byPerson(context.Background()), "run_command", cmd); !strings.Contains(out, "[][leak-2][/opt/acme]") {
+		t.Fatalf("policy keep: %q", out)
+	}
+}

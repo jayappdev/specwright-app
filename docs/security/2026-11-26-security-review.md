@@ -17,7 +17,7 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 | 2 | High | AI actions | Prompt injection drives real actions (bridge tools, chat tools) (**mostly fixed**) |
 | 3 | Medium | Communication | Data leaks through remote images in rendered Markdown; no CSP (**fixed**) |
 | 4 | Medium | Communication | SSRF from `fetch_webpage` and the HTTP tool (**fixed**) |
-| 5 | Medium | Secrets | Child processes inherit the app's environment and tokens |
+| 5 | Medium | Secrets | Child processes inherit the app's environment and tokens (**mostly fixed**) |
 | 6 | Medium | Secrets | Secret masking matches exact text only |
 | 7 | Medium | Communication | Dev server token: non-constant-time, in the URL, address not forced to loopback |
 | 8 | Low | Secrets | Encryption key stored beside the data when no keychain is available |
@@ -179,6 +179,30 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
     registry settings, the run's own variables) instead of `os.Environ()`.
   - Scope the bridge token to one run and one set of tools, expire it when
     the run ends, and refuse bridge calls from a run that is not active.
+- **Fixed** (`internal/safeenv`):
+  - Commands the app starts no longer inherit variables whose names say
+    they hold a secret (`…TOKEN…`, `…SECRET…`, `…PASSWORD…`, `…API_KEY…`,
+    `…ACCESS_KEY…`, `…CREDENTIAL…`, `DATABASE_URL`, and others). This covers
+    command steps, `run_command`, test and git built-ins, project tools,
+    Copilot extension listing, builds, dependency installs and the Spec Kit
+    CLI.
+  - Everything else still passes (PATH, HOME, proxies, JAVA_HOME, CA files,
+    registry URLs, SSH_AUTH_SOCK), so builds and tools keep working.
+  - A secret a command needs goes in explicitly: a tool's declared secrets,
+    or a name an admin lists in the machine policy:
+    `"keepEnvVars": ["NPM_TOKEN"]`.
+  - Tests: `TestCleanDropsSecrets`, `TestCommandsDoNotInheritSecrets`.
+- **Left open:**
+  - The AI CLIs (claude, copilot) still get the full environment: they need
+    the login they were started with (API keys, cloud credentials for
+    Bedrock or Vertex). A shell command the AI runs inside its CLI can read
+    it. Copilot already hides GitHub tokens from its shell commands.
+  - Project tools still get the bridge token and the AI login token
+    (`childEnv`), because tools that call `$CODEGEN_TOOL` or `claude` and
+    `copilot` themselves need them.
+  - The bridge token is not scoped per run. Item 2's approvals limit what a
+    caller holding it can do without a person's yes.
+  - The runner window gets the app's environment: it is the app itself.
 
 ### 6. Secret masking matches exact text only (Medium)
 

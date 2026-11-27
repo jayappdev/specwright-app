@@ -2,6 +2,7 @@ package extension
 
 import (
 	"bufio"
+	"codegen/internal/safeenv"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -178,7 +179,7 @@ func Install(ctx context.Context, root, absDir string, e Extension, s PackageSet
 	}
 	ctx, cancel := context.WithTimeout(ctx, 10*time.Minute)
 	defer cancel()
-	env := append(os.Environ(), s.Env(root)...)
+	env := append(safeenv.Clean(os.Environ()), s.Env(root)...)
 	run := func(name string, args ...string) error {
 		bin, err := exec.LookPath(name)
 		if err != nil && !strings.ContainsAny(name, `/\`) {

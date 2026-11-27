@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"codegen/internal/bus"
+	"codegen/internal/safeenv"
 	"codegen/internal/store"
 )
 
@@ -487,7 +488,7 @@ func (h *Hub) Compile() (BuildResult, error) {
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), h.agentPackageEnv(root)...)
+	cmd.Env = append(safeenv.Clean(os.Environ()), h.agentPackageEnv(root)...)
 	pr, pw, _ := os.Pipe()
 	cmd.Stdout, cmd.Stderr = pw, pw
 	h.Bus.Publish(bus.Event{Type: "build.start", Summary: res.Command})

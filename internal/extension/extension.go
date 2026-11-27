@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"codegen/internal/aishim"
+	"codegen/internal/safeenv"
 )
 
 // Param is one argument the agent fills in.
@@ -542,7 +543,7 @@ func ExecInput(ctx context.Context, root string, e Extension, args map[string]an
 	defer cancel()
 	cmd := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	cmd.Dir = root
-	env := append(os.Environ(), extraEnv...)
+	env := append(safeenv.Clean(os.Environ()), extraEnv...)
 	// the arguments by name as well (JSON): a word that is only an empty
 	// placeholder is left out of argv, which shifts positional arguments;
 	// a script with optional parameters reads them from here instead

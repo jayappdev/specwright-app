@@ -19,6 +19,7 @@ import (
 
 	"codegen/internal/agent"
 	"codegen/internal/extension"
+	"codegen/internal/safeenv"
 	"codegen/internal/store"
 )
 
@@ -213,7 +214,7 @@ func (h *Hub) flowCommand(ctx context.Context, root string, fr *flowRun, step, c
 		cmd = exec.CommandContext(ctx, "/bin/sh", "-c", command)
 	}
 	cmd.Dir = root
-	cmd.Env = append(os.Environ(), h.agentPackageEnv(root)...)
+	cmd.Env = append(safeenv.Clean(os.Environ()), h.agentPackageEnv(root)...)
 	cmd.Stdin = strings.NewReader(stdin)
 	start := time.Now()
 	out, err := cmd.Output()

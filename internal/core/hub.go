@@ -22,6 +22,7 @@ import (
 	"codegen/internal/aishim"
 	"codegen/internal/bus"
 	"codegen/internal/extension"
+	"codegen/internal/safeenv"
 	"codegen/internal/session"
 	"codegen/internal/speckit"
 	"codegen/internal/store"
@@ -102,6 +103,7 @@ func New(o Options) (*Hub, error) {
 	if o.StoreDir == "" {
 		o.StoreDir = store.DefaultDir()
 	}
+	safeenv.SetKeep(policyKeepEnv) // commands do not inherit secrets (item 5)
 	st, err := store.Open(o.StoreDir)
 	if err != nil {
 		return nil, fmt.Errorf("open store: %w", err)

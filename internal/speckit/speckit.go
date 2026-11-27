@@ -15,6 +15,7 @@
 package speckit
 
 import (
+	"codegen/internal/safeenv"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -247,7 +248,7 @@ func (c Cache) Download(ctx context.Context, version string, n Net, log func(str
 // cliRunner finds a way to run Spec Kit's CLI: uvx, pipx, or a virtual
 // environment made with python3 in the cache.
 func cliRunner(ctx context.Context, cacheDir, version string, n Net, log func(string)) (func(args ...string) *exec.Cmd, error) {
-	env := append(os.Environ(), n.Env...)
+	env := append(safeenv.Clean(os.Environ()), n.Env...)
 	env = append(env, "PYTHONIOENCODING=utf-8", "NO_COLOR=1", "TERM=dumb", "COLUMNS=200")
 	src := ArchiveURL(version)
 	mk := func(name string, pre ...string) func(args ...string) *exec.Cmd {

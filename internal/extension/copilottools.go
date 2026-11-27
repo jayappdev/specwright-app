@@ -2,6 +2,7 @@ package extension
 
 import (
 	"bytes"
+	"codegen/internal/safeenv"
 	"context"
 	"crypto/sha256"
 	_ "embed"
@@ -74,7 +75,7 @@ func DiscoverCopilotTools(ctx context.Context, root string, x CopilotExt, env []
 	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, node, shim, "list", filepath.Join(x.Dir, x.Entry))
-	cmd.Dir, cmd.Env = root, append(os.Environ(), env...)
+	cmd.Dir, cmd.Env = root, append(safeenv.Clean(os.Environ()), env...)
 	var out, errb bytes.Buffer
 	cmd.Stdout, cmd.Stderr = &limited{w: &out, n: maxOutput}, &limited{w: &errb, n: maxOutput}
 	if err := cmd.Run(); err != nil {

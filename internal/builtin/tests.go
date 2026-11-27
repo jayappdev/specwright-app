@@ -11,6 +11,7 @@ package builtin
 
 import (
 	"bufio"
+	"codegen/internal/safeenv"
 	"context"
 	"encoding/json"
 	"encoding/xml"
@@ -167,7 +168,7 @@ func testRunner(ctx context.Context, b *Box, a args) (string, error) {
 	}
 	c := exec.CommandContext(ctx, argv[0], argv[1:]...)
 	c.Dir = abs
-	c.Env = os.Environ()
+	c.Env = safeenv.Clean(os.Environ())
 	if b.env != nil {
 		c.Env = append(c.Env, b.env()...)
 	}
