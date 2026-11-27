@@ -18,7 +18,7 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 | 3 | Medium | Communication | Data leaks through remote images in rendered Markdown; no CSP (**fixed**) |
 | 4 | Medium | Communication | SSRF from `fetch_webpage` and the HTTP tool (**fixed**) |
 | 5 | Medium | Secrets | Child processes inherit the app's environment and tokens (**mostly fixed**) |
-| 6 | Medium | Secrets | Secret masking matches exact text only |
+| 6 | Medium | Secrets | Secret masking matches exact text only (**fixed**) |
 | 7 | Medium | Communication | Dev server token: non-constant-time, in the URL, address not forced to loopback |
 | 8 | Low | Secrets | Encryption key stored beside the data when no keychain is available |
 | 9 | Low | Command execution | Option injection through npm tool arguments |
@@ -215,6 +215,25 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
   with and without padding, URL, hex), and mask values that span a line
   break; keep secrets out of tool output where possible (pass them to tools
   only through their environment).
+- **Fixed** (`internal/store/redact.go`): each registered secret is also
+  masked in these forms:
+  - base64, standard and URL-safe, with and without padding;
+  - base64 inside a longer value, such as `user:secret` in an
+    `Authorization: Basic` header;
+  - URL query and path escaping;
+  - hex, lower and upper case;
+  - JSON escaping;
+  - any of these broken across lines, including a following line's indent
+    or `>` quote mark.
+
+  Derived forms shorter than 8 characters are not masked. The line-break
+  scan runs only when the text holds the start or end of a form, so 1 MB of
+  output with 10 secrets costs about 25 ms more than before.
+  Test: `TestRedactEncodedSecrets`.
+
+  **Left open:** a secret that a tool transforms in other ways (reversed,
+  split by spaces, compressed or encrypted) is not caught. Tools should get
+  secrets through their environment and never print them.
 
 ### 7. Dev server token (Medium, development only)
 
