@@ -327,7 +327,7 @@ func (h *Hub) triggerView(root string, f *flow.Flow, t flow.Trigger, st TriggerS
 			}
 		}
 	}
-	if KeychainAvailable() {
+	if keychainUsable() {
 		v.KeyIn = "keychain"
 	} else {
 		v.KeyIn = "file"

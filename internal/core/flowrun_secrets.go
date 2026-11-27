@@ -26,7 +26,7 @@ func (h *Hub) secretInput(in flow.Input, typed string, o *FlowRunOptions) (strin
 		return typed, nil
 	}
 	fromKeychain := func() (string, bool) {
-		if !KeychainAvailable() {
+		if !keychainUsable() {
 			return "", false
 		}
 		return kcGetRef(ref)
