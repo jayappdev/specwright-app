@@ -540,6 +540,24 @@ func (a *App) ApplyStepFix(runID string) (core.FlowState, error) {
 	return ok(a.hub.ApplyStepFix(runID))
 }
 
+// Running part of a flow again (flowrerun.go).
+func (a *App) PlanRerun(runID, stepID string) (core.RerunPlan, error) {
+	return ok(a.hub.PlanRerun(runID, stepID))
+}
+func (a *App) RerunFromStep(r core.RerunRequest) (core.FlowRunState, error) {
+	return ok(a.hub.RerunFromStep(r))
+}
+func (a *App) TryStepEdit(runID string, n flow.Node) (core.FlowRunState, error) {
+	return ok(a.hub.TryStepEdit(runID, n))
+}
+func (a *App) SaveTrialAsVersion(runID string) (core.FlowState, error) {
+	return ok(a.hub.SaveTrialAsVersion(runID))
+}
+func (a *App) TryVersionOnRun(flowID, runID string) (core.FlowRunState, error) {
+	return ok(a.hub.TryVersionOnRun(flowID, runID))
+}
+func (a *App) VersionRuns(flowID string) ([]store.Run, error) { return ok(a.hub.VersionRuns(flowID)) }
+
 // ArchiveRuns archives (or restores) runs.
 func (a *App) ArchiveRuns(ids []string, archived bool) (int, error) {
 	return ok(a.hub.ArchiveRuns(ids, archived))

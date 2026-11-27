@@ -50,6 +50,18 @@ type FlowTrial struct {
 	Applied bool        `json:"applied,omitempty"`
 	// Draft: a run of a flow wizard draft ("<session>/<draft>"), not saved as a flow
 	Draft string `json:"draft,omitempty"`
+	// From: run again from this step (flowrerun.go); Edited: the steps whose
+	// result was changed by hand before it; InputsChanged: flow inputs changed
+	From          string   `json:"from,omitempty"`
+	Edited        []string `json:"edited,omitempty"`
+	InputsChanged []string `json:"inputsChanged,omitempty"`
+	// SavedAs: the new version the changes were saved as
+	SavedAs string `json:"savedAs,omitempty"`
+	// Against: a flow version tried on this earlier run (of AgainstFlow);
+	// Changed: the steps that differ from the flow that run used
+	Against     string   `json:"against,omitempty"`
+	AgainstFlow string   `json:"againstFlow,omitempty"`
+	Changed     []string `json:"changed,omitempty"`
 }
 
 // TrialStep is one changed step.
@@ -452,72 +464,15 @@ func (h *Hub) TryStepFix(fix StepFix) (FlowRunState, error) {
 		}
 	}
 	trial.Steps = append(trial.Steps, TrialStep{ID: fix.StepID, Before: before, Node: fix.Node, Why: fix.Why})
-	// reuse: the steps that run before every changed step, outside loops
-	// that contain one, with a complete result in the run
-	li, _ := f.Loops()
 	changed := map[string]bool{}
 	for _, ts := range trial.Steps {
 		changed[ts.ID] = true
 	}
-	steps := map[string]FlowStepState{}
-	for _, s := range base.Steps {
-		steps[s.ID] = s
-	}
-	// loops that contain a changed step run again, with their Gather
-	rerun := map[string]bool{}
-	for c := range changed {
-		for _, l := range li.Stack[c] {
-			rerun[l], rerun[li.Gather[l]] = true, true
-		}
-	}
-	reuse := map[string]ReusedStep{}
-	order, _ := f.Order()
-	for _, id := range order {
-		n := f.Node(id)
-		if changed[id] || id == "start" || n.Type == "output" || rerun[id] || len(li.Stack[id]) > 0 {
-			continue // changed, an output (cheap, and shown), or inside a loop (reused with the whole loop)
-		}
-		downstream := false
-		for c := range changed {
-			if f.Ancestors(id)[c] {
-				downstream = true
-			}
-		}
-		if downstream {
-			continue
-		}
-		s := steps[id]
-		if s.Status != "done" {
-			continue
-		}
-		out, ok := h.stepOutput(root, s)
-		if !ok {
-			continue
-		}
-		reuse[id] = ReusedStep{Output: out, Branches: s.Branches}
-	}
-	// a loop is reused only together with its Gather
-	for l, g := range li.Gather {
-		_, lok := reuse[l]
-		_, gok := reuse[g]
-		if lok != gok {
-			delete(reuse, l)
-			delete(reuse, g)
-		}
-	}
-	for _, id := range order {
-		if _, ok := reuse[id]; ok {
-			trial.Reused = append(trial.Reused, id)
-		}
-	}
-	o := FlowRunOptions{Inputs: base.Options.Inputs, Secrets: base.Options.Secrets, Review: "none", Model: base.Options.Model, TimeoutMinutes: base.Options.TimeoutMinutes, StepTimeoutSeconds: base.Options.StepTimeoutSeconds, Reuse: reuse}
-	if o.Inputs == nil {
-		o.Inputs = map[string]string{}
-	}
-	for _, in := range f.Inputs { // secret values live only as long as the app keeps the run in memory
-		if in.Type == "secret" && o.Inputs[in.Name] == flow.SecretMask && o.Secrets[in.Name] == "" {
-			return FlowRunState{}, fmt.Errorf("the run's secret input %s is no longer available (secrets are not saved): run the flow again, then try the change", firstNonEmpty(in.Label, in.Name))
-		}
+	reuse := h.trialReuse(root, f, base, changed)
+	trial.Reused = reusedOrder(f, reuse)
+	o, err := trialOptions(f, base, reuse)
+	if err != nil {
+		return FlowRunState{}, err
 	}
 	return h.startFlow(root, f, o, trial)
 }
