@@ -20,7 +20,7 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
 | 5 | Medium | Secrets | Child processes inherit the app's environment and tokens (**mostly fixed**) |
 | 6 | Medium | Secrets | Secret masking matches exact text only (**fixed**) |
 | 7 | Medium | Communication | Dev server token: non-constant-time, in the URL, address not forced to loopback (**fixed**) |
-| 8 | Low | Secrets | Encryption key stored beside the data when no keychain is available |
+| 8 | Low | Secrets | Encryption key stored beside the data when no keychain is available (**fixed**) |
 | 9 | Low | Command execution | Option injection through npm tool arguments |
 
 ---
@@ -264,6 +264,24 @@ real impact), **Medium** (exploitable with some setup, or leaks data),
   alone; any process running as the user can read both.
 - **Fix:** say so in Settings › Secrets when the file fallback is in use, and
   offer a passphrase-derived key there (as Admin does with PBKDF2).
+- **Fixed** (`internal/core/secretkey.go`, Settings › Secrets › Encryption
+  key):
+  - The card says where the key is kept: system keychain, plain file, or
+    locked with a passphrase.
+  - For a plain file, it explains the risk and offers "Lock with a
+    passphrase" (10+ characters). The key is then sealed with PBKDF2-SHA256
+    (600,000 rounds) and AES-256-GCM in `triggers/key.locked`, and the plain
+    file is overwritten and removed.
+  - A locked key is unlocked once per app start, and "Lock now" forgets it.
+    Until it is unlocked, reading or saving a project or trigger secret stops
+    with "the secrets are locked: unlock them … in Settings › Secrets". No
+    new plain key is made in the meantime.
+  - A wrong passphrase waits 400 ms.
+  - Test: `TestSecretKeyPassphrase`. The card was tried in the preview
+    (mock backend).
+  - Trade-off: with the lock on, scheduled triggers that need a secret wait
+    until someone unlocks after each start. The lock is opt-in, and the card
+    says so.
 
 ### 9. Option injection through npm tool arguments (Low)
 

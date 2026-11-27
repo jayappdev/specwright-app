@@ -69,6 +69,7 @@ type Hub struct {
 	// and the app-wide catalog of managed tools (global, not per workspace)
 	adminPriv ed25519.PrivateKey
 	adminName string
+	secretKey []byte // the passphrase-protected secrets key, unlocked (secretkey.go)
 	managed   *extension.ManagedStore
 	libs      *extension.LibraryStore // corporate (global) libraries
 	tools     *builtin.Box            // built-in agent tools (read_file, edit_file, …)

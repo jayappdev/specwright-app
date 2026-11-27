@@ -606,6 +606,9 @@ function zipStore(entries) {
   return out;
 }
 
+// the mock's secrets key (Settings › Secrets)
+const S_KEY = { store: "file", locked: false, pass: "" };
+
 export function createMockBackend(methods) {
   let db;
   try {
@@ -7793,6 +7796,28 @@ export function createMockBackend(methods) {
             out.set(s.name, c);
           }
       return [...out.values()];
+    },
+    // the secrets key: the preview pretends there is no keychain, so the
+    // file warning and the passphrase lock can be tried
+    async SecretKeyStatus() {
+      return {
+        ...(S_KEY.store === "passphrase" ? S_KEY : { store: "file" }),
+        path: "~/.specwright/triggers/key",
+      };
+    },
+    async ProtectSecretKey(pass) {
+      if ((pass || "").length < 10) throw new Error("use a passphrase of at least 10 characters");
+      Object.assign(S_KEY, { store: "passphrase", locked: false, pass });
+      return this.SecretKeyStatus();
+    },
+    async UnlockSecretKey(pass) {
+      if (pass !== S_KEY.pass) throw new Error("wrong passphrase");
+      S_KEY.locked = false;
+      return this.SecretKeyStatus();
+    },
+    async LockSecretKey() {
+      S_KEY.locked = true;
+      return this.SecretKeyStatus();
     },
     async KeychainAvailable() {
       return true;
